@@ -1358,6 +1358,101 @@ statement about `GEval`/`CorrE`'s aliasing structure, not about which black-hole
 are reasonable, well-motivated simplifications on their own terms (idea 1 arguably more elegant,
 and closer to Launchbury's original rule); neither unblocks `theorem2`.
 
+## 14. Current status (as of 2026-08-15): two parallel `theorem2` attempts, and where each actually stands
+
+This section exists because the two files drifted out of sync with these notes (this file was last
+updated 2026-07-29; `DEAD_ENDS.md` was last updated 2026-08-11; real progress happened in
+`curry_test_leftmost.v` after both). Both `curry.v` and `curry_test_leftmost.v` were confirmed to
+`coqc` cleanly (no errors, only pre-existing string-in-comment warnings) as of this writing.
+
+**`curry.v`'s `theorem2` (line 2229)** — the "official", `NEval`-stated version described in §3
+above. Unchanged since §3/§10 were written: 8 of 11 induction cases are `Qed`-solid; 3 are `admit`
+(`G_CaseFwd` line 2307, `G_CaseFun` line 2319, `G_CaseChoice` line 2324), all attributed in-comment
+to the single missing `NEval_fwd_transfer` lemma (line 3134), which itself carries 2 further
+`admit`s (lines 3182, 3185) for exactly the "y needs further forcing" and "Nat-Guess" sub-cases.
+Root cause, per §9/§13 above: a "NEval soundness/confluence relative to G" fact for plain `NEval`
+that was never built, and that three independent framings (§13 Part 5, `DEAD_ENDS.md` §S7-S9) show
+is genuinely load-bearing, not an artifact of proof strategy.
+
+**`curry_test_leftmost.v`'s `theorem2` (line 6918)** — the `NEval_left` restatement (§12's
+`theorem2_left` direction, Or forced left to match `GEval`'s own bias, motivated by removing the
+nondeterminism that was the real source of the confluence gap above). This is where the actual
+progress since 07-29/08-11 lives:
+- **`G_CaseFwd` (lines 7036-7408) is now fully `Qed`'d, zero `admit`s.** This is the exact case that
+  was completely stuck in `curry.v` and in every dead-end logged in `DEAD_ENDS.md` — closed.
+- **`G_CaseChoice` (lines 7411-7562) is almost done**: one remaining `admit` at line 7529, scoped
+  to a single sub-shape (`NL_Guess`, i.e. the branch where the aliased-to location resolves via
+  free-variable/self-loop promotion rather than being already-`Con`-shaped or forcing further
+  through `NL_Select`). In-comment, this is flagged as needing "the FULL STEP1/STEP2/demote/
+  re-promote machinery from `HeapCorr_fwd_transfer_fwdhere_free`'s own `x' <> y` case, ported here
+  for `x0` aliasing `y0` via `EChoice`/`NL_Or` instead of directly" — i.e. an adaptation of
+  already-proven machinery, not a new theory gap.
+- **`G_CaseFun` (line 7409) is a bare, unstarted `admit.`** for the whole case. Per §10's original
+  diagnosis (still expected to hold here), it should decompose into: the `G_CaseCon`/`G_CaseConFree`
+  sub-shapes (already `Qed`'d elsewhere in this file) plus exactly the `G_CaseChoice`/`G_CaseFwd`
+  sub-shapes — so no new lemma is expected, just the bookkeeping to write it out, likely surfacing
+  the same `NL_Guess` gap as `G_CaseChoice` along the way.
+- `G_CaseBot`, `G_CaseCon`, `G_CaseConFree` are all fully `Qed`'d in this version too.
+
+**Net position:** the file you'd currently point to as "the proof of Theorem 2" (`curry.v`) still
+has 3 open cases behind one unbuilt lemma. The up-to-date, closer-to-done attempt lives in
+`curry_test_leftmost.v` and has *not* been folded back into `curry.v` as the new `theorem2` — doing
+that migration is itself a to-do. Within `curry_test_leftmost.v`, the remaining work is: (a) one
+narrow, already-diagnosed sub-case (`NL_Guess` promotion inside `G_CaseChoice`), and (b) writing out
+`G_CaseFun`, which is expected to reduce to cases already closed elsewhere in the file plus (a)
+again. This is a meaningfully smaller remaining surface than `curry.v`'s three-case, root-lemma-level
+gap.
+
+## 15. 2026-08-15 session: closed the `HeapCorr_fwd_transfer_fwdhere_free` two-hop admit; re-diagnosed the `G_CaseChoice`/`NL_Guess` gap as harder than its own comment claimed
+
+**Closed, and now `Qed`-clean:** `HeapCorr_fwd_transfer_fwdhere_free`'s `x' <> y` branch had one
+remaining `admit`, for the `w0 <> x, y` case of transporting `CorrE3 G1v Gam' w0 b` across to
+`CorrE3 G1v Gam2raw w0 b` when `b`'s witness took the VarChase "skip-ahead" disjunct. The comment
+called this a missing "genuine TWO-HOP generalization of `NEval_left_alias_or_con_persists`." It
+turned out to need no new graph-level theory at all — only a **general two-location VarChase
+transport lemma**, added as `VarChase_transport_two_locations` (plus a small converse helper,
+`VarChase_transport_unshorten`, the missing other half of the existing `VarChase_transport_shorten`):
+if two heaps agree everywhere except at `x`/`y`, and BOTH heaps independently already chase `x` and
+`y` to the SAME `Con c args` (however each heap represents that — directly achieved, or still a lazy
+alias one hop short), then VarChase transports between the two heaps freely for ANY starting
+location. Proof: force both heaps up to a common "`x`,`y` both directly achieved" representative
+(two `_shorten` steps each), cross via plain pointwise equality (`VarChase_pointwise`) once at that
+representative, then peel the *target* heap's own forcing back off (two `_unshorten` steps) to land
+on the real, possibly-still-lazy target heap. The needed "both heaps reach the same terminal"
+hypothesis was the one non-obvious fact to establish at the call site: `ContractLoc_functional`
+pins the achieved endpoint reachable from `y`'s (graph-level) forward chain to be UNIQUE, and that
+endpoint was already shown (via `HeapCorr_con_to_contractloc` on `Gam' x' = Con c1 ws`) to BE
+`wit`/`c1`/`ws` — so `Gam' x`'s own two possible CorrE3 shapes (`EVar y` or achieved) both provably
+terminate at `c1`/`ws` too, via `CorrE_forced_shape` + that same functionality fact. No self-loop
+side conditions were needed in the end (the `y`-side disjunct route through `Gmid`'s own `x'`-aliasing
+fact, not through the graph-level `y0` intermediate, sidestepping that worry entirely). All of this
+is now `Qed`, not `Admitted`, and the two new lemmas are file-general (not specific to this call site).
+
+**Re-diagnosed, NOT closed:** attempted to then "port" this into `theorem2`'s own `G_CaseChoice`
+`NL_Guess` sub-case (line ~7638), per that site's own comment ("would need the FULL
+STEP1/STEP2/demote/re-promote machinery... ported here for `x0` aliasing `y0` via `EChoice`/`NL_Or`
+instead of directly"). That comment undersells the gap. `HeapCorr_fwd_transfer_fwdhere_free`'s
+STEP1-4 dance depends on `Gam x` ALREADY being a literal one-hop alias `EVar y` by the time the
+"other side" (`Hrec2`) starts — which is what lets `NEval_left_shortcut_alias` treat `x` as
+aliasing `y` and promote/demote it. In `G_CaseChoice`, `x0`'s Nat-heap slot is `EChoice y0 z0`, not
+an alias at all, so that promotion step has no foothold. Worse: since `Gam x0` is non-terminal but
+NOT one of `_shortcut_alias`'s two accepted shapes, the natural fallback — "`x0`'s slot is frame-
+irrelevant to `Hrec2`'s own computation, so replay `Hrec2` over a heap with `x0` swapped to whatever
+`HforceX0` produces" — needs `NEval_left_frame_guarded` (or `NEval_left_frozen_at`, which DOES give
+`Gmid2 x0 = Gam x0` unchanged, cleanly, via the `[x0]`-guarded `Hforcey0'`). But `Hrec2`/`Hbodyguess`
+itself runs with **guard `nil`, not `[x0]`** (it's the branch-body continuation from `theorem2`'s own
+top-level nil-guard forcing) — so `x0` is NOT in Hrec2's own guard, and `_frame_guarded`'s whole proof
+technique (which relies on the guard to rule out `x0` ever being re-entered) doesn't apply. Making
+`x0`'s slot provably irrelevant to `Hrec2` without a guard would need an independent **freshness/
+scoping fact** ("`x0`, a heap location from the enclosing computation, is never referenced by
+`body1`/`ws`, the branch body being guessed") — exactly the kind of "global freshness invariant
+`theorem2` doesn't currently have" that `DEAD_ENDS.md`'s §S9 already flagged and abandoned, in a
+different guise. **Conclusion: the `G_CaseChoice`/`NL_Guess` gap is not a mechanical port of the now-
+closed lemma — it needs either a new location-freshness invariant threaded through the whole theorem,
+or a restructuring of how the guard is threaded through `NL_Guess`'s continuation, before the same
+promote/demote technique (or some analogue of it) can even be attempted.** Not attempted further this
+session; flagged here so the next session doesn't re-derive this from scratch.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
