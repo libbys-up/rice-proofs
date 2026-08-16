@@ -1453,6 +1453,74 @@ or a restructuring of how the guard is threaded through `NL_Guess`'s continuatio
 promote/demote technique (or some analogue of it) can even be attempted.** Not attempted further this
 session; flagged here so the next session doesn't re-derive this from scratch.
 
+## 16. Same session, continued: `G_CaseChoice`/`NL_Guess` actually closed (correcting §15's own conclusion); then a first pass at `G_CaseFun`
+
+**§15's own "conclusion" above was wrong, and was overturned within the same session.** The user's
+own suggestion broke the logjam: since `NL_Or` always forces its LEFT operand, a location holding
+`EChoice y z` is operationally indistinguishable, for forcing purposes, from one holding the plain
+alias `EVar y` — no freshness invariant needed at all, just a *bridge* between the two
+representations. Built as two lemmas: `NEval_left_choice_as_alias_force` (peel `NL_VarExp`'s one
+layer, transport the recursive premise — which genuinely IS guarded, `[x]` — via the *already-
+existing* `NEval_left_frame_guarded`) and `NEval_left_choice_as_alias_bcase` (lift across a whole
+`BCase`, since both `NL_Select`/`NL_Guess` force the scrutinee first). With that bridge, the
+already-`Qed`'d `HeapCorr_fwd_transfer_fwdhere_free` (§15's closed lemma) could be called *unmodified*
+against the alias-shaped heap the theorem's own IH already supplies, then carried back across the
+`EChoice`/`EVar` swap. **`theorem2`'s `G_CaseChoice` case is now FULLY `Qed`'d, zero admits** — this
+was the single remaining admit block in the file's active `theorem2` after §14/§15's work.
+
+**Then a first, partial pass at `G_CaseFun`** (previously one blanket `admit.`, the last case in
+`theorem2`). Diagnosis: `x0`'s slot is `EFun f0 args0`, an *unevaluated call* — the graph-level result
+`vx` (`Hrec1`) can be `Bot`/`Free`/`Con`/`Fwd y`/`Choice y z`, and `theorem2`'s own automatic IH for
+`Hrec1` (`IH1`) is Con-restricted and useless for the other four. The fix does NOT need the general
+"theorem2, unrestricted" fact (`theorem2_left`) — it needs only a purely STRUCTURAL, evaluation-free
+correspondence: `hupd G1 x0 vx`'s own `CorrE` requirement at `x0` has a trivial witness for every
+shape (`EVar y` for `Fwd y`, the constructor itself for `Con`/`Choice`, `EVar x0` — the self-loop — for
+`Free`), matching exactly what a genuinely OLDER, superseded `HeapCorr2`-based attempt in this same
+file (`NEval_left_let_chain_to_fwd`/`_to_con`, `theorem2_G_CaseFun_case`, ~line 3696/5561) had already
+worked out but never ported to the current `HeapCorr`/`CorrE3`. Ported and *generalized* into one
+lemma, `NEval_left_let_chain_to_value` (unifying all five shapes via a `GNode_mirror` mapping, rather
+than one lemma per shape), plus the graph-frame lemmas it needed at the assembly site
+(`HeapCorr_update_from_fun`, `WellFoundedFwd_update_from_fun`, `ChainConsistent_update_from_fun`,
+`AliasConsistent_update_from_fun`, `VarChase_avoids_fun_loc` — all proved by the same "`x0`'s old
+content was `EFun`, never Fwd/achieving, so nothing could already have targeted it as a shortcut"
+argument `HeapCorr_update_choice_to_fwd` already used for `EChoice`).
+
+**What's now closed in `G_CaseFun`'s first conjunct:** `Bot` (vacuous), `EVar`/`EFun`-as-`vx`
+(impossible, `GEval_never_var_or_fun`), `Con` (direct), `Fwd y` (mirrors `G_CaseChoice`'s own
+`NL_Select` pattern, but note the scrutinee-forcing structure differs subtly from `G_CaseChoice`: here
+`Hforce0`'s own scrutinee IS `x0` itself — since `G_CaseFun`, unlike `G_CaseChoice`, never redirects
+the graph-level scrutinee — so the `[x0]`-guarded recursive premise needed by `_frame_guarded` comes
+from INVERTING `Hforce0` via `NL_VarExp`'s own shape, not from widening an already-nil-guard fact via
+`NEval_left_alias_weaken_force_y` the way `G_CaseChoice` does; and `Gmid` ends up with `x0` ALREADY
+memoized to the achieved value, so no `_shortcut_alias` promotion step is needed at all, just a plain
+`NEval_left_pointwise_heap` replay — noticeably SIMPLER than `G_CaseChoice`'s analogous branch once the
+guard/scrutinee difference is accounted for).
+
+**Four admits remain, all narrowly scoped:**
+1. `vx = Free` — `x0` forces to the LITERAL token `EFree` (via `NL_ValFree` on a BARE, un-let-bound
+   `free` tail), not a self-loop; `CorrE_Free`'s own witness needs `EVar x0` instead — an extra
+   promotion step (something like: force once more, `NL_VarFree` this time, to actually reach the
+   self-loop) that isn't built here.
+2. `vx = Choice y z` — the function body's own tail being a bare, un-cased choice means `NL_Or`
+   unfolds it EAGERLY inside `Hplug`'s own forcing (`GNode_mirror` correctly targets `BExpr(EChoice y
+   z)` as the "what to force" value for `NEval_left_let_chain_to_value`'s own purposes, but *that's not
+   the same problem* as needing `x0`'s achieved value post-force) — same family of gap as Free.
+3. `NL_Guess` sub-shape within the `Fwd y` branch — `x0` forwards to `y0'` (an ordinary Fwd edge, not
+   an `EChoice`), and `y0'` itself resolves to a free self-loop rather than a constructor. The exact
+   same STEP1-4/two-location-`VarChase` machinery from `HeapCorr_fwd_transfer_fwdhere_free`'s `x' <> y`
+   case (§14) would need adapting to this shape too — not yet attempted, though by analogy with how
+   cleanly the `Con`/`Fwd`-`NL_Select` cases came together, this looks tractable, not another
+   freshness-style wall.
+4. **The whole SECOND conjunct** (`ContractLoc`-matching) for `G_CaseFun` — genuinely not started this
+   session. Unlike the `EFun`-as-top-level-`e` sub-calls (where `theorem2`'s second conjunct is
+   vacuous, `BExpr(EFun..) <> BCase _ _`), `theorem2`'s OWN "e" for the whole `G_CaseFun` rule instance
+   IS `BCase x0 brs0` — so this conjunct is live and would need the analogous "force `x0` reaches
+   `x0'`" → "`ContractLoc G2 x0 x0'`" argument `G_CaseChoice`'s own second conjunct already builds,
+   threaded through the same `Con`/`Fwd` split as the first conjunct above.
+
+`theorem2` now has exactly 4 admits total (all four above, all inside `G_CaseFun`) — down from one
+blanket admit covering the entire case. File still compiles clean (`coqc`, zero errors).
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
