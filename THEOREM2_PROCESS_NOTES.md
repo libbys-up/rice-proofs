@@ -1649,6 +1649,62 @@ alpha-renaming-invariance lemma for `GEval`/`NEval_left` and keep `theorem2`'s s
 `HeapCorr_fwd_transfer_fwdhere_free` (and whatever it touches) to completion. File compiles clean
 (`coqc`, zero errors) throughout; no `.v` changes were made this session — only this diagnosis.
 
+## 19. Same session, continued: attempted path (b) first, hit the same wall §18 predicted; then started
+path (a) for real, in a new standalone file `alpha_renaming_wip.v` — foundational piece done and
+verified, three larger pieces still ahead
+
+**Attempted (b) (the cascading disjunctive-conjunct refactor) concretely before giving up on it.** Read
+`HeapCorr_fwd_transfer_fwdhere_free`'s full `x' <> y` sub-case (`curry_test_leftmost.v:6421-6650`ish,
+the "STEP1-4 promote/demote" machinery) end to end. Confirmed the tied-`x'` hypothesis is genuinely
+load-bearing, not superficial: `curry_test_leftmost.v:6564` (`Hcl_yx' : ContractLoc G1v y x'`) feeds
+into `ContractLoc_first_hop`, `ContractLoc_trans`, and gets pinned against `wit` (the constructor target
+`Gam'` independently reaches) via `ContractLoc_functional` — the whole promotion/demotion argument is
+built around knowing exactly *which* location `x'` is. A decoupled "some free-standing location exists"
+fact isn't sufficient to replay this; weakening it would mean redesigning roughly 200 lines of
+already-`Qed`'d machinery, not patching a signature. No `.v` edits made (read-only investigation);
+reverted to `close-choice-as-alias-gap` cleanly. Confirms §18's prediction was accurate, not
+overcautious.
+
+**Started (a) (the genuine alpha-renaming-invariance lemma) for real, on a new branch
+`alpha-renaming-invariance`.** First design pass (before writing code) surfaced that the natural first
+idea — "pick one bijection σ once, show any derivation relabeled by σ is still valid" — is NOT what's
+needed: `Hforce` (the caller's derivation) picks its own fresh names completely independently, so
+nothing lets a single upfront σ line up with it. What's actually required is a genuine **two-sided
+bisimulation**: given two independently-derived evaluations of alpha-related expressions from
+alpha-related heaps, show their results stay alpha-related, building the correspondence between the two
+derivations' fresh-name choices *incrementally* — extending it by one swapped pair each time either
+side's `NL_Fun`/`NL_Let`/`NL_Guess` picks a fresh name, using that both sides always have infinitely many
+fresh names left to draw from.
+
+Built and verified (`alpha_renaming_wip.v`, compiles clean) the foundational piece this rests on:
+`transpose`, `mutual_inverse` (a bijection given as two mutually-inverse total functions
+`sigma tau : ren`), and `mutual_inverse_extend` — extending a mutual-inverse pair by one fresh pair
+`(a, b)` (both currently fixed points) while preserving mutual-inverse-ness everywhere else. This took
+several iterations, including a genuine bug caught only by a concrete counterexample: the first cut at
+`ext_sigma`/`ext_tau` only *redirected* `a ↦ b` without also redirecting `b` back, silently breaking
+injectivity (`a=5, b=7, sigma=tau=identity` ⇒ `ext_tau(ext_sigma 7)` computed to `5`, not `7`). Fixed by
+making the extension a genuine two-point *swap* rather than a one-sided redirect.
+
+**Still fully unstarted, in order, before this closes the admit:**
+1. `heap_rename` (pointwise: `heap_rename sigma tau G w := option_map (rename_b sigma) (G (tau w))`)
+   plus its interaction with `rename_b`/`hupd`/`hupd_list` (composition/pushforward lemmas).
+2. A "batch-extend by a finite list of pairs" lemma — `NL_Fun` and `NL_Guess` each introduce a *whole*
+   renaming/list at once (not one variable at a time), so `mutual_inverse_extend` needs applying `N`
+   times in a row, matched positionally against a computed `free_vars_b` of the function body / case
+   branch (needs a `free_vars_b : Blk -> list var` fixpoint that doesn't exist yet either).
+3. **The main piece**: the two-sided simultaneous induction over all 11 `NEval_left` rules. 8 of 11
+   just thread the current `(sigma, tau)` through unchanged; `NL_Fun`/`NL_Let`/`NL_Guess` need the
+   extension from (2). Given how much iteration the small piece in (this section) needed, this is the
+   piece most likely to hide further surprises of the same kind.
+4. Wiring the finished lemma into `theorem2`'s `G_CaseFun` second conjunct
+   (`curry_test_leftmost.v:8350-8356`), replacing the `admit`.
+
+**Decision (discussed with the user): stop here for this session.** `alpha_renaming_wip.v` is
+deliberately a standalone file (not spliced into `curry_test_leftmost.v`), self-contained, and carries
+its own header explaining status and the 4 remaining steps above — a documented starting point rather
+than a false start, for whichever session picks this up next. `theorem2` itself is unchanged: still
+exactly one admit, first conjunct fully `Qed`'d, `curry_test_leftmost.v` compiles clean.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
