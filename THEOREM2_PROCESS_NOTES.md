@@ -1521,6 +1521,67 @@ guard/scrutinee difference is accounted for).
 `theorem2` now has exactly 4 admits total (all four above, all inside `G_CaseFun`) — down from one
 blanket admit covering the entire case. File still compiles clean (`coqc`, zero errors).
 
+## 17. Same session, continued again: `Free`/`Choice` closed via a new well-formedness hypothesis; `NL_Guess`-in-`Fwd` closed too — `theorem2` down to ONE admit
+
+**The `Free` sub-case turned out to be a genuine gap in the theorem's own statement, not a missing
+lemma — confirmed with the user before fixing it.** Forcing `x0` (whose slot is `EFun f0 args0`) when
+the function body's tail is BARE `free` (not `let z = free in z`) is *deterministic*: `NL_VarExp →
+NL_Fun → NL_ValFree` is the only possible derivation, and it produces the literal value `BExpr EFree`
+— not a self-loop `EVar w`. But `BCase`'s only two Nat rules (`NL_Select`/`NL_Guess`) need the
+scrutinee to reach `Con` or `EVar x'` specifically; bare `EFree` matches neither, so **no valid
+`NEval_left` derivation of `BCase x0 brs0` exists in this scenario at all**, even though the graph
+side succeeds fine via `G_CaseConFree`. None of `theorem2`'s hypotheses at the time ruled this out.
+The user confirmed the underlying fact: real Curry source has no way to write a bare `free` (or bare
+`?`) outside a `let` binding — matching a restriction the file already anticipated needing for
+`Choice` alone (an older, superseded draft's own comment: "`EChoice`: ruled out for well-formed
+programs by `NoBareChoiceB`, not assumed here" — that hypothesis was never actually added to the
+active `theorem2`).
+
+**Fix:** defined `NoBareFreeOrChoiceB` (mirrors curry.v's own `NoBareChoiceB` fixpoint exactly, just
+also excluding bare `EFree` at every tail position — both shapes are legitimate ONLY as a
+let-binding's own RHS) plus its rename/branch-lookup lemmas (literal copies of `NoBareChoiceB`'s own,
+since the proof technique doesn't care which shapes are excluded), `NoBareFreeOrChoiceProgWF P` (a
+program-wide fact, mirroring `NoAliasLetProgWF`), and the payoff lemma
+`GEval_result_not_free_or_choice`: given this program-wide restriction, `GEval`'s own result can
+NEVER be a bare Free or Choice node — provable by a **plain structural induction on `GEval` with NO
+scope restriction at all** (unlike `NEval_left_let_chain_to_value`, this lemma only tracks a SHAPE
+fact through the six case-tail `GEval` rules, not an actual Nat-heap construction, and
+`NoBareFreeOrChoiceB` restricted to a `BCase` doesn't even depend on the scrutinee — so every
+`BCase`-to-`BCase` step, e.g. `G_CaseFwd`/`G_CaseChoice`/`G_CaseFun`'s own second premise, reuses the
+SAME hypothesis unchanged, no rewriting needed). Added `NoBareFreeOrChoiceProgWF P` as ONE new
+top-level hypothesis to `theorem2` — since it's introduced once, before `induction H` runs (same
+footing as the pre-existing `HPWF`), this did NOT require touching any of the other 12 already-`Qed`'d
+cases at all. Both `Free` and `Choice` sub-cases of `G_CaseFun`'s first conjunct became flat
+`exfalso` contradictions.
+
+**Then closed the `NL_Guess`-within-`Fwd` admit too — turned out simpler than diagnosed in §16.**
+The §16 comment guessed this needed `HeapCorr_fwd_transfer_fwdhere_free`'s full STEP1-4/
+two-location-`VarChase` machinery (built for reconciling TWO INDEPENDENTLY-chosen fresh guesses — one
+from forcing `x` directly, one from forcing `y` and continuing separately). That's not what's
+happening here: there is only ONE guess in play (`Hbodyguess` is shared, already the same derivation
+either way), so the fix mirrors the ALREADY-`Qed`'d `NL_Select` branch immediately above it in the
+same case, line for line — invert `Hforce0` (x0's own scrutinee-forcing) via `NEval_left_evar_shape`
+to extract the guarded `(x0::nil)` recursive premise, transport it via the existing
+`NEval_left_frame_guarded`, feed it to `Hplug` to get `HforceX0` from the TRUE `Gam`, then a plain
+`NEval_left_pointwise_heap` replay — just targeting a self-loop `EVar x'` instead of `Con c' zs`. Only
+wrinkle: `NEval_left_evar_shape`'s own first disjunct (`VarCons`) is normally closed by `discriminate`
+when the target is `Con`-shaped, but here the target IS `EVar x'`, so that disjunct's OWN impossibility
+comes from its `exists c args, v = Con c args` sub-part instead — needed keeping that existential
+in the destructuring pattern rather than discarding it.
+
+**`theorem2` now has exactly ONE admit total** — the second conjunct (`ContractLoc`-matching) for
+`G_CaseFun`. Diagnosis (from directly attempting it): unlike the first conjunct, the second conjunct's
+own goal for the `Fwd` sub-case needs a **Nat-to-Graph** correspondence ("forcing the function call
+reaches self-loop `x'`" implies "`ContractLoc` from the graph's own call-result to `x'`") for an
+**arbitrary** expression (`EFun f0 args0`), not just a `BCase`-shaped one — `theorem2`'s own second
+conjunct only covers `BCase`-shaped `e`. Attempting to invert the forcing derivation directly (via
+`NEval_left_fun_shape`) to relate it back to `Hrec1`'s own `(ps, body, s)` decomposition risks needing
+an independently-chosen renaming `s'` that may differ from `Hrec1`'s own `s` — exactly the
+"alpha-renaming invariance" gap the older, superseded `theorem2_G_CaseFun_case` draft already flagged
+as a SEPARATE blocker on top of its own main one. Not attempted further this session; flagged here so
+the next session doesn't re-derive this diagnosis from scratch. File compiles clean (`coqc`, zero
+errors) throughout.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
