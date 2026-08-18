@@ -1582,6 +1582,73 @@ as a SEPARATE blocker on top of its own main one. Not attempted further this ses
 the next session doesn't re-derive this diagnosis from scratch. File compiles clean (`coqc`, zero
 errors) throughout.
 
+## 18. Next session: pinned down exactly what the alpha-renaming gap is (and isn't), and why it can't
+be fixed either by a new lemma kept local to `theorem2` or by a syntax restriction — the last admit
+stays, now precisely characterized
+
+**Half of the §17 worry dissolves once you actually look at what `ContractLoc` is checked against.**
+The user's own framing was the key: the second conjunct's conclusion is about `G2`, the graph *after
+both* `Hrec1` (evaluates the call) *and* `Hrec2` (re-evaluates `BCase x0 brs0` on the updated graph)
+have run — and `Hrec2` is already one of `G_CaseFun`'s own two recursive premises, so it already has
+its own `IH2` from `theorem2`'s own induction. `G_CaseChoice`'s already-`Qed`'d second conjunct
+(`curry_test_leftmost.v:8526-8531`) is the exact template: get `ContractLoc G1 y0 x'` by calling `IH2`
+*recursively on `Hrec`'s own next hop*, then close with one `CL_Fwd`. So "does the chase ever get stuck
+behind an unevaluated call" is already answered — it can't, by the same induction, no new lemma needed.
+
+**The genuine remainder: reconciling `Hforce`'s own internal fresh choice against `Hrec1`'s.** Before
+`IH2` is even reachable, `Hforce` (arbitrary, caller-supplied) has to be unwound at `x0` itself, and
+since `Gam x0 = EFun f0 args0` too, that unwinding fires `NL_VarExp → NL_Fun`, picking its own fresh
+renaming `s'` — independent of `Hrec1`'s own `s`. Checked whether `HeapCorr`'s domain-matching
+(`G x = None <-> Gam x = None`, `curry_test_leftmost.v:2417-2421`) already rules out disagreement: it
+doesn't. It only guarantees `s` and `s'` avoid the *same* forbidden set — nothing pins them to make the
+*same* choice among the (infinitely many) remaining fresh locations. Splitting on where the `Fwd`
+target `y0'`/`x'` comes from inside the function body:
+- **A parameter** — no ambiguity. Both `s` and `s'` are independently *forced* to map it to the same
+  `args0[i]`, since that part of `NL_Fun`/`G_Fun`'s precondition isn't a free choice at all.
+- **A body-internal `let`-bound variable** — genuinely ambiguous. `y0' = s(z)`, `x' = s'(z)`, and
+  nothing ties them together. The concrete shape that lands here is a function whose body
+  *manufactures a fresh free variable*, e.g. `f0(p) = let z = free in z` — i.e. exactly how
+  `unknown`/anonymous free variables are idiomatically written in real Curry. So this isn't a corner
+  case excludable the way bare-`free`-as-a-tail was in §17 (no surface syntax produces that one); this
+  pattern is completely ordinary, so ruling it out would falsify the theorem's applicability to real
+  programs.
+
+**Checked all four already-`Qed`'d second-conjunct cases (`G_CaseFwd`, `G_CaseChoice`, `G_CaseCon`,
+`G_CaseConFree`) for the same exposure — none of them have it.** None involves an existential
+fresh-name pick whose *output identity* becomes the thing `ContractLoc`'s conclusion is checked
+against: `G_CaseChoice`/`G_CaseFwd` just chase a pre-existing edge (`y`/`z` already fixed by the
+graph, no renaming at all); `G_CaseConFree` narrows to a self-loop *at `x0` itself*
+(`curry_test_leftmost.v:8654`, `injection Heqv2 as Heqv2; subst x'` — `x'` is forced equal to `x0`
+directly, no freshness involved even though `G_CaseConFree` itself picks fresh `ws` for the new
+constructor's arguments, because those `ws` never become the thing being matched against). `G_CaseFun`
+is the only rule in the whole system where a genuinely fresh, existentially-chosen name can become the
+`ContractLoc` target itself — confirming this really is new territory, not something the existing
+proof technique already handles elsewhere in a form that generalizes.
+
+**Considered weakening the conclusion to an existential (`ContractLoc G' x x' \/ exists y, ContractLoc
+G' x y /\ G' y = Some (GExpr EFree)`), keeping it as a disjunction so the four already-`Qed`'d cases
+could just take the `left` branch unchanged.** This looked local at first, but tracing *every* actual
+consumer of the second conjunct — not just the four "second conjunct" bullets, but two more usages
+buried inside `G_CaseFwd`'s and `G_CaseChoice`'s own *first*-conjunct proofs
+(`curry_test_leftmost.v:7933-7941`, and the analogous spot near `:8494`) — found that one of them feeds
+the result directly into `HeapCorr_fwd_transfer_fwdhere_free` (the two-hop `VarChase` lemma closed in
+the prior session) as a hypothesis of the literal tied-`x'` shape. The weakening doesn't stay inside
+`theorem2`; it forces a matching change to that lemma's own signature (and possibly further, unmapped
+cascade beyond it). So this path is a real, larger refactor, not a local patch — flagged to the user
+along with the original alpha-invariance-lemma option; **decision: stop here rather than take on either
+one.**
+
+**Current, final state of this investigation: `theorem2` has exactly ONE admit** — the second conjunct
+(`ContractLoc`-matching) of `G_CaseFun`, `curry_test_leftmost.v:8356`. The first conjunct (Con-reaching
+correspondence — the paper's actual Theorem 2 claim) is fully `Qed`'d for every case including
+`G_CaseFun`. The remaining gap is precisely: relating two independently-fresh-chosen evaluations of the
+same function call, specifically when that call manufactures a fresh free variable via an internal
+`let`. Two viable ways forward for a future session, neither attempted: (a) prove a genuine
+alpha-renaming-invariance lemma for `GEval`/`NEval_left` and keep `theorem2`'s statement exactly as is;
+(b) weaken the second conjunct's conclusion to the disjunctive form above, and follow the cascade into
+`HeapCorr_fwd_transfer_fwdhere_free` (and whatever it touches) to completion. File compiles clean
+(`coqc`, zero errors) throughout; no `.v` changes were made this session — only this diagnosis.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
