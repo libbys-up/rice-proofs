@@ -1705,6 +1705,57 @@ its own header explaining status and the 4 remaining steps above — a documente
 than a false start, for whichever session picks this up next. `theorem2` itself is unchanged: still
 exactly one admit, first conjunct fully `Qed`'d, `curry_test_leftmost.v` compiles clean.
 
+## 20. Same session, continued again: piece 1 (`heap_rename`/composition) finished and verified; piece
+2 (batch-extend by a finite list) revealed its own substantial sub-problem — a genuine
+permutation/cycle-decomposition argument, not a quick iteration of piece 1
+
+**Finished and verified piece 1.** Added to `alpha_renaming_wip.v`: `nheap_rename` (pointwise:
+`nheap_rename sigma tau G w := option_map (rename_b sigma) (G (tau w))`) plus its `hupd`/`hupd_list`
+commutation lemmas, and `rename_b`/`rename_e0` composition (`rename_b sigma1 (rename_b sigma2 b) =
+rename_b (fun w => sigma1 (sigma2 w)) b`). The composition lemma needed strong induction on `blk_size`
+rather than `Blk`'s own auto-generated induction principle — mirroring `curry.v`'s own
+`NoBareChoiceB_rename_bound` pattern exactly, since `Blk`'s auto-generated IH doesn't give a usable
+hypothesis for branch bodies nested inside `BCase`'s own `brs` list (a recurring theme in this file,
+already flagged as **T15**/similar elsewhere). ~246 lines total so far, compiles clean.
+
+**Piece 2 (batch-extend `mutual_inverse_extend` by a finite list of pairs, needed because `NL_Fun`
+introduces a whole renaming at once) turned out to be its own substantial sub-problem, not a quick
+iteration.** The root issue: `NL_Fun`'s renaming `s` (graph side / first derivation) and the target
+`NL_Fun`'s renaming `s2` (second, independently-derived side) are chosen independently, and their
+fresh-name *images can overlap with each other* — nothing rules this out, since each renaming is only
+required to avoid the *original* heap's domain, not the other side's picks. So the pair `a_i = s(y_i)`
+can coincide with an *earlier* pair's `b_j = s2(y_j)` for `j < i`.
+
+Tried two approaches, both invalidated concretely (same discipline as piece 1's own counterexample):
+- **Iterating `mutual_inverse_extend` pair-by-pair** fails outright — its own precondition ("both
+  points are currently fixed points of the accumulated bijection") can already be false by the time
+  pair `i` is reached, if `a_i` collided with an earlier `b_j`.
+- **A "CONS a new pair onto the front, shadowing lookup" list-of-pairs construction** looked promising
+  by hand-trace (the intuition: later entries shadow earlier ones for the same key, so collisions
+  should "just work out"). Coded it up and checked it the same way piece 1's bug was caught — a concrete
+  numeric trace with only a *single* pair (`a=5, b=7`, identity base) already reduces to the exact same
+  bug as piece 1's very first (buggy) attempt: `tau(sigma(7))` comes out `5`, not `7`. The "shadowing"
+  intuition doesn't actually address the base case at all — it was solving a problem (which entry wins
+  when there's a naming conflict between pairs) that isn't the same problem as (which entry wins when a
+  single pair's own two endpoints need simultaneous redirection).
+
+**What's actually needed:** a genuine finite-permutation/cycle-decomposition argument — "any bijection
+between two finite subsets `A, B` (given as parallel lists, matched positionally) extends to a
+permutation of `A ∪ B`, identity outside it" — the standard fact behind why an arbitrary permutation of
+a finite set decomposes into disjoint cycles. This is a real, self-contained combinatorial lemma, but a
+separate one from anything built so far, not a two-line extension of `mutual_inverse_extend`. Not
+attempted this session.
+
+**Decision (discussed with the user): stop here again.** This is the third escalation in scope
+discovered this session — first the cascading `HeapCorr_fwd_transfer_fwdhere_free` refactor (dead end),
+then "closure under renaming" turning out to be the wrong shape entirely (needed a two-sided
+bisimulation instead), now this permutation-extension sub-problem inside the bisimulation's own
+foundational layer. Each discovery was concrete and load-bearing, not speculative — but the pattern
+itself is informative: this gap keeps being deeper than the previous diagnosis suggested. `theorem2`
+itself remains unchanged throughout all of this: still exactly one admit, first conjunct fully `Qed`'d,
+`curry_test_leftmost.v` compiles clean. `alpha_renaming_wip.v`'s own header is kept current with exactly
+this status for whoever (or whichever future session) picks it up next.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary

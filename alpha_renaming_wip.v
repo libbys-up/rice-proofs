@@ -11,29 +11,54 @@ Require Import curry.
 (* (rather than spliced into curry_test_leftmost.v) since none of this   *)
 (* is wired into the real proof yet.                                     *)
 (*                                                                        *)
-(* STATUS: only the bijection-extension core below is done and verified  *)
-(* (compiles clean).  Still needed, in order, before this closes the     *)
-(* admit -- none of it started:                                          *)
-(*   1. heap_rename (pointwise: heap_rename sigma tau G w :=              *)
-(*      option_map (rename_b sigma) (G (tau w))) plus its interaction    *)
-(*      with rename_b/hupd/hupd_list (composition/pushforward lemmas).   *)
+(* STATUS (updated after a second work session):                         *)
+(*                                                                        *)
+(* DONE, VERIFIED (compiles clean):                                      *)
+(*   1a. Bijection-extension core: transpose, mutual_inverse, and         *)
+(*       mutual_inverse_extend (extend a mutual-inverse pair by ONE       *)
+(*       fresh pair (a,b), both CURRENTLY fixed points, while preserving  *)
+(*       mutual-inverse-ness elsewhere -- a genuine two-point SWAP, not   *)
+(*       a one-sided redirect; the first cut at this silently broke       *)
+(*       injectivity, caught only via a concrete counterexample: a=5,     *)
+(*       b=7, sigma=tau=identity, ext_tau(ext_sigma 7) came out 5, not 7).*)
+(*   1b. nheap_rename (pointwise: nheap_rename sigma tau G w :=           *)
+(*       option_map (rename_b sigma) (G (tau w))), its hupd/hupd_list     *)
+(*       commutation lemmas, and rename_b/rename_e0 COMPOSITION           *)
+(*       (rename_b sigma1 (rename_b sigma2 b) = rename_b (sigma1.sigma2)  *)
+(*       b) -- the latter needed strong induction on blk_size, mirroring  *)
+(*       curry.v's own NoBareChoiceB_rename_bound pattern (Blk's own      *)
+(*       auto-generated induction principle doesn't give a usable IH for  *)
+(*       branch bodies nested inside BCase's brs list).                  *)
+(*                                                                        *)
+(* NOT DONE -- and (2) below turned out to be its own substantial,        *)
+(* separate sub-problem, not a quick iteration of (1a):                  *)
 (*   2. A 'batch-extend by a finite list of pairs' lemma -- NL_Fun and    *)
-(*      NL_Guess each introduce a WHOLE renaming/list at once (not one   *)
-(*      variable at a time), so mutual_inverse_extend below needs to be   *)
-(*      applied N times in a row, matched positionally against a         *)
-(*      computed free_vars_b of the function body / case branch.         *)
+(*      NL_Guess each introduce a WHOLE renaming/list at once, and        *)
+(*      CRUCIALLY the two independently-chosen renamings' fresh-name      *)
+(*      IMAGES CAN OVERLAP WITH EACH OTHER (nothing rules this out: each  *)
+(*      is only required to avoid the ORIGINAL heap's domain, not the     *)
+(*      other side's picks) -- so a_i = s(y_i) can coincide with an       *)
+(*      EARLIER pair's b_j = s2(y_j) for j<i.  Tried two approaches, both *)
+(*      failed on a concrete check: (i) iterating mutual_inverse_extend    *)
+(*      pair-by-pair fails outright since its OWN precondition ("both     *)
+(*      points currently fixed") can be false by the time we reach pair   *)
+(*      i.  (ii) a 'CONS a new pair onto the front, shadowing lookup'      *)
+(*      list-of-pairs construction looked promising by hand-trace, but a  *)
+(*      concrete numeric check (same style as (1a)'s counterexample)      *)
+(*      showed it silently reduces to the SAME single-pair bug from (1a)  *)
+(*      when tried with only one pair -- meaning what's actually needed   *)
+(*      is a genuine finite-permutation/cycle-decomposition argument      *)
+(*      ('any bijection between two finite subsets A,B extends to a       *)
+(*      permutation of A union B'), not a straightforward extension of    *)
+(*      what's already built here.  UNSTARTED.                           *)
 (*   3. THE MAIN PIECE: a two-sided simultaneous induction over all 11    *)
 (*      NEval_left rules ('if two independently-derived evaluations of   *)
 (*      alpha-related expressions from alpha-related heaps agree on      *)
 (*      their guard/heap correspondence, their results stay alpha-       *)
 (*      related') -- 8 of 11 rules just thread the current (sigma,tau)   *)
-(*      through unchanged; NL_Fun/NL_Let/NL_Guess need the extension      *)
-(*      from (2).  This is the piece most likely to hide further         *)
-(*      surprises, going by how much iteration the small piece below     *)
-(*      needed (including a genuine bug: the first cut at 'redirect one   *)
-(*      point' silently broke injectivity, caught only via a concrete     *)
-(*      counterexample -- a=5,b=7,sigma=tau=identity, ext_tau(ext_sigma   *)
-(*      7) came out 5, not 7).                                            *)
+(*      through unchanged; NL_Fun/NL_Let/NL_Guess need (2).  UNSTARTED,   *)
+(*      and likely to hide further surprises of its own, going by how    *)
+(*      much iteration (1) and (2) each needed.                          *)
 (*   4. Wiring the finished lemma into theorem2's G_CaseFun second        *)
 (*      conjunct (curry_test_leftmost.v:8350-8356), replacing the admit.  *)
 (*                                                                        *)
@@ -143,4 +168,104 @@ Proof.
         assert (Htw_b : tau w <> b).
         { intro Heq. assert (Hwb' : w = b) by (rewrite <- (Hts w), Heq; exact Hsb). congruence. }
         rewrite (ext_sigma_other sigma a b (tau w) Htw_a Htw_b). exact (Hts w).
+Qed.
+
+(* ==================================================================== *)
+(* PIECE 1: heap_rename, and its interaction with rename_b/rename_e0/    *)
+(* hupd/hupd_list.                                                        *)
+(* ==================================================================== *)
+
+Definition heap_rename {A} (rn : ren) (tau : ren) (G : heap A) (renA : ren -> A -> A) : heap A :=
+  fun w => option_map (renA rn) (G (tau w)).
+
+(* Specialized to NHeap = heap Blk, using rename_b as the value-renamer. *)
+Definition nheap_rename (sigma tau : ren) (G : NHeap) : NHeap :=
+  fun w => option_map (rename_b sigma) (G (tau w)).
+
+Lemma nheap_rename_at :
+  forall sigma tau, mutual_inverse sigma tau ->
+  forall G z, nheap_rename sigma tau G (sigma z) = option_map (rename_b sigma) (G z).
+Proof.
+  intros sigma tau [Hst Hts] G z. unfold nheap_rename. rewrite Hst. reflexivity.
+Qed.
+
+Lemma nheap_rename_hupd :
+  forall sigma tau, mutual_inverse sigma tau ->
+  forall G x v, forall w,
+  nheap_rename sigma tau (hupd G x v) w = hupd (nheap_rename sigma tau G) (sigma x) (rename_b sigma v) w.
+Proof.
+  intros sigma tau Hmi G x v w. destruct Hmi as [Hst Hts].
+  unfold nheap_rename, hupd.
+  destruct (Nat.eqb (tau w) x) eqn:Etw.
+  - apply Nat.eqb_eq in Etw.
+    assert (Hwsx : w = sigma x) by (rewrite <- (Hts w), Etw; reflexivity).
+    rewrite Hwsx. rewrite Nat.eqb_refl. reflexivity.
+  - apply Nat.eqb_neq in Etw.
+    destruct (Nat.eqb w (sigma x)) eqn:Ewsx.
+    + apply Nat.eqb_eq in Ewsx. subst w.
+      exfalso. apply Etw. rewrite Hst. reflexivity.
+    + reflexivity.
+Qed.
+
+Lemma nheap_rename_hupd_list :
+  forall sigma tau, mutual_inverse sigma tau ->
+  forall xs vs G, forall w,
+  nheap_rename sigma tau (hupd_list G xs vs) w
+    = hupd_list (nheap_rename sigma tau G) (map sigma xs) (map (rename_b sigma) vs) w.
+Proof.
+  intros sigma tau Hmi xs.
+  induction xs as [| x xs' IH]; intros vs G w.
+  - destruct vs as [| v vs']; reflexivity.
+  - destruct vs as [| v vs'].
+    + reflexivity.
+    + cbn [hupd_list map].
+      rewrite (nheap_rename_hupd sigma tau Hmi (hupd_list G xs' vs') x v w).
+      unfold hupd. destruct (Nat.eqb w (sigma x)); [reflexivity | exact (IH vs' G w)].
+Qed.
+
+(* rename_b/rename_e0 compose cleanly (both are just structural pushes of a
+   ren through the syntax, so composing two renamings is the same as
+   applying their pointwise composition once). *)
+Lemma rename_e0_comp :
+  forall sigma1 sigma2 e, rename_e0 sigma1 (rename_e0 sigma2 e) = rename_e0 (fun w => sigma1 (sigma2 w)) e.
+Proof.
+  intros sigma1 sigma2 e. destruct e; simpl; try reflexivity.
+  - rewrite map_map. reflexivity.
+  - rewrite map_map. reflexivity.
+Qed.
+
+(* Blk's auto-generated induction principle doesn't give a usable IH for
+   branch bodies nested inside brs (BCase's own list argument) -- mirror
+   curry.v's own NoBareChoiceB_rename_bound pattern: strong induction on
+   blk_size instead. *)
+Lemma rename_b_comp_bound :
+  forall n b, blk_size b < n ->
+  forall sigma1 sigma2, rename_b sigma1 (rename_b sigma2 b) = rename_b (fun w => sigma1 (sigma2 w)) b.
+Proof.
+  induction n as [n IHn] using (well_founded_induction lt_wf).
+  intros b Hsize sigma1 sigma2.
+  destruct b as [x e k | x brs | e].
+  - simpl in *.
+    assert (Hn : blk_size k + 1 < n) by lia.
+    assert (Hm : blk_size k < blk_size k + 1) by lia.
+    rewrite (IHn (blk_size k + 1) Hn k Hm sigma1 sigma2), rename_e0_comp. reflexivity.
+  - simpl in *. f_equal.
+    induction brs as [| [[c ps] bd] brs' IHbrs].
+    + reflexivity.
+    + simpl in Hsize |- *.
+      assert (Hbd : blk_size bd + 1 < n) by lia.
+      assert (Hm : blk_size bd < blk_size bd + 1) by lia.
+      assert (Hrest : S (fold_right (fun p acc => blk_size (match p with (_,_,bd0) => bd0 end) + acc) 0 brs') < n)
+        by lia.
+      rewrite map_map. f_equal.
+      * f_equal. exact (IHn (blk_size bd + 1) Hbd bd Hm sigma1 sigma2).
+      * exact (IHbrs Hrest).
+  - simpl. rewrite rename_e0_comp. reflexivity.
+Qed.
+
+Lemma rename_b_comp :
+  forall sigma1 sigma2 b, rename_b sigma1 (rename_b sigma2 b) = rename_b (fun w => sigma1 (sigma2 w)) b.
+Proof.
+  intros sigma1 sigma2 b.
+  exact (rename_b_comp_bound (S (blk_size b)) b (Nat.lt_succ_diag_r _) sigma1 sigma2).
 Qed.
