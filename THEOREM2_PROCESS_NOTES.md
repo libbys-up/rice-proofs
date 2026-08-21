@@ -2291,6 +2291,59 @@ none. **Next step**: feed this back into `NL_Fun`'s own stalled fifth gap in `NE
 
 ---
 
+## 30. Same session, continued: the fifth gap genuinely closed — and a sixth, more fundamental one found
+immediately behind it
+
+**The user said "let's continue"**, then "let's start on that" (the reorder), then "let's continue" again —
+carrying straight through from §29's finish into feeding `NEval_left_closed_preserved` back into `NL_Fun`'s
+own stalled fifth gap.
+
+**Threading**: added `FunBodyWellScoped P`, `ClosedHeap Gam1`, and `(forall w, In w (free_vars_b e1) ->
+Gam1 w <> None)` as three new hypotheses to `NEval_left_confluence` itself, right alongside `Hcontain0`/
+`HFdom1`/`HFdom2`. Re-threading them through the 8 already-`Qed`'d cases turned out to be nearly free:
+`VarCons`/`VarSelf`/`VarFree`/`ValFree`/`ValCon` are leaves (nothing to thread), and `VarExp`/`Or`/`Let`
+each needed exactly the derivation `NEval_left_closed_preserved`'s *own* corresponding case had already
+worked out — copy the technique, not re-derive it.
+
+**The fifth gap, actually closed.** With `Hclosed1 : ClosedHeap G0` now directly available in `NL_Fun`'s own
+case (it *is* the theorem's `Gam1`, unchanged, for that branch), building `NHeapAlpha sigma tau G0 Gam2`
+needed one more piece beyond PIECE 5/6: for `z` a "pure sink" in `ps_pairs`'s range but not its domain (i.e.
+`z = s2 y` for some `y`, where `s2 y` doesn't happen to equal any `s y'`), nothing in `batch_extend`'s
+existing 3-conjunct interface pins down where `sigma` sends `z`. Traced by hand: `batch_extend`'s own
+*construction* (cycle/component-based) always keeps `sigma` mapping the pairs-list's domain+range into
+itself — true by construction, just not exposed. Added a 4th conjunct to `batch_extend`'s statement
+(`sigma'` keeps `ps`'s domain+range closed under itself) and a new lemma `cyc_sigma_in` (`In w l -> In
+(cyc_sigma l sigma w) l` — a rotation never leaves its own list, via `rotate1`'s permutation property) to
+support it; re-proving `batch_extend`'s own induction to carry the new conjunct took two `change` fixes
+(the by-now-familiar unreduced-`if`-under-a-closure trap, already documented at T-something) and one
+`Permutation_in` argument-order fix (`x` is explicit and comes *before* the `Permutation` proof, not after).
+With that in hand, `HNHAsigmatau` was built via the same "z-based" reformulation of `NHeapAlpha` planned
+several sessions ago, and **it compiled clean on the first attempt** — real confirmation the diagnosis (G0's
+own stored values never reference the fresh locations as *values*, because `ClosedHeap G0` plus both fresh
+lists avoiding `G0`'s domain forces it) was exactly right.
+
+**A sixth gap, found immediately behind the fifth.** Calling the outer `IH` on `Hrec` needs, among its
+hypotheses, `Hcontain0` *for `sigma`* — `forall w, sigma w <> w -> G0 w <> None /\ Gam2 w <> None` — and
+this is **false**, not merely unproven: `sigma` is *required* to move every `s(y)` to `s2(y)` (that's
+`Hrealizes`/`Hnonparam`, load-bearing for `Hfinal` itself), yet `G0 (s y) = None` (`Hfresh`, directly) and
+`Gam2 (s y) = None` (derivable the same way the fifth gap's own G0-side reasoning went). `sigma` is forced to
+move *exactly* the locations both heaps leave undefined — the one thing `Hcontain0` (as phrased) forbids.
+This is independent of everything about `ClosedHeap`/`free_vars_b` — it was always going to block `NL_Fun`'s
+case, just hidden behind the fifth gap until now.
+
+**Likely resolution** (not attempted): `Hcontain0`, added several sessions ago as "correction (c)", is
+probably stronger than its actual job requires. Its only real purpose is to license `Hcontain_None_fixed` at
+whichever *specific* fresh locations a deeper `NL_Fun`/`NL_Guess` call picks — not to hold unconditionally
+for every `w`. Weakening it correctly — without re-breaking the 8 cases already threaded through the current
+phrasing, a *fourth* re-verification pass — needs its own careful trace-first pass before touching any code.
+
+**Status**: `alpha_renaming_wip.v` (2636 lines) compiles clean end-to-end. Still exactly 3 admits total, all
+in `NEval_left_confluence` — `NL_Fun` now stops one genuine step later than before (at the sixth gap, not
+the fifth), `NL_Select`/`NL_Guess` unchanged. `theorem2` still has its one original admit,
+`curry_test_leftmost.v` still untouched.
+
+---
+
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
 
 This part catalogs, with real examples, every distinct tactic/pattern used repeatedly across

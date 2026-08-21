@@ -254,10 +254,43 @@ Require Import curry_test_leftmost.
 (*      across the scrutinee-forcing step.  Six small helper lemmas along the   *)
 (*      way: let_content_vars, free_vars_b_bcase_branch, hd_error_in,           *)
 (*      zipsubst_in/zipsubst_notin, hupd_list_map_self/hupd_list_notin.         *)
-(*   4. Feeding NEval_left_closed_preserved back into NL_Fun's own stalled      *)
-(*      fifth gap in NEval_left_confluence (the ClosedHeap G0 hypothesis that   *)
-(*      gap needs is now something this file can actually produce, not just    *)
-(*      assume) -- NOT YET DONE.                                               *)
+(*   4. Fed NEval_left_closed_preserved back into NL_Fun's fifth gap --         *)
+(*      DONE, the fifth gap is genuinely CLOSED.  Threading ClosedHeap Gam1/    *)
+(*      FunBodyWellScoped P/e1's own free_vars_b-closedness through ALL 11      *)
+(*      cases of NEval_left_confluence (mirroring PIECE 5's own per-case        *)
+(*      derivations almost verbatim: VarExp/Or/Let each reuse exactly the       *)
+(*      technique PIECE 5 already worked out for their own cases) let NL_Fun's  *)
+(*      own case build NHeapAlpha sigma tau G0 Gam2 outright and it compiled    *)
+(*      clean on the FIRST try -- confirming the fifth gap's diagnosis (G0's    *)
+(*      own stored values never reference the fresh locations as VALUES) was    *)
+(*      exactly right, and ClosedHeap was exactly the missing piece. Needed     *)
+(*      one further addition beyond PIECE 5/6: batch_extend itself gained a     *)
+(*      4th conjunct (sigma' keeps ps's whole domain+range closed under         *)
+(*      itself, not just fixed OUTSIDE it -- proved via a new cyc_sigma_in      *)
+(*      lemma, a rotation never leaves its own list), needed for the "z is a    *)
+(*      pure sink" case (z in ps_pairs's range but not its domain) where        *)
+(*      nothing else pins down where sigma sends it.                           *)
+(*                                                                              *)
+(*      A SIXTH gap surfaced immediately behind the fifth, found only once     *)
+(*      NHeapAlpha sigma tau G0 Gam2 was in hand and the outer IH's remaining   *)
+(*      hypotheses needed supplying: IH also needs "Hcontain0 for sigma" --     *)
+(*      forall w, sigma w<>w -> G0 w<>None /\ Gam2 w<>None -- and this is       *)
+(*      FALSE, not just unproven: sigma is REQUIRED to move every s(y) to      *)
+(*      s2(y) (that's Hrealizes/Hnonparam, load-bearing for Hfinal itself),     *)
+(*      yet G0 (s y) = None (Hfresh) and Gam2 (s y) = None (derived, same       *)
+(*      technique as the fifth gap's own G0-side reasoning) -- sigma is         *)
+(*      forced to move EXACTLY the locations both heaps leave undefined, the    *)
+(*      one thing this hypothesis forbids. Independent of anything about       *)
+(*      ClosedHeap/free_vars_b -- this was ALWAYS going to block NL_Fun's own   *)
+(*      case, just not reached until the fifth gap stopped hiding it. Likely    *)
+(*      resolution: Hcontain0 (added as "correction (c)" several sessions ago)  *)
+(*      is stronger than its real job needs -- it only has to license           *)
+(*      Hcontain_None_fixed at whichever SPECIFIC fresh locations a DEEPER      *)
+(*      NL_Fun/NL_Guess call picks, not hold unconditionally for every w --     *)
+(*      but weakening it correctly, without re-breaking the 8 cases already     *)
+(*      threaded through it (a FOURTH re-verification pass), needs its own      *)
+(*      careful trace-first pass. NOT YET ATTEMPTED. See NL_Fun's own in-       *)
+(*      proof comment for the precise stall point.                             *)
 (*   5. Wiring the finished lemma into theorem2's G_CaseFun second        *)
 (*      conjunct (curry_test_leftmost.v:8350-8356), replacing the admit.  *)
 (*                                                                        *)
@@ -692,6 +725,23 @@ Proof.
   unfold cyc_sigma. rewrite Hidx. simpl.
   rewrite (app_nth2 l' [x] 0 (Nat.le_refl (length l'))).
   rewrite Nat.sub_diag. reflexivity.
+Qed.
+
+(* cyc_sigma maps l INTO l: for w already in l, the rotated lookup lands
+   back inside l (a rotation is a permutation, so "index i of rotate1 l" is
+   always some element l already has).  Needed later (batch_extend's own
+   4th conjunct) to know sigma' keeps the whole pairs-list domain+range
+   closed under itself, not just fixed OUTSIDE it. *)
+Lemma cyc_sigma_in : forall l sigma w, In w l -> In (cyc_sigma l sigma w) l.
+Proof.
+  intros l sigma w Hw. unfold cyc_sigma.
+  destruct (list_index l w) as [i | ] eqn:Ei.
+  - assert (Hne : nth_error l i = Some w) by exact (list_index_nth_error l w i Ei).
+    assert (Hilt : i < length l) by (apply nth_error_Some; rewrite Hne; discriminate).
+    assert (Hilt2 : i < length (rotate1 l)) by (rewrite rotate1_length; exact Hilt).
+    assert (Hin_rot : In (nth i (rotate1 l) 0) (rotate1 l)) by exact (nth_In (rotate1 l) 0 Hilt2).
+    exact (Permutation_in (nth i (rotate1 l) 0) (Permutation_sym (rotate1_perm l)) Hin_rot).
+  - exfalso. exact (list_index_none_not_in l w Ei Hw).
 Qed.
 
 (* ==================================================================== *)
@@ -1210,13 +1260,16 @@ Theorem batch_extend :
   (forall w, In w (map fst ps) \/ In w (map snd ps) -> sigma w = w) ->
   exists sigma' tau', mutual_inverse sigma' tau' /\
     (forall a b, In (a, b) ps -> sigma' a = b) /\
-    (forall w, ~ In w (map fst ps) -> ~ In w (map snd ps) -> sigma' w = sigma w).
+    (forall w, ~ In w (map fst ps) -> ~ In w (map snd ps) -> sigma' w = sigma w) /\
+    (forall w, In w (map fst ps) \/ In w (map snd ps) ->
+       In (sigma' w) (map fst ps) \/ In (sigma' w) (map snd ps)).
 Proof.
   induction n as [n IHn] using (well_founded_induction lt_wf).
   intros ps Hlen HNDfst HNDsnd sigma tau Hmi Hfix.
   destruct ps as [| p ps'].
   - exists sigma, tau.
-    split; [exact Hmi | split; [intros a b Hc; destruct Hc | intros w _ _; reflexivity]].
+    split; [exact Hmi | split; [intros a b Hc; destruct Hc | split; [intros w _ _; reflexivity | ]]].
+    intros w Hw. destruct Hw as [Hw | Hw]; destruct Hw.
   - set (v0 := pick_source (p :: ps')).
     assert (Hnnil : p :: ps' <> nil) by discriminate.
     destruct (component_invariant (p :: ps') HNDsnd HNDfst v0) as [HNDcomp [Hchaincomp Hterm]].
@@ -1274,8 +1327,8 @@ Proof.
       apply Hfix. destruct Hw as [Hw | Hw]; [left; exact (Hrest_sub_fst w Hw) | right; exact (Hrest_sub_snd w Hw)]. }
     assert (Hnlen : length ps_rest < n) by lia.
     destruct (IHn (length ps_rest) Hnlen ps_rest (Nat.le_refl _) HNDfst_rest HNDsnd_rest sigma1 tau1 Hmi1 Hfix1)
-      as [sigma2 [tau2 [Hmi2 [Hreal2 Hout2]]]].
-    exists sigma2, tau2. split; [exact Hmi2 | split].
+      as [sigma2 [tau2 [Hmi2 [Hreal2 [Hout2 Hmap2]]]]].
+    exists sigma2, tau2. split; [exact Hmi2 | split; [ | split]].
     + intros a b Hpair2.
       destruct (in_dec Nat.eq_dec a (component (p :: ps') v0)) as [Hin_comp | Hnin_comp].
       * assert (Hab1 : sigma1 a = b)
@@ -1306,6 +1359,57 @@ Proof.
       assert (Hwf_rest : ~ In w (map fst ps_rest)) by (intro Hc; apply Hwf; exact (Hrest_sub_fst w Hc)).
       assert (Hws_rest : ~ In w (map snd ps_rest)) by (intro Hc; apply Hws; exact (Hrest_sub_snd w Hc)).
       rewrite (Hout2 w Hwf_rest Hws_rest). exact (Hsigma1_out w Hwnotcomp).
+    + intros w Hw.
+      destruct (in_dec Nat.eq_dec w (component (p :: ps') v0)) as [Hwcomp | Hwncomp].
+      * (* w in the component: sigma2 agrees with sigma1 there (w avoids
+           ps_rest's own domain+range, same argument as Hfix1 above), and
+           sigma1 keeps it inside the component (cyc_sigma_in), which sits
+           inside (p::ps')'s domain+range via component_subset + Hv0fst. *)
+        assert (Hwof : ~ In w (map fst ps_rest)).
+        { intro Hc. apply in_map_iff in Hc. destruct Hc as [q [Hfq Hqin]].
+          apply (Hrest_out q Hqin). rewrite Hfq. exact Hwcomp. }
+        assert (Hwos : ~ In w (map snd ps_rest)).
+        { intro Hc. apply in_map_iff in Hc. destruct Hc as [q [Hsq Hqin]].
+          assert (Hqorig : In q (p :: ps')) by exact (Hrest_sub q Hqin).
+          assert (Hqpair : In (fst q, snd q) (p :: ps')) by (rewrite <- surjective_pairing; exact Hqorig).
+          assert (Hwq : w = snd q) by (symmetry; exact Hsq).
+          rewrite Hwq in Hwcomp.
+          assert (Hback := component_backward_closed (p :: ps') HNDfst HNDsnd Hnnil (fst q) (snd q) Hqpair Hwcomp).
+          exact (Hrest_out q Hqin Hback). }
+        rewrite (Hout2 w Hwof Hwos).
+        assert (Hsigma1in : In (sigma1 w) (component (p :: ps') v0))
+          by exact (cyc_sigma_in (component (p :: ps') v0) sigma w Hwcomp).
+        destruct (component_subset (p :: ps') HNDsnd HNDfst v0 (sigma1 w) Hsigma1in) as [Heq | Hin2].
+        -- left. rewrite Heq. exact Hv0fst.
+        -- right. exact Hin2.
+      * (* w outside the component: since w is in (p::ps')'s domain+range,
+           it must be in ps_rest's (the filter only ever drops component-
+           side entries), so the recursive 4th conjunct (Hmap2) applies and
+           lifts back up via Hrest_sub_fst/Hrest_sub_snd. *)
+        assert (Hwrest : In w (map fst ps_rest) \/ In w (map snd ps_rest)).
+        { destruct Hw as [Hw | Hw].
+          - left. apply in_map_iff in Hw. destruct Hw as [q [Hfq Hqin]]. apply in_map_iff. exists q.
+            split; [exact Hfq | ]. unfold ps_rest. apply filter_In. split; [exact Hqin | ].
+            change ((if in_dec Nat.eq_dec (fst q) (component (p :: ps') v0) then false else true) = true).
+            destruct (in_dec Nat.eq_dec (fst q) (component (p :: ps') v0)) as [Hc | Hc]; [ | reflexivity].
+            exfalso. apply Hwncomp. rewrite <- Hfq. exact Hc.
+          - apply in_map_iff in Hw. destruct Hw as [q [Hsq Hqin]].
+            assert (Hfstnotcomp : ~ In (fst q) (component (p :: ps') v0)).
+            { intro Hc.
+              assert (Hqpair : In (fst q, snd q) (p :: ps')) by (rewrite <- surjective_pairing; exact Hqin).
+              assert (Hb : cyc_sigma (component (p :: ps') v0) sigma (fst q) = snd q)
+                by exact (component_pair_realized (p :: ps') HNDsnd HNDfst v0 sigma (fst q) (snd q) Hqpair Hc).
+              assert (Hsndin : In (snd q) (component (p :: ps') v0))
+                by (rewrite <- Hb; exact (cyc_sigma_in (component (p :: ps') v0) sigma (fst q) Hc)).
+              rewrite Hsq in Hsndin. exact (Hwncomp Hsndin). }
+            right. apply in_map_iff. exists q. split; [exact Hsq | ].
+            unfold ps_rest. apply filter_In. split; [exact Hqin | ].
+            change ((if in_dec Nat.eq_dec (fst q) (component (p :: ps') v0) then false else true) = true).
+            destruct (in_dec Nat.eq_dec (fst q) (component (p :: ps') v0)) as [Hc | Hc];
+              [exfalso; exact (Hfstnotcomp Hc) | reflexivity]. }
+        destruct (Hmap2 w Hwrest) as [Hm | Hm].
+        -- left. exact (Hrest_sub_fst (sigma2 w) Hm).
+        -- right. exact (Hrest_sub_snd (sigma2 w) Hm).
 Qed.
 
 (* ==================================================================== *)
@@ -2083,6 +2187,7 @@ Theorem NEval_left_confluence :
   forall Gam2 e2, e2 = rename_b sigma0 e1 -> NHeapAlpha sigma0 tau0 Gam1 Gam2 ->
   (forall w, sigma0 w <> w -> Gam1 w <> None /\ Gam2 w <> None) ->
   (forall w, In w F1 -> Gam1 w <> None) -> (forall w, In w F2 -> Gam2 w <> None) ->
+  FunBodyWellScoped P -> ClosedHeap Gam1 -> (forall w, In w (free_vars_b e1) -> Gam1 w <> None) ->
   forall Gam2' v2, NEval_left P F2 Gam2 e2 Gam2' v2 ->
   exists sigma tau, mutual_inverse sigma tau /\
     (forall w, sigma0 w <> w \/ Gam1 w <> None \/ Gam2 w <> None -> sigma w = sigma0 w) /\
@@ -2103,7 +2208,8 @@ Proof.
     | F0 G0 x c0 zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2     (* NL_Select *)
     | F0 G0 x G1 x' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlenws HND Hfresh2 Hrec2 IH2 ]
                                                                           (* NL_Guess *)
-    ; intros sigma0 tau0 Hmi0 F2 HF2eq Gam2 e2 He2 Halpha0 Hcontain0 HFdom1 HFdom2 Gam2' v2 H2.
+    ; intros sigma0 tau0 Hmi0 F2 HF2eq Gam2 e2 He2 Halpha0 Hcontain0 HFdom1 HFdom2
+      HScoped Hclosed1 He1closed Gam2' v2 H2.
   - (* NL_VarCons *)
     destruct Hmi0 as [Hst0 Hts0].
     assert (Hgamx : Gam2 (sigma0 x) = Some (BExpr (ECon c0 (map sigma0 args0)))).
@@ -2192,8 +2298,11 @@ Proof.
       { intros w Hw. destruct Hw as [Hw | Hw]; [subst w; rewrite Hgx0; discriminate | exact (HFdom1 w Hw)]. }
       assert (HFdom2' : forall w, In w (sigma0 x :: map sigma0 F0) -> Gam2 w <> None).
       { intros w Hw. destruct Hw as [Hw | Hw]; [subst w; rewrite Hgamx; discriminate | exact (HFdom2 w Hw)]. }
+      assert (He0closed : forall w, In w (free_vars_b e) -> G0 w <> None).
+      { intros w Hw. apply (Hclosed1 x e Hgx0). apply free_vars_b_subset_vars_of_b. exact Hw. }
       destruct (IH sigma0 tau0 (conj Hst0 Hts0) (sigma0 x :: map sigma0 F0) eq_refl Gam2
-                  (rename_b sigma0 e) eq_refl Halpha0 Hcontain0 HFdom1' HFdom2' G1' v2 Hrec2)
+                  (rename_b sigma0 e) eq_refl Halpha0 Hcontain0 HFdom1' HFdom2'
+                  HScoped Hclosed1 He0closed G1' v2 Hrec2)
         as [sigma [tau [Hmisig [Hext [Hcont [Halpha Heqv]]]]]].
       exists sigma, tau. split; [exact Hmisig | ].
       split; [exact Hext | ].
@@ -2284,7 +2393,7 @@ Proof.
       - rewrite Hsndeq in Hw. apply in_map_iff in Hw. destruct Hw as [y [Hsy Hiny]]. subst w.
         exact (Hcontain_None_fixed sigma0 G0 Gam2 Hcontain0 (s2 y) (or_intror (Hfresh2 y (Hvsnotps y Hiny)))). }
     destruct (batch_extend (length ps_pairs) ps_pairs (Nat.le_refl _) HNDfst HNDsnd sigma0 tau0 Hmi0 HfixBE)
-      as [sigma [tau [Hmisig [Hrealizes Houtside]]]].
+      as [sigma [tau [Hmisig [Hrealizes [Houtside Hmapsinto]]]]].
     (* A parameter's own image s(x) can never collide with some OTHER
        position's s2(y): assuming it did, D2's freshness + Hcontain_None_
        fixed pins sigma0(s2 y)=s2 y, substituting gives sigma0(s x)=s x;
@@ -2347,52 +2456,90 @@ Proof.
         rewrite <- Hsy in HGam2w. exact (HGam2w Hfresh2y). }
       exact (Houtside w Hout1 Hout2). }
     assert (HmapFeq : map sigma F0 = map sigma0 F0) by (apply map_ext_in; exact HFsigmaeq).
-    (* Where it STOPS: applying the outer IH to body's own continuation
-       ALSO needs NHeapAlpha sigma tau G0 Gam2 (sigma/tau, not sigma0/tau0
-       -- G0/Gam2 themselves don't change here, only the renaming pair
-       does).  batch_extend's own "outside ps_pairs" guarantee is stated
-       ONLY for sigma' (Houtside above), not tau'.  A genuine FIFTH gap.
-
-       Traced this one further too, and it's DEEPER than "just add a
-       symmetric tau'-outside conjunct to batch_extend" -- rewriting
-       NHeapAlpha via mutual_inverse into the tau-free form (forall z,
-       Gam2 (sigma z) = option_map (rename_b sigma) (G0 z), quantifying
-       over the SOURCE location instead of using tau to look one up)
-       sidesteps needing anything about tau' specifically, but for z
-       OUTSIDE ps_pairs's domain+range (where sigma z = sigma0 z, from
-       Houtside alone) it still needs option_map (rename_b sigma0) (G0 z)
-       = option_map (rename_b sigma) (G0 z), i.e. sigma and sigma0 must
-       agree on every variable G0's OWN STORED VALUE at z mentions -- true
-       if that content's variables stay inside ps_pairs's complement too,
-       which needs G0's stored values to never reference the fresh
-       locations s(y)/s2(y) as VALUES even though they're fresh as KEYS
-       (G0 (s y) = None only says s(y) isn't currently a heap KEY, says
-       nothing about whether some OTHER cell's stored content happens to
-       mention it as a variable).  That's a genuinely different kind of
-       freshness than anything tracked so far in this file -- a heap/value
-       well-formedness invariant, not a fact about renamings.
-
-       SHARPENED (checked, not just guessed): this is real and semantically
-       expected -- in a properly-scoped, properly-executing program, a heap
-       cell should never reference an undefined location, since the only
-       rule that ever writes a NEW cell (NL_Let) stores it at a FRESH x
-       whose OWN content's free variables must already be bound (guaranteed
-       by the SOURCE program being well-scoped, propagated forward as the
-       heap grows) -- but checked ProgWF and NoBareFreeOrChoiceProgWF (the
-       only two well-formedness definitions in this whole codebase) and
-       NEITHER captures this; NL_Let's own rule has exactly one heap
-       premise (G x = None, the new cell is fresh) and no premise at all
-       constraining e's own free variables.  So this really is a genuinely
-       NEW invariant to build, not something already implied by anything
-       in scope -- but now it has a precise shape, not just a described
-       failure case: (i) a "closed heap" predicate (forall z b, G z=Some b
-       -> forall w, In w (vars_of_b b) -> G w<>None -- every stored value's
-       own references are themselves bound); (ii) a preservation lemma
-       that NEval_left maintains it; (iii) confirming the top-level entry
-       point this file's own corollary/theorem2 eventually gets invoked
-       from starts closed (plausible almost by construction -- a real
-       evaluation starts from an empty/minimal heap -- but not yet
-       checked at the actual call site).  NOT YET ATTEMPTED. *)
+    (* THE FIFTH GAP, CLOSED: G0's own stored values never reference the
+       fresh locations s(y)/s2(y) as VALUES, because neither is even IN
+       G0's domain -- s(y) directly via Hfresh, s2(y) by translating D2's
+       own freshness (Hfresh2) back across sigma0 via Hcontain_None_fixed +
+       NHeapAlpha_domain.  Combined with Hclosed1 (G0 is a closed heap,
+       PIECE 5) and Hmapsinto (sigma keeps ps_pairs's domain+range closed
+       under itself, batch_extend's new 4th conjunct, PIECE 2c revisited),
+       this is enough to build NHeapAlpha sigma tau G0 Gam2 outright. *)
+    assert (Hs2dom0 : forall y, In y vs -> G0 (s2 y) = None).
+    { intros y Hy.
+      assert (Hynotps : ~ In y ps) by exact (Hvsnotps y Hy).
+      assert (Hfresh2y : Gam2 (s2 y) = None) by exact (Hfresh2 y Hynotps).
+      assert (Hfix2y : sigma0 (s2 y) = s2 y)
+        by exact (Hcontain_None_fixed sigma0 G0 Gam2 Hcontain0 (s2 y) (or_intror Hfresh2y)).
+      assert (Hdom := NHeapAlpha_domain sigma0 tau0 Hmi0 G0 Gam2 Halpha0 (s2 y)).
+      rewrite Hfix2y in Hdom. apply Hdom. exact Hfresh2y. }
+    assert (HG0outside : forall z, In z (map fst ps_pairs) \/ In z (map snd ps_pairs) -> G0 z = None).
+    { intros z Hz. destruct Hz as [Hz | Hz].
+      - rewrite Hfsteq in Hz. apply in_map_iff in Hz. destruct Hz as [y [Hsy Hiny]]. subst z.
+        exact (Hfresh y (Hvsnotps y Hiny)).
+      - rewrite Hsndeq in Hz. apply in_map_iff in Hz. destruct Hz as [y [Hsy Hiny]]. subst z.
+        exact (Hs2dom0 y Hiny). }
+    assert (HGam2outside : forall z, In z (map fst ps_pairs) \/ In z (map snd ps_pairs) -> Gam2 z = None).
+    { intros z Hz. destruct Hz as [Hz | Hz].
+      - rewrite Hfsteq in Hz. apply in_map_iff in Hz. destruct Hz as [y [Hsy Hiny]]. subst z.
+        assert (Hynotps : ~ In y ps) by exact (Hvsnotps y Hiny).
+        assert (HG0sy : G0 (s y) = None) by exact (Hfresh y Hynotps).
+        assert (Hfixsy : sigma0 (s y) = s y)
+          by exact (Hcontain_None_fixed sigma0 G0 Gam2 Hcontain0 (s y) (or_introl HG0sy)).
+        assert (Hdom := NHeapAlpha_domain sigma0 tau0 Hmi0 G0 Gam2 Halpha0 (s y)).
+        rewrite Hfixsy in Hdom. apply Hdom. exact HG0sy.
+      - rewrite Hsndeq in Hz. apply in_map_iff in Hz. destruct Hz as [y [Hsy Hiny]]. subst z.
+        exact (Hfresh2 y (Hvsnotps y Hiny)). }
+    assert (HNHAsigmatau : NHeapAlpha sigma tau G0 Gam2).
+    { intros w. unfold nheap_rename.
+      destruct Hmisig as [Hst Hts].
+      remember (tau w) as z eqn:Hz.
+      assert (Hwz : sigma z = w) by (rewrite Hz; exact (Hts w)).
+      destruct (in_dec Nat.eq_dec z (map fst ps_pairs)) as [Hzin1 | Hzout1].
+      - rewrite Hfsteq in Hzin1. apply in_map_iff in Hzin1. destruct Hzin1 as [y [Hsyz Hiny]].
+        assert (HG0z : G0 z = None) by (rewrite <- Hsyz; exact (Hfresh y (Hvsnotps y Hiny))).
+        rewrite HG0z. simpl.
+        assert (Hwsig : sigma z = s2 y) by (rewrite <- Hsyz; exact (Hnonparam y Hiny)).
+        rewrite <- Hwz, Hwsig.
+        exact (Hfresh2 y (Hvsnotps y Hiny)).
+      - destruct (in_dec Nat.eq_dec z (map snd ps_pairs)) as [Hzin2 | Hzout2].
+        + assert (HG0z : G0 z = None) by exact (HG0outside z (or_intror Hzin2)).
+          rewrite HG0z. simpl.
+          assert (Hwin : In w (map fst ps_pairs) \/ In w (map snd ps_pairs)).
+          { rewrite <- Hwz. exact (Hmapsinto z (or_intror Hzin2)). }
+          exact (HGam2outside w Hwin).
+        + assert (Heqz : sigma z = sigma0 z) by exact (Houtside z Hzout1 Hzout2).
+          assert (Hw0 : w = sigma0 z) by (rewrite <- Hwz; exact Heqz).
+          rewrite Hw0.
+          assert (Hb0 := Halpha0 (sigma0 z)). unfold nheap_rename in Hb0.
+          destruct Hmi0 as [Hst0 Hts0]. rewrite (Hst0 z) in Hb0.
+          rewrite Hb0.
+          destruct (G0 z) as [b | ] eqn:HG0z; simpl; [ | reflexivity].
+          f_equal. apply (rename_b_congr b sigma0 sigma).
+          intros y Hy.
+          assert (HG0yne : G0 y <> None) by exact (Hclosed1 z b HG0z y Hy).
+          assert (Hyout1 : ~ In y (map fst ps_pairs))
+            by (intro Hc; exact (HG0yne (HG0outside y (or_introl Hc)))).
+          assert (Hyout2 : ~ In y (map snd ps_pairs))
+            by (intro Hc; exact (HG0yne (HG0outside y (or_intror Hc)))).
+          exact (eq_sym (Houtside y Hyout1 Hyout2)). }
+    (* A genuine SIXTH gap, found only now that the fifth is closed: calling
+       the outer IH on Hrec needs, among its hypotheses, "Hcontain0" for
+       sigma/tau itself -- forall w, sigma w <> w -> G0 w <> None /\ Gam2
+       w <> None -- and this is FALSE for sigma, not just unproven. sigma
+       moves s(y) to s2(y) for every y in vs (that's Hrealizes/Hnonparam,
+       load-bearing for Hfinal above), yet G0 (s y) = None (Hfresh) and
+       Gam2 (s y) = None (HGam2outside) -- sigma is REQUIRED to move
+       exactly the locations both heaps leave undefined, which is exactly
+       what this hypothesis forbids. Not a proof gap to fill in -- the
+       statement as phrased is unsatisfiable for the sigma NL_Fun's own
+       case is forced to construct, independent of anything about
+       ClosedHeap/free_vars_b. Likely means Hcontain0 (added as "correction
+       (c)" earlier this project) is stronger than necessary: its real job
+       is only to license Hcontain_None_fixed at whichever SPECIFIC fresh
+       locations a DEEPER NL_Fun/NL_Guess call picks, not to hold for every
+       w unconditionally -- but weakening it correctly, without breaking
+       the 8 cases already threaded through it, needs its own careful
+       trace-first pass, not attempted here. NOT YET ATTEMPTED. *)
     admit.
   - (* NL_Let: x is a FIXED source-level name (not freshly chosen the way
        NL_Fun/NL_Guess pick one), so this threads sigma0 through unchanged,
@@ -2425,8 +2572,24 @@ Proof.
       by (intros w Hw; exact (hupd_preserves_some G0 x _ w (HFdom1 w Hw))).
     assert (HFdom2' : forall w, In w F1a -> hupd G1a (sigma0 x) (rename_b sigma0 (let_content x e)) w <> None)
       by (intros w Hw; exact (hupd_preserves_some G1a (sigma0 x) _ w (HFdom2 w Hw))).
+    assert (He0closed : forall w, In w (vars_of_e0 e) -> G0 w <> None).
+    { intros w Hw. apply He1closed. simpl. apply in_or_app. left. exact Hw. }
+    assert (Hkclosed : forall w, In w (free_vars_b k) -> hupd G0 x (let_content x e) w <> None).
+    { intros w Hw. destruct (Nat.eq_dec w x) as [Heq | Hneq].
+      - subst w. unfold hupd. rewrite Nat.eqb_refl. discriminate.
+      - apply hupd_preserves_some. apply He1closed. simpl. apply in_or_app. right.
+        apply in_in_remove; [exact Hneq | exact Hw]. }
+    assert (HnewClosed : ClosedHeap (hupd G0 x (let_content x e))).
+    { intros w b Hwb y Hy. unfold hupd in Hwb.
+      destruct (Nat.eqb w x) eqn:Heqw.
+      - apply Nat.eqb_eq in Heqw; subst w. injection Hwb as Hwb; subst b.
+        apply let_content_vars in Hy. destruct Hy as [Hy | Hy].
+        + subst y. unfold hupd. rewrite Nat.eqb_refl. discriminate.
+        + apply hupd_preserves_some. apply He0closed. exact Hy.
+      - apply hupd_preserves_some. apply (Hclosed1 w b Hwb y Hy). }
     destruct (IH sigma0 tau0 Hmi0 F1a HF2eq (hupd G1a (sigma0 x) (rename_b sigma0 (let_content x e)))
-                (rename_b sigma0 k) eq_refl Hpt Hcontain0' HFdom1' HFdom2' G1b vres HrecC)
+                (rename_b sigma0 k) eq_refl Hpt Hcontain0' HFdom1' HFdom2'
+                HScoped HnewClosed Hkclosed G1b vres HrecC)
       as [sigma [tau [Hmisig [Hext [Hcont [Halpha Heqv]]]]]].
     exists sigma, tau. split; [exact Hmisig | ].
     split.
@@ -2452,8 +2615,10 @@ Proof.
       | F1a G1a z G1b z' c1 ys1 body1 brs G2 v1 ws HrecF1 Hhd Hlen HND Hfr HrecF2
       ]; intros Ht HF2eq; try discriminate Ht.
     injection Ht as Htx Hty. subst x1 y1.
+    assert (Hxclosed : forall w, In w (free_vars_b (BExpr (EVar x))) -> G0 w <> None).
+    { intros w Hw. simpl in Hw. destruct Hw as [Hw | []]. subst w. apply He1closed. simpl. left. reflexivity. }
     destruct (IH sigma0 tau0 Hmi0 F1a HF2eq G1a (BExpr (EVar (sigma0 x))) eq_refl Halpha0 Hcontain0
-                HFdom1 HFdom2 G1b v1 HrecD)
+                HFdom1 HFdom2 HScoped Hclosed1 Hxclosed G1b v1 HrecD)
       as [sigma [tau [Hmisig [Hext [Hcont [Halpha Heqv]]]]]].
     exists sigma, tau. split; [exact Hmisig | ].
     split; [exact Hext | ].
@@ -2488,14 +2653,16 @@ Admitted.
 Corollary NEval_left_self_confluence :
   forall P F Gam e Gam1 v1, NEval_left P F Gam e Gam1 v1 ->
   (forall w, In w F -> Gam w <> None) ->
+  FunBodyWellScoped P -> ClosedHeap Gam -> (forall w, In w (free_vars_b e) -> Gam w <> None) ->
   forall Gam2 v2, NEval_left P F Gam e Gam2 v2 ->
   exists sigma tau, mutual_inverse sigma tau /\ NHeapAlpha sigma tau Gam1 Gam2 /\ v2 = rename_b sigma v1.
 Proof.
-  intros P F Gam e Gam1 v1 H1 HFdom Gam2 v2 H2.
+  intros P F Gam e Gam1 v1 H1 HFdom HScoped Hclosed Heclosed Gam2 v2 H2.
   destruct (NEval_left_confluence P F Gam e Gam1 v1 H1 (fun w => w) (fun w => w) mutual_inverse_id
               F (eq_sym (map_id F)) Gam e (eq_sym (rename_b_id e)) (NHeapAlpha_refl Gam)
               (fun w Hw => match Hw eq_refl with end)
               HFdom HFdom
+              HScoped Hclosed Heclosed
               Gam2 v2 H2)
     as [sigma [tau [Hmi [_ [_ [Halpha Heq]]]]]].
   exists sigma, tau. split; [exact Hmi | split; [exact Halpha | exact Heq]].
