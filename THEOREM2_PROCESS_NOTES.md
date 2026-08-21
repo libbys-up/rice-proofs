@@ -1756,6 +1756,490 @@ itself remains unchanged throughout all of this: still exactly one admit, first 
 `curry_test_leftmost.v` compiles clean. `alpha_renaming_wip.v`'s own header is kept current with exactly
 this status for whoever (or whichever future session) picks it up next.
 
+## 21. Next session: the permutation-extension gap from §20 turns out to split into a genuinely
+clean "single component" piece and a harder "decompose into components" piece; the former is done
+and verified, closing PIECE 2a
+
+**Diagnosed why per-pair swapping is the wrong primitive at all, not just wrongly ordered.** §20 found
+that iterating `mutual_inverse_extend` pair-by-pair fails when fresh images collide, and guessed the fix
+was "apply the swaps in the right order" (a cycle-decomposition argument). Looking closer: even with a
+correct order, a plain SWAP `(a,b)` is the wrong operation for an interior link of a chain `a -> b -> c`
+in the first place — a swap forces `sigma(b) = a`, but a chain requires `sigma(b) = c`. The right
+primitive is "rotate a whole connected chain, treated as one list, by one position" — a genuinely
+different, and much more tractable, construction than a sequence of two-point swaps.
+
+**Built and verified `cyc_extend` (`alpha_renaming_wip.v`, PIECE 2a — compiles clean).** Given a `NoDup`
+list `l` all of whose points are CURRENTLY fixed points of `(sigma, tau)`, `cyc_sigma`/`cyc_tau` reindex
+through `l` and `rotate1 l` (`rotate1 (x::l') = l' ++ [x]`, i.e. head-to-tail): `cyc_sigma l sigma w :=`
+look up `w`'s position `i` in `l` (via a hand-rolled `list_index`, since this all has to be a *computable*
+function, not just a relation) and return `l`'s rotation at that same position, falling back to the
+ambient `sigma` for anything not in `l`. `cyc_extend` proves this is still `mutual_inverse`, and
+`cyc_sigma_succ` confirms concretely what it's for: `cyc_sigma l sigma (l_i) = l_{i+1}` for consecutive
+positions. No incremental per-pair induction was needed at all — the whole thing is a direct closed-form
+definition plus a direct proof, sidestepping the swap-ordering question entirely. The one proof wrinkle:
+`rewrite <-` on a goal like `w = sigma w` will happily rewrite *both* occurrences of `w` (including the
+one hiding inside `sigma w`) unless pinned with `at 1` — cost two failed attempts before landing on the
+right occurrence numbering; recorded as **T19** below (Part 2 glossary) since it's a recurring trap.
+
+**What's still open (PIECE 2b, unstarted): decomposing an arbitrary pair of parallel lists `A, B` into
+components ready to hand to `cyc_extend`.** `cyc_extend` handles ONE already-known chain/cycle; the real
+application (`NL_Fun`'s two independent renamings `s`, `s2` applied to the same free-variable list `ys`,
+giving `A := map s ys`, `B := map s2 ys`) needs the general two-list problem decomposed into however many
+disjoint components the edge set `A_i -> B_i` actually has. Confirmed by direct construction that this
+really does need genuine graph bookkeeping, not a shortcut: NoDup `A`/NoDup `B` gives out-degree/in-degree
+`<= 1`, so the edges form disjoint simple paths and cycles; a closed cycle can go to `cyc_extend` as-is,
+but an open path's dangling sink (an element of `B` not itself in `A`, so no required outgoing pair) has
+to be wrapped back to its own path's start before `cyc_extend` applies — and finding "its own path's
+start" means chasing backward through `B -> A` lookups, which needs its own explicit, provably-terminating
+construction (bounded by `length A`, since a non-cyclic backward chase can't revisit a vertex). Not
+attempted yet this session; `alpha_renaming_wip.v`'s header carries the precise remaining shape of this
+so a future session doesn't have to re-derive it.
+
+**Status: theorem2 itself still unchanged (one admit, as in §17-20).** This session's work is entirely
+within the standalone `alpha_renaming_wip.v`; `curry_test_leftmost.v` was not touched and still compiles
+clean.
+
+## 22. PIECE 2b (decomposing the two-list permutation-extension problem into components) AND 2c (the
+full batch-extend theorem) both built and fully verified in the same session, zero admits — the general
+combinatorial gap from §20/§21 is closed completely
+
+**Closed PIECE 2b in full.** Represented the "required pairs" as a single `ps : list (var*var)` (rather
+than two parallel lists `A B`, to avoid ever having to argue they stay positionally aligned under
+filtering) and built, in order:
+- `fwd`/`fwd_in`/`fwd_complete`/`fwd_injective` — `fwd ps w` looks up `w`'s required target in `ps`;
+  injective on its domain given `NoDup (map snd ps)` (two entries sharing a target force their sources
+  equal, by a direct induction on `ps`, `pair_snd_nodup_fst_unique`).
+- `is_chain`/`is_chain_snoc` — an index-based (`nth_error`) notion of "consecutive elements are `fwd`-
+  linked", and a lemma for extending a chain by one more validated link.
+- `chain_no_premature_repeat` — the combinatorial crux: within a NoDup chain, the ONLY vertex the chain's
+  own last link can legally jump back to is the chain's own FIRST vertex (any other target would need two
+  distinct predecessors mapping to the same value via `fwd`, contradicting injectivity + `NoDup_nth_error`
+  positional uniqueness). This is what makes "rotate the whole component" well-defined at all — it rules
+  out a chain silently re-merging into itself partway through.
+- `chase`/`chase_invariant` — a fuel-bounded forward walk, proven (by induction on fuel) to never
+  truncate a genuine chain early: the key device is a running pigeonhole bound `length ps <= fuel +
+  length acc + 1` (elements already visited, all distinct and all genuine `ps`-sources, can't exceed
+  `length ps` of them) that turns "fuel ran out mid-chain" into a direct numeric contradiction via
+  `NoDup_incl_length`, so `chase` only ever stops at a real dead end (`fwd = None`) or by closing back to
+  its own start (`fwd = Some start`) — never because it ran out of gas.
+- `component`/`component_invariant`/`component_pair_realized` — the payoff: for ONE starting vertex `v0`,
+  `component ps v0`'s whole connected chain gets captured, and EVERY required pair `(a,b) ∈ ps` with `a`
+  landing in that component is realized by `cyc_sigma` — an interior link via `cyc_sigma_succ`, the
+  component's own closing link via a new `cyc_sigma_wrap` (mirroring `cyc_sigma_succ` for the
+  last-position-wraps-to-first case), using `chase_invariant`'s "never stops early" guarantee to know a
+  closing link is always either absent or points back to `v0`, never to some other, wrong earlier vertex.
+
+**Confirms directly why the two failed approaches from §20 don't come back to bite this construction.**
+Both prior failures (naive pair-by-pair `mutual_inverse_extend` iteration, and the "shadowing lookup"
+list-of-pairs idea) came from trying to build the bijection *incrementally*, one pair at a time, which
+requires getting an ordering right that neither approach actually got right. `cyc_sigma`/`cyc_tau` are
+never built incrementally at all — they're a single monolithic closed-form definition over the WHOLE
+already-assembled component list (`list_index` into it and its `rotate1`), so there is no "pair `i`'s own
+precondition can already be broken by pair `j`'s effect" failure mode to worry about; the entire
+combinatorial difficulty is isolated inside `chase`/`chase_invariant` (correctly *assembling* the
+component list once), not in applying it.
+
+**PIECE 2c (the full batch-extend theorem): attempted immediately after 2b in the same session, and
+turned out NOT to be pure bookkeeping — it needed one more real insight.** The naive plan ("pick `v0 :=
+hd` of what's left, apply `cyc_extend`, filter out its component, recurse") is *unsound* as stated: picking
+`v0` arbitrarily risks starting the chase partway down an open path, silently missing everything upstream
+of it. Concretely, if some `p` (not reachable *forward* from `v0`) satisfies `fwd ps p = Some v0`, then
+`component ps v0` never discovers `p` at all — `chase` only walks forward. Filtering `ps` by "source lands
+in `component ps v0`" would then leave `(p, v0)` in the remainder, but `v0` itself is no longer a
+`sigma`-fixed point after `cyc_extend` (it got rotated to the component's own second element) — breaking
+the very invariant (`sigma` fixed on the remaining `ps`'s domain+range) the recursion depends on.
+
+**The fix: `pick_source`.** Prefer, whenever one exists, a genuine PURE SOURCE — an element of `map fst ps`
+that is *not itself* anyone's target (`~ In v0 (map snd ps)`), found via a single linear scan
+(`find`/`has_pred`). A pure source is provably never a non-start element of any path, so chasing forward
+from it can't miss an upstream predecessor. When NO pure source exists, a genuine NoDup/cardinality
+argument (`pick_source_all_cycle_snd_subset_fst`, via `NoDup_length_incl`: `map fst ps ⊆ map snd ps` as
+sets, both the same size by `NoDup`, forces equality) shows `ps`'s *entire* remaining structure has to be
+pure closed cycles — so an arbitrary start is fine there, since every vertex in a closed cycle has both a
+predecessor and a successor already inside it. Either way this delivers `component_backward_closed`: for
+`(a,b) ∈ ps`, if `b` lands in the chosen `v0`'s component then so does `a` — exactly the fact needed to
+filter `ps` safely (nothing consumed by this step can still be dangling as a stray target in what's left)
+and to know the recursive result doesn't disturb pairs the current step already realized (via a matching
+third conjunct threaded through `batch_extend`'s own statement: `sigma'` agrees with the input `sigma`
+outside `ps`'s whole domain+range, needed to bridge sigma1's realized pairs across the recursive call).
+
+**`batch_extend` itself is now the finished statement**: given `ps` (`NoDup` on both projections) and
+`(sigma, tau)` already fixed on `ps`'s whole domain+range, produces `(sigma', tau')` that's still
+mutual-inverse, realizes *every* pair in `ps`, and agrees with `sigma`/`tau` outside `ps`'s domain+range —
+proved by `well_founded_induction lt_wf` on `length ps` (the same idiom piece 1's `rename_b_comp_bound`
+already used), consuming at least one pair (`v0`'s own) each step.
+
+**Practical fallout from actually writing all of this and getting it through `coqc`**: two recurring stdlib
+traps cost most of the 2b iteration — `List.In`'s unfold direction (`elem = query`, not `query =
+elem`) inverting `eq_sym` usage silently, and several extremely common list lemmas
+(`nth_error_app1`/`app2`, `app_nth2`, `Permutation_cons_append`, `NoDup_cons`) marking a
+looks-explicit index/list argument as actually implicit, so a positional call silently misaligns instead
+of failing to typecheck at the call site. Recorded in detail as **T20** below. 2c surfaced a third, sharper
+one — `destruct (compound_expr) eqn:H` doesn't just case-split the goal, it rewrites *every other
+hypothesis* that happens to mention the exact same compound expression, silently changing their stated
+types out from under later tactics — recorded as **T21**.
+
+**Status: theorem2 itself still unchanged (one admit).** All of this session's work is again entirely
+within the standalone `alpha_renaming_wip.v` (now 1151 lines, compiles clean end to end, `grep -c admit`
+returns only comment references, zero actual admits); `curry_test_leftmost.v` was not touched. The
+alpha-renaming-invariance lemma's whole foundational layer (pieces 1a/1b/2a/2b/2c) is now complete and
+fully `Qed`'d — only PIECE 3 (the 11-rule simultaneous induction) and PIECE 4 (wiring the result into
+`theorem2`) remain before the admit itself can close.
+
+## 23. Next session: PIECE 3 started — all three of its prerequisites built and verified, the target
+statement itself written down and typechecks, and a real scope reduction found along the way
+
+**Checked batch_extend's interface against what PIECE 3's `NL_Fun` case would actually need (before
+attempting PIECE 3 itself), and it holds up**, with one caveat traced through concretely: `NL_Fun`'s own
+freshness premise (`G (s y) = None` for non-parameter `y`) is one-sided per derivation, so satisfying
+`batch_extend`'s `Hfix` precondition needs PIECE 3 to carry a "sigma's support stays inside the two heaps'
+current domains" invariant across its whole induction — which should come for free if PIECE 3's own
+per-step correspondence is stated via piece 1's `nheap_rename` rather than a fresh domain-matching lemma
+(confirmed this session — see below).
+
+**Built and verified all three prerequisites that check surfaced, zero admits:**
+- `vars_of_b`/`vars_of_e0` — every syntactic variable POSITION `rename_b`/`rename_e0` touch. Checking
+  `rename_b`'s own definition confirmed it renames `BLet`/`BCase`'s *bound* variables too, not just free
+  ones — so this needs no real binding/shadowing analysis, just a structural walk mirroring `rename_b`
+  itself. Simpler than the `free_vars_b` placeholder from the piece-2 TODO list assumed.
+- `rename_b_congr`/`rename_e0_congr` — pointwise agreement of two renamings on `vars_of_b b` implies
+  `rename_b` agrees on the whole `b`. Same proof shape as `rename_b_comp` (strong induction on `blk_size`,
+  `BCase`'s own auto-generated IH still not usable for nested branch bodies) — this is what turns
+  `batch_extend`'s per-*pair* guarantee into the actual *term* equality PIECE 3's own IH will need.
+- `NHeapAlpha` — the bisimulation invariant relating two `NHeap`s across a mutual-inverse pair, deliberately
+  stated as pointwise equality to `nheap_rename` (`NHeapAlpha sigma tau Gam1 Gam2 := forall w, Gam2 w =
+  nheap_rename sigma tau Gam1 w`) rather than inventing a fresh relation — this makes `NHeapAlpha_hupd`/
+  `NHeapAlpha_hupd_list` nearly free (`nheap_rename_hupd`/`_hupd_list` were already `Qed`'d in piece 1b).
+  `NHeapAlpha_domain` confirms the domain-matching fact the containment invariant needs falls straight out
+  of `NHeapAlpha`'s own definition (`option_map`'s None-preserving behavior) — no separate lemma needed,
+  exactly as hoped when the interface was first checked.
+
+**Wrote PIECE 3's actual target statement, `NEval_left_self_confluence`, and it typechecks** (currently
+`Admitted` — the file's one honest, deliberately-flagged gap, versus zero everywhere else):
+
+```coq
+Theorem NEval_left_self_confluence :
+  forall P F Gam e Gam1 v1, NEval_left P F Gam e Gam1 v1 ->
+  forall Gam2 v2, NEval_left P F Gam e Gam2 v2 ->
+  exists sigma tau, mutual_inverse sigma tau /\ NHeapAlpha sigma tau Gam1 Gam2 /\ v2 = rename_b sigma v1.
+```
+
+**The scope reduction: this is deliberately narrower than section 19's original design, and that's
+correct, not a shortcut.** Section 19 called for a full bisimulation over "alpha-related expressions from
+alpha-related heaps." Re-checking exactly what `G_CaseFun`'s own admit needs, against section 18's own
+diagnosis: the two derivations being reconciled there (`Hrec1` via `IH1`, and the arbitrary `Hforce`) force
+the *same* expression (`BExpr (EVar x0)`) from the *same* heap `Gam` — not independently alpha-varied
+expressions from independently-related heaps. `NEval_left_self_confluence` captures exactly that, no more:
+same `P`, `F`, `Gam`, `e` on both sides, `Gam1`/`v1` vs. `Gam2`/`v2` as the two (possibly different)
+outcomes. This is strictly easier to work with going forward — no expression-shape matching is needed at
+each induction step, since `e` being identical on both sides already forces the *same* `NEval_left`
+constructor to fire (which constructor applies is pinned by `G`'s own concrete value at each step) EXCEPT
+at the two genuine nondeterminism sources, `NL_Fun`'s choice of `s` and `NL_Guess`'s choice of `ws` —
+exactly the two cases `batch_extend` exists for. Confirmed the deterministic cases' own shape-matching
+machinery (`NEval_left_evar_shape` and friends, `curry_test_leftmost.v`) already exists and is reusable,
+not something PIECE 3 needs to build from scratch.
+
+**Required pulling `curry_test_leftmost` into `alpha_renaming_wip.v`** (`NEval_left` lives there, not in
+`curry.v`) — checked first for name collisions with everything already defined in this file; found none.
+This is the first point the file stops being fully standalone, which is fine: piece 4 wires into
+`curry_test_leftmost` anyway.
+
+**One small new gap surfaced, not yet built**: `rename_b_id`/`rename_e0_id` (renaming by the identity
+function is a no-op) — needed for the deterministic base cases (e.g. `NL_ValCon`, where both derivations
+are forced identical) to instantiate `sigma := tau := id` and close via `mutual_inverse_id` (already built,
+piece 1a). Likely a one-line induction, just not written yet.
+
+**Not yet attempted: actually proving `NEval_left_self_confluence`** across all 11 `NEval_left`
+constructors. That's still the real remaining work — this session got the statement pinned down precisely
+and every prerequisite it needs built and verified, which is the natural place to stop before the
+11-case induction itself, matching how pieces 2a/2b/2c were each staged.
+
+**Status: theorem2 itself still unchanged (one admit).** `alpha_renaming_wip.v` is now 1354 lines,
+compiles clean end to end, with exactly one `Admitted` (the target statement itself, deliberately) versus
+zero everywhere else. `curry_test_leftmost.v` was not touched.
+
+## 24. Same session, continued: found the statement itself needed two real corrections before the
+11-case induction could even start, then closed 8 of the 11 cases
+
+**Both corrections were found by tracing a case through on paper (specifically `NL_Fun` and `NL_VarExp`)
+before writing any of the induction, not discovered mid-proof.** That discipline paid off directly — both
+would have been much more expensive to unwind after several cases were already built on the broken
+statement.
+
+**Correction (a): `NEval_left_self_confluence` (last session's draft) is true, but can't be its own
+induction hypothesis.** `NL_Fun`'s two continuations, `rename_b s1 body` and `rename_b s2 body`, are only
+*related* by a renaming, not literally the same expression — so recursing into them can't reuse a
+same-expression/same-heap statement about themselves. Worse: once expressions diverge, the two
+derivations' own heaps diverge too (each side's `hupd` calls only ever touch its own output heap), so
+"the same shared `Gam`" isn't even available past the first `NL_Fun`/`NL_Guess` step. Fixed by making the
+real inductive statement, `NEval_left_confluence`, properly general: two heaps related by `NHeapAlpha`,
+two expressions related by `rename_b sigma0` for an ambient `(sigma0, tau0)` — i.e. exactly the shape
+section 19 originally called for. `NEval_left_self_confluence` comes back as a one-line corollary at
+`sigma0 := tau0 := id`, needing two new small lemmas: `rename_b_id`/`rename_e0_id` (renaming by the
+identity is a no-op — genuinely needed anyway, not just for this) and `NHeapAlpha_refl`.
+
+**Correction (b): a single shared guard list `F` breaks at `NL_VarExp`.** `D1`'s recursive premise grows
+its guard to `x :: F`; `D2`'s (via `NEval_left_evar_shape`) grows its own to `(sigma0 x) :: F`. These are
+literally the same list only when `sigma0 x = x` — not guaranteed, since `sigma0` might already move `x`.
+Fixed by tracking the two guard lists as *related* rather than shared: `F2 = map sigma0 F1`, threaded as
+its own hypothesis rather than assumed equal. This also simplified the conclusion: instead of carrying a
+separate "sigma0 fixes F" hypothesis/conclusion pair, the single "extends" conjunct
+`sigma0 w <> w \/ Gam1 w <> None \/ Gam2 w <> None -> sigma w = sigma0 w` covers everything needed —
+the third disjunct (location already in either heap's domain) is exactly what lets `NL_VarExp` conclude
+`sigma x = sigma0 x` from the IH's own conclusion (since `x` is trivially in `Gam1`'s domain, having just
+been looked up there), with no separate invariant to carry.
+
+**Closed 8 of the 11 `NEval_left` constructors, all `Qed`'d**: `VarCons`, `VarSelf`, `VarFree`, `VarExp`
+(deterministic cases via `NEval_left_evar_shape`'s existing shape-inversion, or hand-rolled
+`remember`/`revert`/`destruct` for the ones without a ready-made shape lemma — `ValFree`, `ValCon`, `Or`);
+`Let` turned out tractable too (needing one new lemma, `let_content_rename`: `let_content` commutes with
+renaming, since `let_content` special-cases `EFree` to `EVar x` and both sides of the equation need that
+same special-case to line up). Three small "`rename_b` preserves top-level shape" facts
+(`rename_b_not_econ`/`_not_evar`/`_not_efree`) were needed for `NL_VarExp`, to know D2's own shape-
+inversion is forced into the *same* constructor as D1's (not just *a* valid one).
+
+**A genuinely new stdlib-adjacent trap surfaced while writing the hand-rolled shape-inversion cases**:
+`destruct H eqn:Heq` where `H`'s type contains a *compound* index (here, `e2` after `subst`, or `F2` after
+`subst`) needs that compound term abstracted via `remember` first — but `remember X as y eqn:Heq` only
+rewrites occurrences that are already present when it runs; anything that becomes syntactically equal to
+`X` only *later* (e.g. a different index position that the constructor match forces to the same value)
+does **not** retroactively get the `y`-treatment, and shows up as a fresh, unrelated variable (`F1a`)
+needing its own explicitly-reverted equation (`HF2eq`) to relate it back. Cost real iteration on `NL_Or`
+before landing on: revert *every* hypothesis whose later use depends on the destructed index's own
+identity, not just the one literal term being remembered.
+
+**What's left**: `NL_Fun` and `NL_Guess` need `vars_of_b body` + `batch_extend` to reconcile the two
+independently-chosen renamings/fresh lists, exactly per the plan already recorded in `alpha_renaming_wip.v`'s
+own header. `NL_Select` turned out to be genuinely as hard as those two, not a quick win: `BCase`'s own
+shape-inversion is a two-way disjunction (`NL_Guess` *also* concludes on `BCase x brs`), so ruling out D2
+picking the `Guess` shape needs `IH1` (applied to the scrutinee-forcing sub-derivation) invoked *first*, to
+show D2's own scrutinee-forcing is provably `ECon`-shaped too — a proper two-step argument, matching the
+same level of intricacy as `curry_test_leftmost.v`'s own `G_CaseChoice`/`G_CaseFun` proofs.
+
+**Status: theorem2 itself still unchanged (one admit).** `alpha_renaming_wip.v` is now 1688 lines,
+compiles clean end to end. `NEval_left_confluence` carries exactly 3 admits (`NL_Fun`, `NL_Select`,
+`NL_Guess`), each with a precise in-proof comment on what it needs; everything else in the file — all of
+pieces 1a/1b/2a/2b/2c, plus the 8 closed `NEval_left_confluence` cases and every prerequisite lemma built
+this session — is fully `Qed`'d. `curry_test_leftmost.v` was not touched.
+
+## 25. Same session, continued again: a THIRD correction to the statement (found, same discipline, by
+tracing NL_Fun through by hand before coding it) — fixed and re-threaded through all 8 cases; NL_Fun
+itself traced all the way through except for one genuinely new, deeper gap
+
+**Traced `NL_Fun`'s case by hand before writing any of it**, same discipline as corrections (a)/(b) last
+session. Found immediately that `batch_extend`'s `Hfix` precondition (`sigma0` already fixes the pairs
+list's domain+range) has no support: nothing about `mutual_inverse`/`NHeapAlpha` alone stops an
+*adversarial* `sigma0` — satisfying every other hypothesis in the theorem — from happening to move one of
+the two independently-fresh locations `s(y)`/`s2(y)`. This isn't a proof-technique gap; the theorem as
+stated really would be false without some containment fact.
+
+**Fixed with `Hcontain0`/`Hcontain`**: `sigma0`'s support must already avoid the region *both* heaps leave
+undefined (`forall w, sigma0 w <> w -> Gam1 w <> None /\ Gam2 w <> None`), threaded as both hypothesis and
+matching conclusion conjunct, same shape as the "extends" conjunct from correction (b). Re-proved all 8
+already-closed cases — mostly mechanical (reuse `Hcontain0` directly when the heaps don't change, or lift
+it through one `hupd` via a new `hupd_preserves_some` when they do). Two new reusable lemmas:
+`NoDup_map_inj` (the image of a `NoDup` list under an injective function is `NoDup` — needed for
+`batch_extend`'s own `NoDup` preconditions on the pairs list) and `Hcontain_None_fixed` (the
+OR-contrapositive of `Hcontain0`: *either* heap being undefined at `w` already forces `sigma0 w = w` — used
+once per side, since each fresh location is only known undefined in *its own* heap).
+
+**With that fix in place, traced `NL_Fun`'s entire remaining argument through by hand, and it holds —
+until the very last step.** Built: the batch pairs (`vars_of_b body`, filtered to exclude parameters `ps`
+and deduplicated via `nodup`), `NoDup` of both projections (`NoDup_map_inj` + injectivity of `s`/`s2`), the
+`Hfix` argument for non-parameters (`Hcontain_None_fixed` + each side's own freshness premise), and a
+genuine, non-obvious 8-step argument that a *parameter's* image `s(x)` can never collide with some *other*
+position's `s2(y)`: assuming `s(x) = s2(y)`, `D2`'s own freshness (`Gam2 (s2 y) = None`) plus
+`Hcontain_None_fixed` gives `sigma0 (s2 y) = s2 y`; substituting the assumed equality gives
+`sigma0 (s x) = s x`; combined with the *independently*-derived parameter-matching fact
+`s2 x = sigma0 (s x)` (from `Hmatch`/`Hmatch2` + `map_nth_error`), that forces `s2 x = s(x) = s2 y`, and
+`s2`'s own injectivity then forces `x = y` — contradicting `x ∈ ps`, `y ∉ ps`. All of that goes through
+cleanly with `batch_extend`, `rename_b_comp`, and `rename_b_congr`.
+
+**Where it stops: a genuine fourth gap, not yet fixed.** Applying the outer induction's own `IH` to
+`body`'s continuation needs `map sigma F0 = map sigma0 F0` (`sigma` being `batch_extend`'s output) — i.e.
+`sigma` must agree with `sigma0` on *every* element of the guard list `F0`. Via `batch_extend`'s own
+"outside the pairs list" guarantee, this needs every `w ∈ F0` to satisfy both `w <> s(y)` (clean: `F0 ⊆
+dom(Gam1)` by a "guard elements are already-forced locations" argument, and `s(y)` is fresh w.r.t. `Gam1` —
+same heap, no issue) **and** `w <> s2(y)` (not clean: `w`'s membership in `dom(Gam1)` says nothing about
+`dom(Gam2)`, and `s2(y)`'s freshness is a `dom(Gam2)` fact — nothing yet connects the two heaps' domains
+*pointwise*, only via the `sigma0`-*shifted* `NHeapAlpha` correspondence, which relates `dom(Gam1)` to
+`dom(Gam2)` only after applying `sigma0`, not before). Tried multiple routes to derive this from what's
+already in scope (`NHeapAlpha`'s domain fact, `Hcontain0` itself); all blocked the same way — comparing
+`sigma0(w)` against `s2(y)` (which the tools in hand can do) is a different claim from comparing `w`
+against `s2(y)` (which is what's actually needed), and the two only coincide when `sigma0` happens to fix
+`w`.
+
+**The real fix, not yet built: a fourth hypothesis/conjunct pair** — "every element of `F1` is already
+inside `Gam1`'s domain" (and the matching fact for `F2`/`Gam2`) — threaded through the whole induction
+exactly like `Hcontain0`/`Hcontain` was this session. Unlike `Hcontain0`, this one is genuinely **not**
+true of `NEval_left` in general: nothing in the relation's own rules stops an arbitrary top-level `F` from
+containing locations unrelated to `G`'s domain (e.g. `NL_ValCon` holds for *any* `F` whatsoever, checking
+nothing about it). It's only true because every actual *use* of `NEval_left` in this codebase starts `F` at
+`nil` and grows it exclusively via `NL_VarExp`'s own `x :: F` (which does preserve "guard ⊆ domain", since
+`x` is added exactly when `G x = Some e`). So it has to be an explicit hypothesis of the theorem, not
+something derivable from what's already there — confirmed by trying, not just assumed.
+
+**This matches the project's own recurring pattern** (see §20's "third escalation... this gap keeps being
+deeper than the previous diagnosis suggested") almost exactly, one level down: each of the three
+corrections found this session/continuation was concrete and load-bearing, not speculative, and each was
+caught by tracing a case through by hand *before* writing any Rocq for it — not discovered mid-proof. That
+discipline is exactly what made this a same-session finding rather than a wasted afternoon of retrofitting.
+
+**Status: theorem2 itself still unchanged (one admit).** `alpha_renaming_wip.v` is now 1834 lines,
+compiles clean end to end, zero unplanned admits (`NL_Fun`/`NL_Select`/`NL_Guess` remain, each precisely
+diagnosed in its own in-proof comment — `NL_Fun`'s now documents the full argument up to exactly where the
+fourth gap bites). `curry_test_leftmost.v` was not touched.
+
+## 26. Next session: the fourth gap fixed and threaded through everything, NL_Fun's ENTIRE argument now
+goes through in actual Rocq up to a fifth, narrower gap — and that one is genuinely deep
+
+**Fixed the fourth gap from §25 in full.** Added `HFdom1`/`HFdom2` — "`F1`/`F2` are already inside
+`Gam1`/`Gam2`'s own domain" — as a new hypothesis pair to `NEval_left_confluence` (no matching conclusion
+conjunct needed, unlike `Hcontain0`/`Hcontain`: checking all 11 `NEval_left` constructors confirmed the
+guard list `F` only ever *grows* at `NL_VarExp` — every other constructor either leaves `F` untouched or
+only changes the *heap* — so `HFdom1`/`HFdom2` never need to flow back out through a conclusion, only get
+locally extended at the one case that grows `F`). Re-threaded through all 8 already-closed cases: purely
+mechanical — direct reuse where `F`/heap don't change, one `hupd_preserves_some` lift where the heap grows
+(`NL_Let`), one real extension at `NL_VarExp` (`w = x` case discharged directly, `w ∈ F0` case via the
+unchanged hypothesis). Also added the same hypothesis to the `NEval_left_self_confluence` corollary itself
+(trivially satisfiable whenever the caller's own `F` is `nil`, which matches every actual call site in this
+codebase).
+
+**With `Hcontain0` (§25) and `HFdom1`/`HFdom2` (this session) both available, traced `NL_Fun`'s entire
+argument through *in actual Rocq* — not just on paper — up through the exact fact flagged as blocking last
+time: `sigma` (`batch_extend`'s output) agrees with `sigma0` on the whole guard list `F0`.** The insight
+that unblocks it: combine the two hypotheses via a case split on whether `sigma0` fixes a given `w ∈ F0`,
+rather than reaching for either alone (which is exactly what last session's diagnosis missed — it
+considered `Hcontain0` and a domain fact separately, concluded neither sufficed alone, and stopped without
+trying the combination). If `sigma0 w ≠ w`, `Hcontain0` directly gives `Gam2 w ≠ None`. If `sigma0 w = w`,
+`HFdom2` (applied at `sigma0 w`, which is `w` in this case) gives it instead. Either way `w ∈ dom(Gam2)`,
+which combined with `s2(y)`'s freshness (`Gam2 (s2 y) = None`) is exactly what's needed to rule out
+`w = s2(y)`. This closed cleanly with only one small direction-of-equality fix needed (`Some (ps2,body2) =
+Some (ps,body)` needed `symmetry` before `exact HPf2`) — the *entire* multi-step argument (batch pairs
+construction, `NoDup` via injectivity, the 8-step parameter-collision argument from §25,
+`rename_b_comp`/`rename_b_congr`, and now this F0-agreement argument) compiled essentially as planned.
+
+**Stops at a fifth, narrower gap, and this one turned out deeper than it first looked.** Applying the
+outer `IH` to `body`'s own continuation also needs `NHeapAlpha sigma tau G0 Gam2` (the *new* `sigma`/`tau`,
+not the ambient `sigma0`/`tau0` — the heaps themselves don't change at `NL_Fun`, only the renaming pair
+does) — and `batch_extend`'s own "agrees outside the pairs list" guarantee (`Houtside`) is stated only for
+`sigma'`, never for `tau'`. The first guess — "just add a symmetric `tau'`-outside conjunct to
+`batch_extend`" — doesn't actually dissolve the problem on its own: rewriting `NHeapAlpha` through
+`mutual_inverse` into a form quantified over the *source* location instead of using `tau` to look one up
+(`forall z, Gam2 (sigma z) = option_map (rename_b sigma) (G0 z)`) sidesteps needing anything about `tau'`
+specifically, but for a source `z` outside the pairs list (where `sigma z = sigma0 z` follows from
+`Houtside` alone, no `tau'` fact needed) it still needs `G0`'s own *stored value* at `z` to only mention
+variables that are *also* outside the pairs list — i.e., needs the fresh locations `s(y)`/`s2(y)` to be
+unreferenced not just as heap *keys* (`G0 (s y) = None` — the only freshness fact freshness premises give)
+but as *values* stored somewhere else in the heap too. That's a fundamentally different kind of freshness
+— a heap/value well-formedness invariant — that nothing in this file currently tracks, and it isn't obvious
+it's even the most direct fix rather than a symptom pointing at a different one.
+
+**Deliberately stopped here rather than guess further.** Three real gaps in a row (`c`/`d`/this one) were
+each found by tracing a case through *before* coding it, and the first two went from "diagnosed" to "fully
+`Qed`'d and re-threaded through 8 cases" within the same session they were found — a genuinely fast
+turnaround, matching how corrections (a)/(b) went last time too. This fifth one doesn't have an equally
+clean candidate fix yet, and forcing one through without being sure it's the *right* invariant (rather than
+another layer masking a deeper issue) risks the kind of wasted-afternoon retrofitting the "trace before
+coding" discipline exists to avoid. A good point for a fresh diagnosis pass, possibly by re-examining
+whether `NEval_left`'s own well-formedness premises (`ProgWF`/`NoBareFreeOrChoiceProgWF`, used throughout
+`curry_test_leftmost.v`'s `theorem2` but not yet threaded into this file at all) already rule out the
+"stored value references a location outside its own domain-closure" scenario, rather than inventing a new
+invariant from scratch.
+
+**Status: theorem2 itself still unchanged (one admit).** `alpha_renaming_wip.v` is now 1940 lines,
+compiles clean end to end, zero unplanned admits. `curry_test_leftmost.v` was not touched.
+
+## 27. Same session, continued: the fifth gap sharpened from a described failure case into a named,
+buildable invariant — checked, not guessed
+
+**The user asked the natural next question about §26's fifth gap**: if a fresh location `s(y)` genuinely
+can't be a heap *key* yet, how could some *other* cell's stored content possibly reference it as a value —
+wouldn't that mean the heap already had a dangling pointer before the function call even started? Exactly
+right semantically, and it's the key that turns "not even clear this is the right fix" into a concrete plan.
+
+**Checked, rather than assumed, that nothing already covers this.** `ProgWF` (`curry.v`) only asserts
+`NoBareChoiceB` on function bodies; `NoBareFreeOrChoiceProgWF` (`curry_test_leftmost.v`) only rules out bare
+`free`/`choice` at a tail position. Neither says anything about *scoping* — i.e. neither says that every
+variable a stored term mentions is itself already bound. Grepped the whole codebase for `closed`/`Scoped`/
+`WellScoped` too: every hit is "proof closed" (an unrelated, purely textual sense), not a heap-scoping
+notion. So the fact really is semantically true (well-scoped source + `NL_Let` being the only rule that
+ever writes a fresh cell, always with content whose own free variables must already be bound by an
+enclosing binder) but genuinely **not yet formalized anywhere** in this codebase — `NL_Let`'s own rule has
+exactly one heap premise (`G x = None`, the *new* cell is fresh) and no premise at all constraining `e`'s
+own free variables. That check is currently just *assumed* to hold externally, not proven.
+
+**This reframes the fifth gap from "maybe the wrong fix entirely" into three concrete, standard pieces,
+none built yet:**
+1. A **"closed heap"** predicate — `forall z b, G z = Some b -> forall w, In w (vars_of_b b) -> G w <>
+   None` (every stored value's own variable references are themselves already bound). `vars_of_b`
+   (piece 3's own prerequisite, already built and `Qed`'d) is directly reusable here.
+2. A **preservation lemma** — `NEval_left` maintains closedness (likely needs, for `NL_Fun`'s own case
+   specifically, that the *source* function body is well-scoped relative to its own parameter list — a
+   fact about `P` that doesn't currently have a name either, and would need its own hypothesis threaded
+   through, matching how `Hcontain0`/`HFdom1`/`HFdom2` were each added this session).
+3. Confirming the **actual call site** (wherever `theorem2`'s `G_CaseFun` case eventually invokes this
+   corollary) starts from a closed heap — plausible almost by construction, but not yet checked.
+
+This is a genuinely standard *kind* of invariant in operational-semantics formalizations (closedness/
+scope-safety is usually one of the first lemmas proven about any heap-based semantics), which is
+reassuring — but it's still real, unstarted work, and likely needs its own new well-scoping definition on
+`P`/function bodies (nothing existing captures "every free variable in this body is a parameter or
+introduced by an earlier binder") before the preservation lemma can even be stated.
+
+**Status unchanged**: `alpha_renaming_wip.v`'s own comments (header + `NL_Fun`'s in-proof comment) updated
+to match this sharper diagnosis; no code changes this pass. Still one admit in `theorem2`, still zero
+unplanned admits in `alpha_renaming_wip.v`, `curry_test_leftmost.v` still untouched.
+
+---
+
+## 28. Same session, continued: actually building the ClosedHeap piece — 7 of 11 cases close outright,
+the remaining 4 sharpen §27's plan further
+
+**The user said "let's start there"** — building §27's piece (1)+(2) for real: the `ClosedHeap` predicate
+and its preservation lemma, traced by hand before coding as usual.
+
+**`ClosedHeap`**, defined exactly as sketched in §27:
+```
+Definition ClosedHeap (G : NHeap) : Prop :=
+  forall z b, G z = Some b -> forall w, In w (vars_of_b b) -> G w <> None.
+```
+
+**The preservation attempt turned up a genuine simplification worth recording.** `NEval_left`'s 11
+constructors split cleanly into two kinds:
+- **"Heap-pointer-mediated"** (`VarCons`/`VarSelf`/`VarFree`/`VarExp` — every one with a `G x = Some e`
+  premise): closedness of whatever the rule *finds* is derivable "for free" from `ClosedHeap G` applied at
+  that premise — **no separate "is e closed" input hypothesis is needed at all**, because the very
+  existence of the given `NEval_left` derivation already forces it (if `e` weren't already bound, no rule
+  could have concluded anything about it in the first place). This is a strictly stronger/cleaner fact than
+  what was originally guessed (an outer "e is closed" hypothesis threaded through everything) — the outer
+  hypothesis turned out to be simply unnecessary for this half of the cases.
+- **"Reveals brand-new syntax"** (`ValCon` at the leaf, and — the real content — `Let`/`Fun`/`Select`/
+  `Guess`, each of which pulls a *whole new Blk term* in from the program or from `e`'s own immediate
+  structure, never via a heap pointer): no such free lunch, and `vars_of_b` turns out to be **the wrong
+  tool** for stating what would even be needed. `vars_of_b` conflates a term's genuinely free variables
+  with ones a `BLet`/`BCase` *inside that very term* binds for itself — concretely, `vars_of_b (BLet z EFree
+  (BExpr (EVar z))) = [z; z]`, yet that whole term is closed under the **empty** heap (`z` needs no
+  pre-existing binding; it gets one from the let itself). Stating a correct hypothesis for these 4 cases
+  needs an actual free-variable analysis (tracking a growing bound-set through `BLet`/`BCase` binders,
+  something this file has never built), not just reusing `vars_of_b`.
+
+**Result**: `NEval_left_closed_preserved` (`alpha_renaming_wip.v`, PIECE 5, right before
+`NEval_left_confluence`) — 7 of the 11 cases (`VarCons`, `VarSelf`, `VarFree`, `VarExp`, `ValFree`,
+`ValCon`, `Or`) are fully `Qed`-quality and **compiled clean on the first attempt**, confirming the by-hand
+trace was right. The other 4 (`Let`, `Fun`, `Select`, `Guess`) are `admit`s with per-case comments pinpointing
+exactly where each stalls; the theorem itself is `Admitted`.
+
+**This sharpens §27's plan (2) rather than replacing it.** The preservation lemma can't even be *stated*
+correctly for the binder-introducing cases without a real free-variable function first — so the next step
+isn't "keep proving preservation," it's building that free-variable analysis (bound-set-aware, unlike
+`vars_of_b`) plus, per §27's own point, a well-scopedness fact about `P`'s function/branch bodies stated in
+terms of it. Only then can `Let`/`Fun`/`Select`/`Guess` be attempted.
+
+**Status**: still one admit in `theorem2`, `curry_test_leftmost.v` still untouched. `alpha_renaming_wip.v`
+still compiles clean with exactly the expected admits (4 new, in `NEval_left_closed_preserved`, plus the 3
+pre-existing ones in `NEval_left_confluence`) — no unplanned admits or errors.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
@@ -2242,3 +2726,83 @@ induction — recovering automatic IH generation "for free," which is the direct
 - **`clear H`** — occasionally used to discard a hypothesis that's become stale/misleading (e.g.
   after rewriting `Hrec2g` to a more specific type, the original, now-redundant intermediate
   equation is sometimes cleared to keep the context legible for the remaining proof).
+
+## T19. `rewrite <- H` rewrites EVERY matching occurrence, including ones hiding inside a larger
+subterm — pin down which one with `at n`
+
+**The problem it causes.** Given `Heq : f (f w) = f w` and a goal `w = f w`, the instinct is `rewrite
+<- (Hst w)` (where `Hst w : tau (f w) = w`) to turn the goal into something `Heq`-shaped. But `rewrite <-`
+finds *every* syntactic occurrence of the rewrite's target pattern in the current goal, not just the one
+you had in mind — and `f w` (or here, bare `w`) often occurs more than once, including nested inside
+another occurrence of itself (e.g. the `w` sitting inside `f w` on the other side of the equation). The
+rewrite fires on all of them at once, producing a goal that no longer matches what the next line expects
+— a `Found no subterm matching ... while it is expected to have type ...` error whose printed types look
+close enough to right that the actual problem (which occurrence got rewritten) is easy to misdiagnose as
+a different lemma-name/argument-order mistake instead.
+
+**The fix.** Use `rewrite <- H at n` to target exactly the `n`-th occurrence (counted left-to-right in
+the current goal), leaving the others alone. Concretely (`alpha_renaming_wip.v`,
+`cyc_tau_cyc_sigma`/`cyc_sigma_cyc_tau`): to turn goal `w = sigma w` into `tau (sigma w) = sigma w`
+(matching `Hst (sigma w)` after a further `Heq`-rewrite), `rewrite <- (Hst w) at 1` targets only the bare
+`w` standing alone on the goal's left, not the `w` hiding inside `sigma w` on the right. Getting the
+occurrence number wrong on the first attempt (and then chasing the resulting type-mismatch error as if it
+were something else) cost two failed compile attempts in a row before landing on this — worth checking
+`at n` immediately whenever a `rewrite <-` target could plausibly appear more than once in the goal,
+rather than only reaching for it after a confusing error.
+
+## T20. `List.In`'s definitional unfold order is `elem = query`, not `query = elem` — and stdlib
+lemmas frequently mark the "obvious" positional argument implicit
+
+**The `In` direction trap.** `In` is defined as `Fixpoint In a l := match l with nil => False | b::m =>
+b = a \/ In a m end` — the EXISTING list element `b` is on the LEFT of the equation, the thing you searched
+for (`a`) is on the RIGHT. So `simpl`-ing (or `destruct`-ing) a hypothesis `Hin : In start (nxt :: nil)`
+produces `nxt = start \/ False`, not `start = nxt \/ False` — backwards from what the variable names'
+left-to-right order in `In start [nxt]` suggests. Writing `eq_sym` reflexively (because "obviously" the
+query should come first) silently flips a hypothesis that was ALREADY in the right shape, so
+`Hne : nxt <> start` applied to an `eq_sym`'d version fails with a "term has type X while expected Y"
+error that reads like an unrelated lemma-argument mistake, not a direction bug — cost real iteration in
+`alpha_renaming_wip.v`'s `chase_invariant`/`component_invariant` (PIECE 2b) before being caught by just
+reading the exact printed type of the hypothesis in the error rather than assuming the "natural" direction.
+**The fix**: when a `False`-goal proof involving `In`-derived equalities won't typecheck, print/read the
+actual hypothesis type first (`Set Printing All` if needed) rather than guessing which side `eq_sym`
+belongs on.
+
+**The implicit-index trap.** Several extremely common `List` lemmas mark what LOOKS like a positional,
+obviously-explicit argument as implicit: `nth_error_app1`/`nth_error_app2` (`n`), `app_nth2` (`n`),
+`Permutation_cons_append` (neither, but its arg ORDER is `l x`, i.e. list first — easy to guess backwards
+as `x l`), `NoDup_cons` (`l`). `Check`ing one of these prints a clean-looking `forall (l l' : list A) (n :
+nat), ...` that gives no visual hint of which binders are secretly `[bracketed]`/implicit — passing all of
+them positionally (e.g. `nth_error_app1 l [v] i Hi`) then fails with a confusing "term has type nat while
+it is expected to have type `?n < length l`"-style error (the tactic engine tried to unify your extra
+explicit argument against the *proof* slot). **The fix**: use `About lemma_name` instead of `Check
+lemma_name` before writing an explicit positional application — `About` prints the `Arguments ...`
+line with real `[bracket]` annotations, or just `apply`/`rewrite` the bare lemma name and let unification
+supply everything instead of guessing the positional call.
+
+## T21. `destruct (compound_expr) eqn:H` rewrites *every* hypothesis mentioning that exact expression,
+not just the goal — including a `forall`-quantified hypothesis whose STATEMENT contains it
+
+**The problem it causes.** `destruct t eqn:H` on a bare variable `t` only ever affects the goal (and
+whatever the goal depends on). But when `t` is a *compound* expression — e.g. `nth_error (component ps v0)
+(length (component ps v0) - 1)` — and some OTHER hypothesis already in context happens to mention that
+exact same expression (say `Hterm : forall x, nth_error (component ps v0) (length (component ps v0) - 1) =
+Some x -> P x`, straight out of `component_invariant`'s own conclusion), the `destruct` rewrites that
+occurrence too, turning `Hterm` into `forall x, Some xl = Some x -> P x` (`xl` being the freshly-introduced
+witness) — silently, with no warning. Two concrete symptoms this produced (`alpha_renaming_wip.v`,
+`component_backward_closed`, PIECE 2c): first, trying to route the extracted witness through a nested
+`assert (Hex : exists xl, <the same compound expression> = Some xl) { destruct ... eqn:E; ... }` fails
+*inside the assert itself*, because the assert's own stated goal contains that same compound expression,
+which also gets rewritten to `Some xl = Some xl0` under the hood — `exact E` no longer matches. Second,
+applying the (now-rewritten) `Hterm xl Hxl` fails with a "term has type X while expected Y" error that
+looks like a completely unrelated argument-order mistake, because `Hxl`'s ordinary equation no longer
+matches `Hterm`'s silently-mutated premise type.
+
+**The fix.** Don't fight it — use it. Once you know `destruct ... eqn:` will rewrite a same-shaped
+hypothesis's premise down to `Some xl = Some xl` (or `None = None`, in the other branch), that premise
+becomes trivially dischargeable by `eq_refl` (or `reflexivity`) instead of the original named equation:
+`destruct (Hterm xl eq_refl)` rather than `destruct (Hterm xl Hxl)`. Concretely: `destruct (nth_error l i)
+as [xl | ] eqn:Hxl; [ | exfalso; apply Hnex; reflexivity]` — the `None` branch's `Hnex : nth_error l i <>
+None` gets rewritten to `None <> None` by the very same mechanism, so `reflexivity` (not a fact about
+`nth_error`) closes it. Avoid routing the extraction through a separate `assert`/`exists` wrapper whose own
+stated goal repeats the exact compound expression — that just relocates the same rewrite collision one
+level down, with a more confusing error site.
