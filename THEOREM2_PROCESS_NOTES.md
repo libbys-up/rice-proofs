@@ -2242,6 +2242,55 @@ pre-existing ones in `NEval_left_confluence`) — no unplanned admits or errors.
 
 ---
 
+## 29. Same session, continued: `NEval_left_closed_preserved` fully closed — all 11 cases, zero admits
+
+**The user said "let's start on that"** — go build §28's plan (the real `free_vars_b` plus
+`FunBodyWellScoped`) and use it to close the 4 cases left open. Reordered `alpha_renaming_wip.v` so PIECE 6
+(the free-variable machinery) sits *before* PIECE 5's theorem, since the restated theorem needs
+`free_vars_b`/`FunBodyWellScoped` in scope — a mechanical `sed`-based block move, verified compile-clean
+before writing a single line of new proof.
+
+**PIECE 6 built cleanly, with one genuine finding worth recording.** `free_vars_b` (bound-set-aware,
+correctly excluding `BLet`/`BCase`'s own bound variables) plus `free_vars_b_rename_subset` — the key lemma
+needed for `NL_Fun`/`NL_Select`/`NL_Guess`, all of which apply a renaming/substitution to a term pulled in
+from elsewhere. Initially expected this would need `s` injective (mirroring `rename_b_congr`'s own
+injectivity-flavored uses elsewhere in this file), but tracing it by hand showed the **subset** direction
+(a renamed term's free variables are always among the *images* of the original free variables — substitution
+can only *lose* apparent free variables via variable capture, never *create* new ones) holds for **any** `s`,
+injective or not. This mattered concretely: `zipsubst` (used by `NL_Select`/`NL_Guess`) is *not* generally
+injective, so needing injectivity here would have blocked those two cases outright.
+
+**`NEval_left_domain_mono`** (a simple standalone induction: `NEval_left` only ever *grows* a
+heap via `hupd`/`hupd_list`, never shrinks it) turned out to be needed too, to carry a closedness fact
+established against the *pre-scrutinee-forcing* heap (`G0`/`G1` before `NL_Select`/`NL_Guess`'s own
+recursive premise 1) forward to the heap the branch body is actually evaluated against.
+
+**Restating the theorem**: `free_vars_b` for `e`'s own closedness (the input hypothesis), but **`vars_of_b`**
+kept for `v`'s (the conclusion) — since `v` is always one of the 3 terminal shapes (`ECon`/`EVar`/`Free`,
+never `BLet`/`BCase`), the two coincide for `v` regardless, and `vars_of_b`'s *stronger* guarantee is
+exactly what `NL_VarExp`'s own `hupd` step needs when it stores the just-computed `v` as a fresh cell's
+content — using `free_vars_b` there instead would have needed an extra shape lemma for no benefit.
+
+**Result**: `NEval_left_closed_preserved` is now fully `Qed`'d across all 11 constructors — `NL_Fun` needed
+`FunBodyWellScoped` (the sole point a term is pulled in from *outside* `e`'s own structure); `NL_Let` needed
+only `free_vars_b`'s own `remove`-based bound-set tracking, nothing external; `NL_Select`/`NL_Guess` needed
+`free_vars_b_rename_subset` + `NEval_left_domain_mono` plus small connective lemmas
+(`free_vars_b_bcase_branch`, `hd_error_in`, `zipsubst_in`/`zipsubst_notin`, and for `NL_Guess`'s extra
+`hupd_list` layer, `hupd_list_map_self`/`hupd_list_notin`). Several small direction-of-equality slips along
+the way (T20's "elem = query, not query = elem" pattern recurring twice more, an `in_or_app` nesting-order
+mistake caught by the compiler rather than by hand), all fixed the same way as always: read the compiler's
+own stated expected type, fix the one line.
+
+**Status**: `theorem2` still has its one original admit, `curry_test_leftmost.v` still untouched.
+`alpha_renaming_wip.v` (2482 lines) compiles clean end-to-end (`curry.v`, `curry_test_leftmost.v`,
+`alpha_renaming_wip.v`, in that order) with exactly the 3 pre-existing admits, all in
+`NEval_left_confluence`'s `NL_Fun`/`NL_Select`/`NL_Guess` cases — `NEval_left_closed_preserved` itself has
+none. **Next step**: feed this back into `NL_Fun`'s own stalled fifth gap in `NEval_left_confluence` — the
+`ClosedHeap G0` fact that gap needed is no longer something to merely assume, it's now provable by applying
+`NEval_left_closed_preserved` along the *outer* derivation's own earlier steps.
+
+---
+
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
 
 This part catalogs, with real examples, every distinct tactic/pattern used repeatedly across

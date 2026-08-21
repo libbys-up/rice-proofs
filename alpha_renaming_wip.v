@@ -219,26 +219,46 @@ Require Import curry_test_leftmost.
 (*                                                                            *)
 (*      CONTINUED AGAIN (this session, "let's start there" on the ClosedHeap  *)
 (*      plan): built ClosedHeap and attempted NEval_left_closed_preserved     *)
-(*      (PIECE 5, right before NEval_left_confluence).  Tracing by hand       *)
-(*      before coding turned up a genuine simplification: the four "heap-     *)
-(*      pointer-mediated" constructors (VarCons/VarSelf/VarFree/VarExp) get   *)
-(*      closedness of whatever they find "for free" from ClosedHeap G plus    *)
-(*      the rule's own G x = Some e premise -- the very existence of the      *)
-(*      given derivation already forces it, no separate input needed.  That,  *)
-(*      plus ValFree/ValCon/Or, closed 7 of 11 cases outright and compiled     *)
-(*      clean on the FIRST try.  The remaining 4 (Let/Fun/Select/Guess) all    *)
-(*      "reveal brand-new syntax" (a whole Blk term pulled in from the         *)
-(*      program or from e's own structure, not reached via a heap pointer)     *)
-(*      and hit a SHARPER version of the same fifth gap: vars_of_b conflates   *)
-(*      a term's genuinely free variables with ones a LET/CASE inside that     *)
-(*      very term binds for itself (vars_of_b (BLet z EFree (EVar z)) =        *)
-(*      [z;z], yet that term is closed under the EMPTY heap) -- so stating      *)
-(*      correct hypotheses for these 4 cases needs an actual free-variable      *)
-(*      analysis (bound-set-tracking through BLet/BCase), not just vars_of_b,   *)
-(*      PLUS a well-scopedness fact about P's function/branch bodies that       *)
-(*      doesn't exist anywhere in this codebase yet.  Each case's own comment   *)
-(*      in the proof gives its exact stall point.  NOT YET ATTEMPTED.           *)
-(*   4. Wiring the finished lemma into theorem2's G_CaseFun second        *)
+(*      (PIECE 5).  Tracing by hand before coding turned up a genuine          *)
+(*      simplification: the four "heap-pointer-mediated" constructors         *)
+(*      (VarCons/VarSelf/VarFree/VarExp) get closedness of whatever they      *)
+(*      find "for free" from ClosedHeap G plus the rule's own G x = Some e    *)
+(*      premise -- the very existence of the given derivation already forces  *)
+(*      it, no separate input needed.  That, plus ValFree/ValCon/Or, closed    *)
+(*      7 of 11 cases outright and compiled clean on the FIRST try.  The       *)
+(*      remaining 4 (Let/Fun/Select/Guess) all "reveal brand-new syntax" (a    *)
+(*      whole Blk term pulled in from the program or from e's own structure,   *)
+(*      not reached via a heap pointer) and hit a SHARPER version of the same  *)
+(*      fifth gap: vars_of_b conflates a term's genuinely free variables with  *)
+(*      ones a LET/CASE inside that very term binds for itself (vars_of_b     *)
+(*      (BLet z EFree (EVar z)) = [z;z], yet that term is closed under the     *)
+(*      EMPTY heap).                                                          *)
+(*                                                                            *)
+(*      CONTINUED AGAIN (same session): built PIECE 6 to close all 4 -- the    *)
+(*      real free_vars_b (bound-set-aware, unlike vars_of_b), plus            *)
+(*      free_vars_b_rename_subset (renaming/substitution never CREATES new     *)
+(*      free variables beyond the image of the old ones -- true for ANY s,     *)
+(*      no injectivity needed, since capture can only LOSE apparent free       *)
+(*      vars, never add them), NEval_left_domain_mono (heaps only grow, never   *)
+(*      shrink -- needed to carry a closedness fact from an earlier heap        *)
+(*      across to a later one in Select/Guess), and FunBodyWellScoped (the      *)
+(*      well-scopedness fact this codebase never had).  Reordered PIECE 6      *)
+(*      ahead of PIECE 5 and restated NEval_left_closed_preserved using         *)
+(*      free_vars_b for e's own closedness (vars_of_b stayed for v's, since     *)
+(*      v is always one of the 3 terminal ECon/EVar/Free shapes, where the      *)
+(*      two coincide anyway, and vars_of_b's STRONGER guarantee is what         *)
+(*      VarExp's own hupd step actually needs).  Result: all 11 cases close,    *)
+(*      NEval_left_closed_preserved is fully Qed'd, zero admits.  Only NL_Fun   *)
+(*      needed FunBodyWellScoped; Let/Select/Guess needed only free_vars_b's    *)
+(*      own bound-set tracking plus (Select/Guess) domain-mono to bridge        *)
+(*      across the scrutinee-forcing step.  Six small helper lemmas along the   *)
+(*      way: let_content_vars, free_vars_b_bcase_branch, hd_error_in,           *)
+(*      zipsubst_in/zipsubst_notin, hupd_list_map_self/hupd_list_notin.         *)
+(*   4. Feeding NEval_left_closed_preserved back into NL_Fun's own stalled      *)
+(*      fifth gap in NEval_left_confluence (the ClosedHeap G0 hypothesis that   *)
+(*      gap needs is now something this file can actually produce, not just    *)
+(*      assume) -- NOT YET DONE.                                               *)
+(*   5. Wiring the finished lemma into theorem2's G_CaseFun second        *)
 (*      conjunct (curry_test_leftmost.v:8350-8356), replacing the admit.  *)
 (*                                                                        *)
 (* Using Nat.eq_dec (sumbool) throughout instead of Nat.eqb -- much      *)
@@ -1596,105 +1616,6 @@ Qed.
 Definition ClosedHeap (G : NHeap) : Prop :=
   forall z b, G z = Some b -> forall w, In w (vars_of_b b) -> G w <> None.
 
-Theorem NEval_left_closed_preserved :
-  forall P F G e G' v, NEval_left P F G e G' v ->
-  ClosedHeap G -> (forall w, In w (vars_of_b e) -> G w <> None) ->
-  ClosedHeap G' /\ (forall w, In w (vars_of_b v) -> G' w <> None).
-Proof.
-  intros P F G e G' v H.
-  induction H as
-    [ F0 G0 z c args Hz
-    | F0 G0 z Hz
-    | F0 G0 z Hz
-    | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
-    | F0 G0
-    | F0 G0 c args
-    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G0 G1 z e0 k v0 HzFresh Hrec IH
-    | F0 G0 x1 y1 G1 v0 Hrec IH
-    | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
-    ]; intros Hclosed Heclosed.
-  - (* VarCons: G'=G, v=ECon c args; args' own closedness is exactly
-       ClosedHeap G applied at z via Hz -- no other input needed. *)
-    split; [exact Hclosed | ].
-    simpl. apply (Hclosed z (BExpr (ECon c args)) Hz).
-  - (* VarSelf: G'=G, v=EVar z; z's own closedness is Hz itself. *)
-    split; [exact Hclosed | ].
-    simpl. intros w Hin. destruct Hin as [Hw | []]. subst w.
-    rewrite Hz. discriminate.
-  - (* VarFree: G'=hupd G z (EVar z), v=EVar z; the new cell stores EVar z,
-       self-referencing the very key just added -- and every other cell is
-       untouched, so ClosedHeap G lifts through hupd unchanged. *)
-    split.
-    + intros w b Hwb y Hy. unfold hupd in Hwb.
-      destruct (Nat.eqb w z) eqn:Heqw.
-      * apply Nat.eqb_eq in Heqw; subst w. injection Hwb as Hwb; subst b.
-        simpl in Hy. destruct Hy as [Hy | []]. subst y.
-        unfold hupd. rewrite Nat.eqb_refl. discriminate.
-      * apply hupd_preserves_some. apply (Hclosed w b Hwb y Hy).
-    + simpl. intros w Hin. destruct Hin as [Hw | []]. subst w.
-      unfold hupd. rewrite Nat.eqb_refl. discriminate.
-  - (* VarExp: the recursive premise's own "e0 is closed" input comes from
-       ClosedHeap G0 + Hz (G0 z = Some e0) -- the "for free" case.
-       G'=hupd G1 z v0. *)
-    assert (He0closed : forall w, In w (vars_of_b e0) -> G0 w <> None)
-      by (apply (Hclosed z e0 Hz)).
-    destruct (IH Hclosed He0closed) as [HclosedG1 Hv0closed].
-    split.
-    + intros w b Hwb y Hy. unfold hupd in Hwb.
-      destruct (Nat.eqb w z) eqn:Heqw.
-      * apply Nat.eqb_eq in Heqw; subst w. injection Hwb as Hwb; subst b.
-        apply hupd_preserves_some. apply (Hv0closed y Hy).
-      * apply hupd_preserves_some. apply (HclosedG1 w b Hwb y Hy).
-    + intros w Hw. apply hupd_preserves_some. apply (Hv0closed w Hw).
-  - (* ValFree: G'=G, v=EFree, no vars on either side. *)
-    split; [exact Hclosed | ].
-    intros w Hin. simpl in Hin. destruct Hin.
-  - (* ValCon: e = v = ECon c args LITERALLY -- no heap lookup at all.
-       This is exactly the "reveals brand-new syntax" shape: NL_ValCon's
-       own rule has no premise constraining args, so args' closedness can
-       ONLY come from the outer "e is closed" hypothesis -- which for THIS
-       case is enough, since vars_of_b e = vars_of_b v = args literally
-       (the general problem below is with e/v that have BINDERS inside). *)
-    split; [exact Hclosed | exact Heclosed].
-  - (* Fun: recursive premise is on `rename_b s body`, a brand-new term
-       pulled in from the program P, not reached via any heap pointer.
-       vars_of_b body conflates body's true free variables (which should
-       be <= ps, if P is well-scoped) with variables body binds for
-       itself internally (which get fresh locations via Hfresh and must
-       NOT be required closed -- that's the whole point of Hfresh).
-       Closing this needs a genuine free-variable analysis plus a
-       well-scopedness fact about P; see this file's header STATUS and
-       THEOREM2_PROCESS_NOTES.md Sec.27 for the exact plan. NOT YET
-       ATTEMPTED. *)
-    admit.
-  - (* Let: recursive premise is on k, under the NEW binder z.  Same root
-       problem as Fun (need z's binding removed from k's own free-var
-       requirement, not merely consulted) plus e0's own vars_of_e0 needs
-       to already be closed and isn't given by NL_Let's rule (same
-       "reveals new syntax, no premise constrains it" gap as ValCon, but
-       here it also has to survive past a binder for k). NOT YET
-       ATTEMPTED. *)
-    admit.
-  - (* Or: e = EChoice x1 y1, recursive premise is on EVar x1.  x1's own
-       closedness genuinely IS available "for free" from Heclosed
-       (EChoice's vars_of_e0 = [x1; y1], so x1 is literally in there) --
-       this case does NOT hit the free-variable/binder problem below. *)
-    apply IH.
-    + exact Hclosed.
-    + simpl. intros w Hin. destruct Hin as [Hw | []]. subst w.
-      apply Heclosed. simpl. left. reflexivity.
-  - (* Select: recursive premise 2 is on rename_b (zipsubst ys zs) body, a
-       branch body pulled from `brs` -- same "new syntax from the source,
-       not the heap" gap as Fun, now for case branches instead of
-       function bodies. NOT YET ATTEMPTED. *)
-    admit.
-  - (* Guess: same gap as Select, for the guessed branch body1.
-       NOT YET ATTEMPTED. *)
-    admit.
-Admitted.
-
 (* ==================================================================== *)
 (* PIECE 6: a genuine free-variable analysis (bound-set-aware, unlike     *)
 (* vars_of_b) plus program-level well-scopedness, needed to close the     *)
@@ -1893,6 +1814,255 @@ Qed.
    hypothesis, not derivable from anything already in this codebase. *)
 Definition FunBodyWellScoped (P : Prog) : Prop :=
   forall f ps body, P f = Some (ps, body) -> forall w, In w (free_vars_b body) -> In w ps.
+
+(* Small helper lemmas the four remaining cases each need, gathered here so
+   the theorem's own case-by-case proof stays readable. *)
+
+(* let_content only special-cases EFree; every other case is a bare BExpr
+   wrapper, so its own vars are exactly e0's, plus (in the EFree case) the
+   let-bound x itself. *)
+Lemma let_content_vars :
+  forall x e0 w, In w (vars_of_b (let_content x e0)) -> w = x \/ In w (vars_of_e0 e0).
+Proof.
+  intros x e0 w H. destruct e0 eqn:He; simpl in H.
+  - right. exact H.
+  - destruct H.
+  - destruct H as [H | []]. left. exact (eq_sym H).
+  - right. exact H.
+  - right. exact H.
+  - right. exact H.
+Qed.
+
+(* A branch's own (bound-set-corrected) free variables are part of the
+   whole BCase's free variables -- the fact that lets NL_Select/NL_Guess
+   get a branch body's closedness from Heclosed directly, with no separate
+   well-scopedness hypothesis needed (unlike NL_Fun, which pulls body in
+   from OUTSIDE e's own structure). *)
+Lemma free_vars_b_bcase_branch :
+  forall x brs c ys bd, In (c, ys, bd) brs ->
+  forall w, In w (remove_all ys (free_vars_b bd)) -> In w (free_vars_b (BCase x brs)).
+Proof.
+  intros x brs c ys bd Hin w Hw.
+  simpl. right. induction brs as [| [[c' ys'] bd'] brs' IHbrs].
+  - destruct Hin.
+  - destruct Hin as [Heq | Hin].
+    + injection Heq as Hc Hys Hbd. subst c' ys' bd'.
+      apply in_or_app. left. exact Hw.
+    + apply in_or_app. right. apply IHbrs. exact Hin.
+Qed.
+
+Lemma hd_error_in : forall (l : list (cname * list var * Blk)) x, hd_error l = Some x -> In x l.
+Proof.
+  intros l x H. destruct l as [| a l']; simpl in H; [discriminate | ].
+  injection H as H. subst a. left. reflexivity.
+Qed.
+
+Lemma zipsubst_notin : forall ys zs y, ~ In y ys -> zipsubst ys zs y = y.
+Proof.
+  induction ys as [| y0 ys' IH]; intros zs y Hnin; destruct zs as [| z0 zs'].
+  - reflexivity.
+  - reflexivity.
+  - reflexivity.
+  - simpl. destruct (Nat.eqb y y0) eqn:Heq.
+    + exfalso. apply Nat.eqb_eq in Heq. apply Hnin. left. exact (eq_sym Heq).
+    + apply IH. intro H. apply Hnin. right. exact H.
+Qed.
+
+Lemma zipsubst_in : forall ys zs, length ys = length zs -> forall y, In y ys -> In (zipsubst ys zs y) zs.
+Proof.
+  induction ys as [| y0 ys' IH]; intros zs Hlen y Hy.
+  - destruct Hy.
+  - destruct zs as [| z0 zs']; simpl in Hlen; [discriminate | ].
+    simpl in Hy. destruct Hy as [Hy | Hy].
+    + subst y0. simpl. rewrite Nat.eqb_refl. left. reflexivity.
+    + simpl. destruct (Nat.eqb y y0) eqn:Heq.
+      * left. reflexivity.
+      * right. apply IH; [injection Hlen as Hlen; exact Hlen | exact Hy].
+Qed.
+
+Lemma hupd_list_map_self :
+  forall (ws : list var) (h : NHeap) w,
+  In w ws -> hupd_list h ws (map (fun w0 => BExpr (EVar w0)) ws) w = Some (BExpr (EVar w)).
+Proof.
+  induction ws as [| x ws' IH]; intros h w Hw.
+  - destruct Hw.
+  - simpl. unfold hupd. destruct (Nat.eqb w x) eqn:Heq.
+    + apply Nat.eqb_eq in Heq. subst w. reflexivity.
+    + apply IH. simpl in Hw. destruct Hw as [Hw | Hw].
+      * exfalso. apply Nat.eqb_neq in Heq. apply Heq. exact (eq_sym Hw).
+      * exact Hw.
+Qed.
+
+Lemma hupd_list_notin :
+  forall (ws : list var) (h : NHeap) (vs : list Blk) w, ~ In w ws -> hupd_list h ws vs w = h w.
+Proof.
+  induction ws as [| x ws' IH]; intros h vs w Hnin; destruct vs as [| v vs'].
+  - reflexivity.
+  - reflexivity.
+  - reflexivity.
+  - simpl. unfold hupd. destruct (Nat.eqb w x) eqn:Heq.
+    + exfalso. apply Nat.eqb_eq in Heq. apply Hnin. left. exact (eq_sym Heq).
+    + apply IH. intro H. apply Hnin. right. exact H.
+Qed.
+
+(* PIECE 5, restated with free_vars_b (bound-set-aware) instead of vars_of_b
+   for e/v's own closedness, plus FunBodyWellScoped -- the two fixes PIECE
+   6's trace showed were necessary and sufficient.  All 11 cases now go
+   through: the corrected tool (free_vars_b) plus one genuinely external
+   fact (FunBodyWellScoped, needed ONLY at NL_Fun, the sole point where a
+   term is pulled in from outside e's own structure) closes what vars_of_b
+   alone could not. *)
+Theorem NEval_left_closed_preserved :
+  forall P F G e G' v, NEval_left P F G e G' v ->
+  FunBodyWellScoped P ->
+  ClosedHeap G -> (forall w, In w (free_vars_b e) -> G w <> None) ->
+  ClosedHeap G' /\ (forall w, In w (vars_of_b v) -> G' w <> None).
+Proof.
+  intros P F G e G' v H.
+  induction H as
+    [ F0 G0 z c args Hz
+    | F0 G0 z Hz
+    | F0 G0 z Hz
+    | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
+    | F0 G0
+    | F0 G0 c args
+    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
+    | F0 G0 G1 z e0 k v0 HzFresh Hrec IH
+    | F0 G0 x1 y1 G1 v0 Hrec IH
+    | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    ]; intros HScoped Hclosed Heclosed.
+  - (* VarCons *)
+    split; [exact Hclosed | ].
+    simpl. apply (Hclosed z (BExpr (ECon c args)) Hz).
+  - (* VarSelf *)
+    split; [exact Hclosed | ].
+    simpl. intros w Hin. destruct Hin as [Hw | []]. subst w.
+    rewrite Hz. discriminate.
+  - (* VarFree *)
+    split.
+    + intros w b Hwb y Hy. unfold hupd in Hwb.
+      destruct (Nat.eqb w z) eqn:Heqw.
+      * apply Nat.eqb_eq in Heqw; subst w. injection Hwb as Hwb; subst b.
+        simpl in Hy. destruct Hy as [Hy | []]. subst y.
+        unfold hupd. rewrite Nat.eqb_refl. discriminate.
+      * apply hupd_preserves_some. apply (Hclosed w b Hwb y Hy).
+    + simpl. intros w Hin. destruct Hin as [Hw | []]. subst w.
+      unfold hupd. rewrite Nat.eqb_refl. discriminate.
+  - (* VarExp *)
+    assert (He0closed : forall w, In w (free_vars_b e0) -> G0 w <> None).
+    { intros w Hw. apply (Hclosed z e0 Hz). apply free_vars_b_subset_vars_of_b. exact Hw. }
+    destruct (IH HScoped Hclosed He0closed) as [HclosedG1 Hv0closed].
+    split.
+    + intros w b Hwb y Hy. unfold hupd in Hwb.
+      destruct (Nat.eqb w z) eqn:Heqw.
+      * apply Nat.eqb_eq in Heqw; subst w. injection Hwb as Hwb; subst b.
+        apply hupd_preserves_some. apply (Hv0closed y Hy).
+      * apply hupd_preserves_some. apply (HclosedG1 w b Hwb y Hy).
+    + intros w Hw. apply hupd_preserves_some. apply (Hv0closed w Hw).
+  - (* ValFree *)
+    split; [exact Hclosed | ].
+    intros w Hin. simpl in Hin. destruct Hin.
+  - (* ValCon *)
+    split; [exact Hclosed | exact Heclosed].
+  - (* Fun *)
+    assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b s body)) -> G0 w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset s body w Hw) as [y [Hy Hsy]].
+      assert (Hyps : In y ps) by (exact (HScoped f ps body HPf y Hy)).
+      destruct (In_nth_error ps y Hyps) as [i Hi].
+      assert (Hips : i < length ps) by (apply nth_error_Some; rewrite Hi; discriminate).
+      assert (Hiargs : i < length args) by (rewrite <- Hlen; exact Hips).
+      destruct (nth_error args i) as [a | ] eqn:Ha.
+      - assert (Hsya : s y = a) by (exact (Hmatch i y a Hi Ha)).
+        apply Heclosed. rewrite <- Hsy, Hsya. eapply nth_error_In. exact Ha.
+      - exfalso. assert (Ha' : nth_error args i <> None) by (apply nth_error_Some; exact Hiargs).
+        apply Ha'. exact Ha. }
+    exact (IH HScoped Hclosed Hbodyclosed).
+  - (* Let *)
+    assert (He0closed : forall w, In w (vars_of_e0 e0) -> G0 w <> None).
+    { intros w Hw. apply Heclosed. simpl. apply in_or_app. left. exact Hw. }
+    assert (Hkclosed : forall w, In w (free_vars_b k) -> hupd G0 z (let_content z e0) w <> None).
+    { intros w Hw. destruct (Nat.eq_dec w z) as [Heq | Hneq].
+      - subst w. unfold hupd. rewrite Nat.eqb_refl. discriminate.
+      - apply hupd_preserves_some. apply Heclosed. simpl. apply in_or_app. right.
+        apply in_in_remove; [exact Hneq | exact Hw]. }
+    assert (HnewClosed : ClosedHeap (hupd G0 z (let_content z e0))).
+    { intros w b Hwb y Hy. unfold hupd in Hwb.
+      destruct (Nat.eqb w z) eqn:Heqw.
+      - apply Nat.eqb_eq in Heqw; subst w. injection Hwb as Hwb; subst b.
+        apply let_content_vars in Hy. destruct Hy as [Hy | Hy].
+        + subst y. unfold hupd. rewrite Nat.eqb_refl. discriminate.
+        + apply hupd_preserves_some. apply He0closed. exact Hy.
+      - apply hupd_preserves_some. apply (Hclosed w b Hwb y Hy). }
+    exact (IH HScoped HnewClosed Hkclosed).
+  - (* Or *)
+    apply IH.
+    + exact HScoped.
+    + exact Hclosed.
+    + simpl. intros w Hin. destruct Hin as [Hw | []]. subst w.
+      apply Heclosed. simpl. left. reflexivity.
+  - (* Select *)
+    assert (Hzclosed : forall w, In w (free_vars_b (BExpr (EVar z))) -> G0 w <> None).
+    { intros w Hw. simpl in Hw. destruct Hw as [Hw | []]. subst w.
+      apply Heclosed. simpl. left. reflexivity. }
+    destruct (IH1 HScoped Hclosed Hzclosed) as [HclosedG1 Hzsclosed].
+    simpl in Hzsclosed.
+    assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b (zipsubst ys zs) body)) -> G1 w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset (zipsubst ys zs) body w Hw) as [y [Hy Hsy]].
+      destruct (in_dec Nat.eq_dec y ys) as [Hyin | Hynin].
+      - assert (Hwzs : In w zs) by (rewrite <- Hsy; apply (zipsubst_in ys zs Hlen y Hyin)).
+        apply Hzsclosed. exact Hwzs.
+      - assert (Hzid : zipsubst ys zs y = y) by (apply zipsubst_notin; exact Hynin).
+        assert (HinBCase : In y (free_vars_b (BCase z brs))).
+        { apply (free_vars_b_bcase_branch z brs c ys body HIn).
+          apply remove_all_in_intro; [exact Hy | exact Hynin]. }
+        assert (HG0y : G0 y <> None) by (apply Heclosed; exact HinBCase).
+        assert (HG1y : G1 y <> None)
+          by (exact (NEval_left_domain_mono P F0 G0 (BExpr (EVar z)) G1 (BExpr (ECon c zs)) Hrec1 y HG0y)).
+        rewrite <- Hsy, Hzid. exact HG1y. }
+    exact (IH2 HScoped HclosedG1 Hbodyclosed).
+  - (* Guess *)
+    assert (Hzclosed : forall w, In w (free_vars_b (BExpr (EVar z))) -> G0 w <> None).
+    { intros w Hw. simpl in Hw. destruct Hw as [Hw | []]. subst w.
+      apply Heclosed. simpl. left. reflexivity. }
+    destruct (IH1 HScoped Hclosed Hzclosed) as [HclosedG1 Hz'closed].
+    simpl in Hz'closed. assert (HG1z' : G1 z' <> None) by (apply Hz'closed; left; reflexivity).
+    assert (Hbr1In : In (c1, ys1, body1) brs) by (apply (hd_error_in brs (c1, ys1, body1) Hhd)).
+    set (Hnew := hupd G1 z' (BExpr (ECon c1 ws))).
+    assert (HnewClosed : ClosedHeap (hupd_list Hnew ws (map (fun w => BExpr (EVar w)) ws))).
+    { intros w b Hwb y Hy. destruct (in_dec Nat.eq_dec w ws) as [Hwws | Hwnws].
+      - rewrite (hupd_list_map_self ws Hnew w Hwws) in Hwb. injection Hwb as Hwb; subst b.
+        simpl in Hy. destruct Hy as [Hy | []]. subst y.
+        rewrite (hupd_list_map_self ws Hnew w Hwws). discriminate.
+      - rewrite (hupd_list_notin ws Hnew _ w Hwnws) in Hwb.
+        unfold Hnew in Hwb. unfold hupd in Hwb.
+        destruct (Nat.eqb w z') eqn:Heqw.
+        + apply Nat.eqb_eq in Heqw; subst w. injection Hwb as Hwb; subst b.
+          simpl in Hy. rewrite (hupd_list_map_self ws Hnew y Hy). discriminate.
+        + destruct (in_dec Nat.eq_dec y ws) as [Hyws | Hynws].
+          * rewrite (hupd_list_map_self ws Hnew y Hyws). discriminate.
+          * rewrite (hupd_list_notin ws Hnew _ y Hynws). unfold Hnew. apply hupd_preserves_some.
+            apply (HclosedG1 w b Hwb y Hy). }
+    assert (Hbodyclosed :
+      forall w, In w (free_vars_b (rename_b (zipsubst ys1 ws) body1)) ->
+      hupd_list Hnew ws (map (fun w0 => BExpr (EVar w0)) ws) w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset (zipsubst ys1 ws) body1 w Hw) as [y [Hy Hsy]].
+      destruct (in_dec Nat.eq_dec y ys1) as [Hyin | Hynin].
+      - assert (Hwws : In w ws) by (rewrite <- Hsy; apply (zipsubst_in ys1 ws (eq_sym Hlen) y Hyin)).
+        rewrite (hupd_list_map_self ws Hnew w Hwws). discriminate.
+      - assert (Hzid : zipsubst ys1 ws y = y) by (apply zipsubst_notin; exact Hynin).
+        assert (HinBCase : In y (free_vars_b (BCase z brs))).
+        { apply (free_vars_b_bcase_branch z brs c1 ys1 body1 Hbr1In).
+          apply remove_all_in_intro; [exact Hy | exact Hynin]. }
+        assert (HG0y : G0 y <> None) by (apply Heclosed; exact HinBCase).
+        assert (HG1y : G1 y <> None)
+          by (exact (NEval_left_domain_mono P F0 G0 (BExpr (EVar z)) G1 (BExpr (EVar z')) Hrec1 y HG0y)).
+        destruct (in_dec Nat.eq_dec y ws) as [Hyws | Hynws].
+        + exfalso. apply HG1y. apply (Hfr y Hyws).
+        + rewrite <- Hsy, Hzid. rewrite (hupd_list_notin ws Hnew _ y Hynws). unfold Hnew.
+          apply hupd_preserves_some. exact HG1y. }
+    exact (IH2 HScoped HnewClosed Hbodyclosed).
+Qed.
 
 (* One more invariant NL_Fun's own case exposed as genuinely NECESSARY (not
    just a proof-technique convenience): batch_extend's Hfix precondition
