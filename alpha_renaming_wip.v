@@ -316,11 +316,59 @@ Require Import curry_test_leftmost.
 (*      equivalence shouldn't depend on how its throwaway pair reconciles) --      *)
 (*      it breaks THIS PROOF TECHNIQUE specifically, because batch_extend's        *)
 (*      Hfix demands sigma0 already fix every one of vs's images unconditionally,  *)
-(*      dead ones included. Likely real fix: generalize batch_extend itself to     *)
-(*      TOLERATE a pre-existing sigma0-move landing inside ps_pairs (chaining       *)
-(*      through it, rather than requiring Hfix outright) -- a genuine new           *)
-(*      combinatorial piece on top of PIECE 2, materially bigger than D-             *)
-(*      threading alone. NOT YET ATTEMPTED.                                          *)
+(*      dead ones included.                                                        *)
+(*                                                                                  *)
+(*      RESOLVED (this session, continued): rejected generalizing batch_extend      *)
+(*      itself (cyc_extend's "l is currently fixed" precondition is genuinely       *)
+(*      load-bearing -- its own proof needs it to rule out something OUTSIDE l      *)
+(*      mapping INTO it -- so tolerating a pre-existing move would mean re-doing    *)
+(*      component/chase over a COMBINED graph, real new combinatorics, not a        *)
+(*      patch). Landed instead on: NEVER reuse a level's own batch_extend OUTPUT    *)
+(*      as the next level's starting point. Thread FOUR new top-level constants     *)
+(*      (Gam1_TOP, Gam2_TOP, sigma0_TOP, tau0_TOP, fixed for the WHOLE induction)    *)
+(*      plus monotonicity hooks (Gam1_TOP/Gam2_TOP's own domain is <= the current   *)
+(*      level's Gam1/Gam2, via NEval_left_domain_mono), plus a growing "pa : list    *)
+(*      (var*var)" (every Fun/Guess pair introduced so far), and at EVERY Fun/       *)
+(*      Guess step call batch_extend FRESH -- on pa ++ (this level's own new         *)
+(*      pairs), starting from sigma0_TOP/tau0_TOP, NEVER from the incoming per-       *)
+(*      level sigma0. Hfix for the combined list then follows from Hcontain0 AT      *)
+(*      THE TOP (never re-examined per level) plus monotonicity: anything fresh       *)
+(*      relative to a LATER heap is fresh relative to Gam1_TOP too (contrapositive     *)
+(*      of domain_mono) -- no generalized batch_extend, no risk of an open-ended        *)
+(*      combinatorial problem.                                                          *)
+(*                                                                                       *)
+(*      Chasing this to a working statement surfaced one more piece, now RESOLVED:       *)
+(*      relating the CURRENT level's own sigma0 (needed for Hparam/Hmatch, since           *)
+(*      D2's shape-inversion is stated in terms of it) to the FRESHLY-recomputed            *)
+(*      sigma at a PARAMETER position that happens to be an ANCESTOR's own already-          *)
+(*      introduced pair (e.g. a let-bound local passed as an argument to a NESTED             *)
+(*      call -- this is completely ordinary program structure, not a corner case).             *)
+(*      First worried this needed a NEW "same variable, live or dead in lockstep across        *)
+(*      D1/D2" semantic fact (a genuinely different, deeper kind of gap) -- but it            *)
+(*      does NOT: batch_extend's Hrealizes conjunct is UNCONDITIONAL (sigma'(a)=b for          *)
+(*      EVERY (a,b) in its input list, regardless of what else that list contains or          *)
+(*      merges with). Maintaining "Hrealize_accum: forall a b, In (a,b) pa -> sigma0 a=b"      *)
+(*      as an invariant (trivial at the top; trivially carried through every non-Fun/          *)
+(*      Guess case; free at Fun/Guess since pa is a SUBSET of the combined list the             *)
+(*      fresh batch_extend call is run on) gives EXACT agreement on pa's domain              *)
+(*      directly -- no liveness reasoning needed at all, and its mutual-inverse             *)
+(*      corollary gives the matching fact on the range side via tau for free too.          *)
+(*                                                                                          *)
+(*      Net design (STATEMENT drafted, NOT YET IMPLEMENTED -- see below for exact           *)
+(*      scope): thread, alongside the existing parameters, Gam1_TOP/Gam2_TOP/               *)
+(*      sigma0_TOP/tau0_TOP/their own mutual_inverse+Hcontain0, two monotonicity            *)
+(*      hooks, and pa with its own NoDup/Hfix/Hrealize_accum facts; the conclusion          *)
+(*      existentially produces pa' (>= pa) with the SAME three facts carried forward,        *)
+(*      and Hcontain0/the output "both heaps defined" conjunct get exempted via              *)
+(*      "~In w (map fst pa' ++ map snd pa')" (the ONLY conjuncts that actually need           *)
+(*      it -- extends does NOT, since Hrealize_accum already makes it hold on pa's            *)
+(*      domain directly, and pa's range side goes through tau, which agrees for free).        *)
+(*      This is roughly NINE new pieces threaded through 11 cases, on top of the four         *)
+(*      passes already done for Hcontain0/HFdom1/HFdom2/ClosedHeap -- deliberately NOT         *)
+(*      attempted in the same sitting as the design work, since a half-finished 11-case         *)
+(*      rewrite left mid-edit would be worse than stopping clean here. Confirmed via           *)
+(*      coqc that no code changed while arriving at this: the file is exactly where it          *)
+(*      was before this investigation began. NOT YET ATTEMPTED.                                 *)
 (*   5. Wiring the finished lemma into theorem2's G_CaseFun second        *)
 (*      conjunct (curry_test_leftmost.v:8350-8356), replacing the admit.  *)
 (*                                                                        *)
@@ -2600,12 +2648,51 @@ Proof.
        fresh pair gets reconciled. It breaks THIS PROOF TECHNIQUE
        specifically: batch_extend's Hfix precondition demands sigma0
        already fix every one of vs's images unconditionally, dead ones
-       included, and nothing forces that across nesting levels. The real
-       fix is likely generalizing batch_extend itself to TOLERATE a
-       pre-existing sigma0-move landing inside ps_pairs (chaining through
-       it, rather than requiring Hfix to hold outright) -- a genuine new
-       combinatorial piece on top of PIECE 2, materially bigger than the
-       D-threading that motivated looking here. NOT YET ATTEMPTED. *)
+       included, and nothing forces that across nesting levels.
+
+       RESOLVED (this session, continued): NOT by generalizing batch_extend
+       (its cyc_extend core genuinely needs "l already fixed" -- checked the
+       proof directly, it rules out something OUTSIDE l mapping INTO l,
+       which a pre-existing move would break) but by NEVER reusing a
+       level's own batch_extend OUTPUT as the next level's starting point.
+       Thread four FIXED top-level constants (Gam1_TOP/Gam2_TOP/sigma0_TOP/
+       tau0_TOP, unchanged for the whole induction) with monotonicity hooks
+       to the current level's Gam1/Gam2 (via NEval_left_domain_mono), plus a
+       growing "pa : list (var*var)" (every Fun/Guess pair introduced so
+       far); at every Fun/Guess step call batch_extend FRESH -- on pa ++
+       this level's own new pairs, starting from sigma0_TOP/tau0_TOP, never
+       from the incoming per-level sigma0. Hfix for the combined list then
+       follows from the ORIGINAL, never-re-examined Hcontain0 plus
+       monotonicity (fresh w.r.t. a later heap is fresh w.r.t. Gam1_TOP
+       too) -- no generalized batch_extend needed.
+
+       One more piece surfaced getting this to a working statement, also
+       RESOLVED: relating the CURRENT level's own sigma0 (needed for
+       Hparam/Hmatch, since D2's shape-inversion is stated in terms of it)
+       to the freshly-recomputed sigma at a parameter position that happens
+       to be an ANCESTOR's own already-introduced pair (e.g. a let-bound
+       local passed as an argument to a nested call -- ordinary program
+       structure, not a corner case). First worried this needed a NEW
+       "same variable live-or-dead in lockstep across D1/D2" semantic fact
+       -- it does not: batch_extend's Hrealizes is UNCONDITIONAL (sigma'(a)
+       =b for every (a,b) in its input, regardless of what else the list
+       contains), so maintaining "Hrealize_accum: forall a b, In (a,b) pa
+       -> sigma0 a=b" as an invariant (trivial to carry, free at Fun/Guess
+       since pa is a subset of the fresh call's own input list) gives exact
+       agreement on pa's domain directly, no liveness reasoning needed; its
+       mutual-inverse corollary gives the range side via tau for free too.
+
+       Net design (drafted, NOT YET IMPLEMENTED): roughly nine new pieces
+       threaded through all 11 cases (the four TOP constants + their own
+       mutual_inverse/Hcontain0, two monotonicity hooks, and pa with its
+       own NoDup/Hfix/Hrealize_accum, mirrored by an existential pa' >= pa
+       in the conclusion) -- Hcontain0 and the output "both heaps defined"
+       conjunct get exempted via "~In w (map fst pa'++map snd pa')" (the
+       ONLY conjuncts that need it; extends does not, Hrealize_accum
+       already covers it). Deliberately not attempted in the same sitting
+       as the design work -- a half-finished 11-case rewrite left mid-edit
+       would be worse than stopping clean here. See the file header and
+       THEOREM2_PROCESS_NOTES.md for the full trace. NOT YET ATTEMPTED. *)
     admit.
   - (* NL_Let: x is a FIXED source-level name (not freshly chosen the way
        NL_Fun/NL_Guess pick one), so this threads sigma0 through unchanged,

@@ -2406,6 +2406,65 @@ through."
 
 ---
 
+## 32. Same session, continued: the sixth gap's design fully worked out — nine new pieces, not yet built
+
+**The user said "let's work on weakening the Hfix precondition and see if we can get that to work."** Three
+things happened, each investigated by hand before any code: (1) confirmed generalizing `batch_extend`
+directly is the wrong move; (2) designed and validated an alternative that avoids needing to; (3) found and
+resolved one more dependency the alternative surfaced. No code changed anywhere in this arc — every
+`coqc` check along the way showed the file exactly as `bef8254` left it.
+
+**(1) `batch_extend` itself can't be casually weakened.** Read `cyc_extend`'s own proof directly:
+the "`l` is currently fixed" precondition is used specifically to rule out something *outside* `l` mapping
+*into* it (`cyc_tau_cyc_sigma`'s own case split on `sigma w ∈ l` for `w ∉ l`). Dropping it would mean
+redoing `component`/`chase` over a *combined* graph (the new pairs plus wherever the incoming permutation
+is already non-identity) — genuine new combinatorics, not a quick patch.
+
+**(2) The alternative: never chain `batch_extend` outputs across levels.** Instead, thread four constants
+fixed for the *entire* induction — `Gam1_TOP`, `Gam2_TOP`, `sigma0_TOP`, `tau0_TOP` — with monotonicity
+hooks (`Gam1_TOP`'s domain ⊆ the current level's `Gam1`, via `NEval_left_domain_mono`) and a growing
+`pa : list (var*var)` recording every `Fun`/`Guess` pair introduced anywhere so far. At every `Fun`/`Guess`
+step, call `batch_extend` **fresh** — on `pa ++ this level's own new pairs`, starting from `sigma0_TOP`/
+`tau0_TOP`, never from the incoming per-level `sigma0`. `Hfix` for the combined list then follows from the
+*original*, never-re-examined `Hcontain0` plus monotonicity: anything fresh relative to a later heap is
+provably fresh relative to `Gam1_TOP` too (the contrapositive of `NEval_left_domain_mono`, already built).
+Verified this resolves the theorem's own "extends"/output-contain conjuncts too, by exempting them via
+`~In w (map fst pa' ++ map snd pa')` where `pa'` is an existentially-produced superset of `pa` (needed
+because a nested `Fun` two levels down can introduce further dead pairs a shallower exemption wouldn't
+cover).
+
+**(3) A new dependency surfaced, then resolved without needing a new semantic fact.** Applying this to
+`NL_Fun`'s own `Hagree`/`Hfinal` (relating `s`/`s2` on parameter positions, via `Hparam`/`Hmatch`) needs
+the *current* level's `sigma0` (used in `Hparam`) to agree with the *freshly recomputed* `sigma` at a
+parameter that happens to be an ancestor's already-introduced pair — completely ordinary, e.g. a let-bound
+local passed as an argument to a nested call, not a corner case. First worried this needed a genuinely new
+fact — that a source variable's two independent renamed copies (D1's and D2's) must be live-or-dead in
+lockstep — which would have been a different *kind* of gap (a question about the semantics, not the proof).
+**It doesn't.** `batch_extend`'s `Hrealizes` conjunct is unconditional: `sigma'(a) = b` for *every* `(a,b)`
+in its input list, regardless of what else that list contains or merges with. Maintaining
+`Hrealize_accum : forall a b, In (a,b) pa -> sigma0 a = b` as an invariant (trivial at the top; free to
+carry through every non-`Fun`/`Guess` case; free at `Fun`/`Guess` since `pa` is a subset of the fresh
+call's own input list, so its own `Hrealizes` covers it) gives *exact* agreement on `pa`'s domain directly
+— no liveness reasoning needed at all. Its mutual-inverse corollary gives the matching fact on the range
+side via `tau` for free too.
+
+**Net scope, not yet built**: roughly nine new pieces threaded through all 11 cases of
+`NEval_left_confluence` — the four `_TOP` constants plus their own `mutual_inverse`/`Hcontain0`, two
+monotonicity hooks, and `pa` with its own `NoDup`/`Hfix`/`Hrealize_accum` facts, mirrored by an
+existential `pa'` in the conclusion. This sits on top of the four threading passes already done this
+project (`Hcontain0`, `HFdom1`/`HFdom2`, `ClosedHeap`/`free_vars_b`/`FunBodyWellScoped`). **Deliberately
+not attempted in this session** — a half-finished 11-case rewrite left mid-edit, if the remaining budget
+ran out partway, would be strictly worse than a clean stop with a fully-validated design recorded. Full
+design recorded in `alpha_renaming_wip.v`'s own header and `NL_Fun`'s in-proof comment.
+
+**Status**: no code changes this session. `alpha_renaming_wip.v` compiles clean with the same 3 admits as
+`bef8254`; `theorem2` still has its one original admit; `curry_test_leftmost.v` untouched. **Next step for
+whoever picks this up**: implement the nine-piece design above — start with the statement, verify the 7
+leaf/pass-through cases are near-trivial (as traced), then `NL_Fun`'s own case using `Hrealize_accum`
+exactly as derived here.
+
+---
+
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
 
 This part catalogs, with real examples, every distinct tactic/pattern used repeatedly across
