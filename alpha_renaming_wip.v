@@ -289,8 +289,38 @@ Require Import curry_test_leftmost.
 (*      NL_Fun/NL_Guess call picks, not hold unconditionally for every w --     *)
 (*      but weakening it correctly, without re-breaking the 8 cases already     *)
 (*      threaded through it (a FOURTH re-verification pass), needs its own      *)
-(*      careful trace-first pass. NOT YET ATTEMPTED. See NL_Fun's own in-       *)
-(*      proof comment for the precise stall point.                             *)
+(*      careful trace-first pass. See NL_Fun's own in-proof comment for the     *)
+(*      precise stall point.                                                   *)
+(*                                                                              *)
+(*      TRACED FURTHER (this session, "let's trace the weakened form"): the     *)
+(*      natural fix -- thread a growing "reserved region" D (Hcontain0         *)
+(*      becomes "~In w D -> ...", D grows by ps_pairs at Fun/Guess, the         *)
+(*      conclusion existentially produces its own D' >= D) -- DOES work, and    *)
+(*      elegantly resolves a SECOND issue it surfaced along the way: a body-    *)
+(*      internal variable inside a NEVER-TAKEN case branch can have its fresh   *)
+(*      location go permanently unbound, so the output "both heaps defined"    *)
+(*      conjunct can't honestly promise anything about it -- D' (>= ps_pairs)   *)
+(*      simply exempts it. But establishing Hfix at THIS level still needs      *)
+(*      "s(y) is outside D" in the first place, and s comes from NL_Fun's own   *)
+(*      rule (curry_test_leftmost.v), constrained only by injective s and       *)
+(*      Hfresh (fresh w.r.t. the CURRENT heap) -- nothing stops s(y) from        *)
+(*      numerically coinciding with an ANCESTOR level's own fresh choice that    *)
+(*      ALSO never got bound (the SAME dead-branch scenario, one level up).      *)
+(*      Checked ProgWF/NoBareFreeOrChoiceProgWF (neither addresses variable-      *)
+(*      naming discipline) and var := nat itself (an ordering exists, but        *)
+(*      Hfresh never uses it) -- confirmed nothing rules this out, and the       *)
+(*      collision scenario is concretely constructible (an unreached branch's    *)
+(*      dead let-bound var alongside a reached branch's own nested Fun call).     *)
+(*      Reassuring half: this almost certainly does NOT make the THEOREM         *)
+(*      false (a dead branch never affects the final value, so alpha-             *)
+(*      equivalence shouldn't depend on how its throwaway pair reconciles) --      *)
+(*      it breaks THIS PROOF TECHNIQUE specifically, because batch_extend's        *)
+(*      Hfix demands sigma0 already fix every one of vs's images unconditionally,  *)
+(*      dead ones included. Likely real fix: generalize batch_extend itself to     *)
+(*      TOLERATE a pre-existing sigma0-move landing inside ps_pairs (chaining       *)
+(*      through it, rather than requiring Hfix outright) -- a genuine new           *)
+(*      combinatorial piece on top of PIECE 2, materially bigger than D-             *)
+(*      threading alone. NOT YET ATTEMPTED.                                          *)
 (*   5. Wiring the finished lemma into theorem2's G_CaseFun second        *)
 (*      conjunct (curry_test_leftmost.v:8350-8356), replacing the admit.  *)
 (*                                                                        *)
@@ -2533,13 +2563,49 @@ Proof.
        what this hypothesis forbids. Not a proof gap to fill in -- the
        statement as phrased is unsatisfiable for the sigma NL_Fun's own
        case is forced to construct, independent of anything about
-       ClosedHeap/free_vars_b. Likely means Hcontain0 (added as "correction
-       (c)" earlier this project) is stronger than necessary: its real job
-       is only to license Hcontain_None_fixed at whichever SPECIFIC fresh
-       locations a DEEPER NL_Fun/NL_Guess call picks, not to hold for every
-       w unconditionally -- but weakening it correctly, without breaking
-       the 8 cases already threaded through it, needs its own careful
-       trace-first pass, not attempted here. NOT YET ATTEMPTED. *)
+       ClosedHeap/free_vars_b.
+
+       TRACED FURTHER (next session): the natural fix -- thread a growing
+       "reserved region" D through the whole induction (Hcontain0 becomes
+       "forall w, ~In w D -> sigma0 w<>w -> ...", D grows by ps_pairs's own
+       domain+range exactly at Fun/Guess, and the CONCLUSION existentially
+       produces its own D' >= D alongside sigma/tau) DOES work for the
+       straightforward part, and elegantly handles a second issue it
+       exposed along the way: a body-internal variable inside a NEVER-TAKEN
+       case branch can have its fresh location go permanently unbound, so
+       the output "sigma w<>w -> BOTH heaps defined" conjunct can't honestly
+       promise anything about it -- D' (>= ps_pairs, chosen existentially)
+       simply exempts it, for free.
+
+       But establishing Hfix at THIS level still needs "s(y) is outside D"
+       in the first place, to invoke the un-exempted Hcontain0 -- and
+       THIS is where it breaks for real. s comes from NL_Fun's own rule in
+       curry_test_leftmost.v, constrained only by injective s and Hfresh
+       (fresh relative to the CURRENT heap G0) -- nothing stops s(y) from
+       numerically coinciding with an ANCESTOR level's own fresh choice
+       that ALSO never got bound (the same dead-branch scenario, one level
+       up). Checked ProgWF/NoBareFreeOrChoiceProgWF (neither addresses
+       variable-naming discipline) and var := nat's own definition (an
+       ordering exists, but Hfresh never uses it -- no "beyond the max used
+       so far" convention anywhere) -- confirmed nothing already rules this
+       out. Concretely constructible: a case with an unreached branch
+       (dead let-bound y_dead) alongside a reached branch containing a
+       nested Fun call -- s(y_dead) and the nested call's own fresh choice
+       can legally coincide, since both premises (each level's own Hfresh)
+       check out independently; NEval_left has no cross-call memory.
+
+       Reassuring half: this almost certainly does NOT make the THEOREM
+       false -- a dead branch never contributes to the final value, so
+       alpha-equivalence of v1/v2 shouldn't depend on how its throwaway
+       fresh pair gets reconciled. It breaks THIS PROOF TECHNIQUE
+       specifically: batch_extend's Hfix precondition demands sigma0
+       already fix every one of vs's images unconditionally, dead ones
+       included, and nothing forces that across nesting levels. The real
+       fix is likely generalizing batch_extend itself to TOLERATE a
+       pre-existing sigma0-move landing inside ps_pairs (chaining through
+       it, rather than requiring Hfix to hold outright) -- a genuine new
+       combinatorial piece on top of PIECE 2, materially bigger than the
+       D-threading that motivated looking here. NOT YET ATTEMPTED. *)
     admit.
   - (* NL_Let: x is a FIXED source-level name (not freshly chosen the way
        NL_Fun/NL_Guess pick one), so this threads sigma0 through unchanged,

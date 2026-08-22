@@ -2344,6 +2344,68 @@ the fifth), `NL_Select`/`NL_Guess` unchanged. `theorem2` still has its one origi
 
 ---
 
+## 31. Same session, continued: the sixth gap's natural fix works halfway, then exposes a deeper,
+semantics-level question — a genuinely new kind of gap for this project
+
+**The user said "let's trace the weakened form and see if it'll work"** — investigating §30's proposed fix
+(weaken `Hcontain0` so it's satisfiable for `sigma`) by hand, before writing any code. No file edits this
+entire session — purely investigative, and the investigation itself changed the plan twice.
+
+**First finding: the naive weakening breaks what `Hcontain0` exists to support.** Changing its conclusion
+from "both heaps defined" to "both heaps agree on definedness" (an IFF) makes it satisfiable for `sigma` at
+`NL_Fun`'s own level, but it also makes "both undefined" *compatible* with `sigma0` moving `w` — which is
+exactly what `Hcontain_None_fixed` needs to rule out to support `batch_extend`'s `Hfix` precondition at a
+*deeper* level. The fix for the case we're stuck on breaks the case we already closed.
+
+**Second finding: a structural fix — a growing "reserved region" `D`, threaded like the guard list `F1`/`F2`
+already is — works for the straightforward part.** `Hcontain0` becomes `forall w, ~In w D -> sigma0 w<>w ->
+...`; `D` grows by `ps_pairs`'s own domain+range exactly at `Fun`/`Guess` and is unchanged everywhere else;
+the theorem's conclusion existentially produces its own `D' >= D` alongside `sigma`/`tau`. Traced by hand:
+this correctly supports `Hfix` for a *deeper* level's own fresh pairs (they're outside `D` by heap
+monotonicity + `Houtside`), and it elegantly resolves a *second*, previously-invisible issue found along the
+way — a body-internal variable inside a case branch that's never actually taken during evaluation can have
+its fresh location go permanently unbound, so the theorem's own "`sigma w<>w` implies both heaps defined"
+output conjunct can't honestly promise anything about it. The existentially-chosen `D'` (⊇ `ps_pairs`) simply
+exempts such locations — for free, as a side effect of the same mechanism.
+
+**Third finding, the real blocker: establishing `Hfix` still needs "`s(y)` is outside `D`" as a starting
+fact, and nothing gives it.** `s` comes from `NL_Fun`'s own rule in `curry_test_leftmost.v`, constrained only
+by `injective s` and `Hfresh` (freshness relative to the *current* heap `G0`, checked independently at each
+call). Nothing stops `s(y)` from numerically coinciding with an *ancestor* level's own fresh choice that also
+never got bound — the identical dead-branch scenario, one nesting level up. **Checked, not guessed**:
+`ProgWF` and `NoBareFreeOrChoiceProgWF` say nothing about variable-naming discipline; `var := nat` provides
+an ordering, but `Hfresh` never uses it (no "beyond the max used so far" convention exists anywhere in this
+codebase). The collision is concretely constructible: a case with an unreached branch containing a dead
+let-bound variable, alongside a reached branch containing a nested `Fun` call — both levels' own `Hfresh`
+premises check out completely independently, since `NEval_left` carries no cross-call memory of what's
+already been chosen.
+
+**The reassuring half**: this is very likely *not* a hole in the theorem itself. A dead branch never
+contributes to the final evaluated value, so alpha-equivalence of the two derivations' results shouldn't
+actually depend on how their respective throwaway fresh pairs get reconciled. What it breaks is *this proof
+technique specifically*: `batch_extend`'s `Hfix` precondition demands `sigma0` already fix *every* one of
+`vs`'s images unconditionally — dead ones included — and nothing forces that across nesting levels.
+
+**Likely real fix, not attempted**: generalize `batch_extend` itself to *tolerate* a pre-existing `sigma0`
+move landing inside `ps_pairs` — chaining through the existing move rather than requiring `Hfix` to hold
+outright before starting. This is a genuine new combinatorial capability on top of PIECE 2 (component
+decomposition, cycle extension), not a quick patch on top of the current interface, and materially bigger in
+scope than the `D`-threading that motivated looking here.
+
+**Why this is worth recording as its own category**: every prior "escalation" in this project (§20's third
+escalation, the fourth/fifth/sixth gaps) was a gap *within the proof*, discoverable and fixable by adding
+more structure to what's already being tracked. This one is different in kind — it's a question about
+whether the underlying *semantics* (`NL_Fun`/`NL_Guess`'s freshness premises) provide enough global discipline
+for a fully general confluence argument, surfaced only by pushing the proof far enough to need it. Worth
+flagging explicitly for whoever picks this up next, rather than treating it as "just another gap to trace
+through."
+
+**Status unchanged**: no code edits this session (pure investigation, confirmed via the file's own
+`coqc` compile before and after). `alpha_renaming_wip.v` still compiles clean with the same 3 admits;
+`theorem2` still has its one original admit; `curry_test_leftmost.v` still untouched.
+
+---
+
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
 
 This part catalogs, with real examples, every distinct tactic/pattern used repeatedly across
