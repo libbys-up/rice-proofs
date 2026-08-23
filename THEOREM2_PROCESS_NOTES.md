@@ -2465,6 +2465,72 @@ exactly as derived here.
 
 ---
 
+## 33. Building the nine-piece design: 8 of 11 cases reproven, a seventh gap found in `NL_Fun`
+
+**The user said "start the implementation."** Built it directly, checking `coqc` after each real chunk
+(matching this project's own established discipline). Net result: real, verified progress, plus one new,
+precisely-diagnosed obstruction — not a completed proof.
+
+**What got built.** The theorem's `pa`-related facts (three named in Sec.32: NoDup on both projections,
+`Hfix` relative to `sigma0_TOP`, `Hrealize_accum` relative to the *current* level's `sigma0`) turned out to
+need a **fourth**, undocumented fact the moment `NL_Fun`'s own `Houtps` argument was actually redone:
+`batch_extend`'s "outside" conjunct is now stated relative to `sigma0_TOP` (since the fresh call has to
+start *from* `sigma0_TOP`, never the current `sigma0`) — so recovering "`sigma` agrees with the *current*
+`sigma0`" for a parameter outside `pa`/`ps_pairs` needs a bridge fact, `Houtside_accum : forall w, ~In w
+(fst pa) -> ~In w (snd pa) -> sigma0 w = sigma0_TOP w`, with nothing else to derive it from. Bundled all
+four into one `Definition PaInv sigma0_TOP sigma0 pa` (plus a separate `PaSub pa pa'` for "pa' extends
+pa") so every pass-through case could carry the invariant opaquely instead of re-destructuring four facts
+at every call site — this collapsed what would have been a 12-conjunct existential back down to a
+7-conjunct one, and made the mechanical threading through the 8 non-`Fun`/`Select`/`Guess` cases
+(`VarCons`/`VarSelf`/`VarFree`/`ValFree`/`ValCon`/`VarExp`/`Let`/`Or`) genuinely mechanical, exactly as
+Sec.32 predicted for the "leaf/pass-through" cases. All 8 are fully Qed'd, zero admits, confirmed via
+`coqc`.
+
+**`NL_Fun`: the first piece of the design confirmed correct, then a new wall.** `HfixBE_TOP` — establishing
+that `sigma0_TOP` fixes this level's own `ps_pairs`, via `HGam1mono`/`HGam2mono`'s contrapositive (fresh
+relative to the *current* heap implies fresh relative to `Gam1_TOP`/`Gam2_TOP`) plus the *original*,
+never-re-examined `Hcontain0_TOP` — went through exactly as designed. The wall came right after, trying to
+actually invoke `batch_extend` on the *combined* list `pa ++ ps_pairs` (required, since `Hfix` now only
+holds relative to `sigma0_TOP`, and both `pa` and `ps_pairs` need to go in together for `Hrealize_accum`'s
+own maintenance at the next level down): `batch_extend` needs `NoDup (map fst (pa++ps_pairs))`, which needs
+`pa` and `ps_pairs` **disjoint**, not just individually `NoDup` — and this isn't provable from anything in
+hand.
+
+**The seventh gap.** `ps_pairs`'s elements are fresh relative to the *current* `G0`/`Gam2` (`Hfresh`/
+`Hfresh2`). `pa`'s elements are only known *fixed by `sigma0_TOP`* (`HpaFix`) — nothing says they're in or
+out of `G0`/`Gam2`'s domain. Concretely: if an ancestor level introduced a pair from its own body's **dead**
+(never-taken) case branch — precisely gap 6's original scenario — that pair's locations stay outside every
+heap's domain for the rest of the derivation, forever indistinguishable, from *this* level's `G0`, from an
+ordinary never-yet-used fresh number. `NL_Fun`'s own rule constrains `s`/`s2` only by injectivity plus
+freshness relative to the *current* heap — no cross-call memory rules out landing on that exact dead value.
+Checked `FunBodyWellScoped` (confirms every element of `vs` is body-*internal*-bound, never a genuinely free
+variable escaping outward) — this rules out the *ordinary* case (a let-bound variable later passed as an
+argument to a nested call: that variable's fresh location gets bound in the heap the moment its own `Let`
+is reached, so `Hfresh` at any later level directly excludes it) but does **not** rule out the dead-branch
+case, where the location never gets bound at all. Re-checked `var := nat`'s own definition (no
+reserved-region/monotone-counter convention `Hfresh` could lean on) — same conclusion as gap 6's own check.
+
+**Why this is a genuinely different gap from #6, not the same one resurfacing.** Gap 6 blocked the
+*output* "both heaps defined" conjunct — resolved by having `pa'`/`D'` exempt dead locations *after the
+fact*. This one blocks `batch_extend`'s own *input* NoDup precondition, before `Hfinal` (the syntactic
+renaming-agreement goal `Hrealize_accum` was built to reach) is even reachable — after-the-fact exemption
+can't help a precondition the call itself needs to typecheck.
+
+**Not yet resolved; two directions sketched, neither attempted.** (i) Restrict `pa` to *live* pairs only,
+dropping a pair the instant its own branch is known not taken — but "not taken" is a fact about `Hrec`'s
+own *dynamic* derivation, not something `vs`'s purely *structural* walk over `vars_of_b` can see before
+`Hrec` is examined. (ii) Weaken `Hfinal` to not need to hold syntactically over `body`'s dead sub-terms at
+all (relate `v1`/`v2` directly instead of the whole renamed `body`) — a bigger restructuring of the
+theorem's own statement. Both are real design work, not attempted this session.
+
+**Status**: `alpha_renaming_wip.v` compiles clean, still exactly 3 admits (`NL_Fun`'s new gap-7 stopping
+point, `Select`, `Guess` — same count as `bef8254`, but the statement itself is substantially stronger and
+8 of 11 cases are freshly reproven under it). `theorem2` still has its one original admit;
+`curry_test_leftmost.v`/`curry.v` untouched. Full argument recorded in the file header and in `NL_Fun`'s
+own in-proof comment (right where `HfixBE_TOP` ends and the new admit begins).
+
+---
+
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
 
 This part catalogs, with real examples, every distinct tactic/pattern used repeatedly across
