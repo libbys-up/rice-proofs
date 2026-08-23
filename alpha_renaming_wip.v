@@ -388,6 +388,23 @@ Require Import curry_test_leftmost.
 (*      narrows but doesn't close it (rules out the ordinary "let-bound-then-passed-as-an-       *)
 (*      argument" case, not the dead-branch case). Select/Guess left exactly as before (still    *)
 (*      admits, for their own pre-existing reasons, untouched this pass). NOT YET RESOLVED.       *)
+(*                                                                                                 *)
+(*      RESOLUTION DIRECTION CHOSEN (next session, "weaken Hfinal"): traced by hand FIRST (as       *)
+(*      always) why the obvious cheap version fails -- rename_b is plain structural substitution,   *)
+(*      so "e2 = rename_b sigma0 e1" is either exactly true at EVERY position (dead ones too) or     *)
+(*      false; there is no "don't care about dead positions" reading of a literal term equation.     *)
+(*      The real fix isn't a weaker equation, it's not requiring ONE global bijection to relate       *)
+(*      e1/e2 at all. PIECE 7 (BUILT, foundation only): BlkAlpha/Expr0Alpha, a NON-bijective            *)
+(*      structural correspondence relation -- at every BINDER (Let's own x, a Case branch's own         *)
+(*      pattern vars) it allows a LOCALLY-overridden correspondence function instead of the ambient       *)
+(*      sigma, via a PLAIN function override (ren_override2) rather than a bijection extension, so        *)
+(*      it needs no NoDup/Hfix precondition and no collision is ever possible -- only genuinely LIVE        *)
+(*      positions (Let's RHS, a Case's scrutinee) still go through the ambient sigma. The key lemma,         *)
+(*      BlkAlpha_rename_scoped (replaces Hfinal): needs agreement only on body's own free_vars_b (scope-      *)
+(*      aware, tiny per FunBodyWellScoped) rather than the whole structural vars_of_b -- fully Qed'd, zero     *)
+(*      admits, for BExpr/BLet/BCase all three. NOT YET WIRED into NEval_left_confluence itself -- that's      *)
+(*      the next, larger step: restate the theorem against BlkAlpha instead of literal rename_b equality,       *)
+(*      redo all 11 cases. See THEOREM2_PROCESS_NOTES.md Sec.34 for the full trace.                              *)
 (*   5. Wiring the finished lemma into theorem2's G_CaseFun second        *)
 (*      conjunct (curry_test_leftmost.v:8350-8356), replacing the admit.  *)
 (*                                                                        *)
@@ -2016,6 +2033,7 @@ Qed.
 Definition FunBodyWellScoped (P : Prog) : Prop :=
   forall f ps body, P f = Some (ps, body) -> forall w, In w (free_vars_b body) -> In w ps.
 
+
 (* Small helper lemmas the four remaining cases each need, gathered here so
    the theorem's own case-by-case proof stays readable. *)
 
@@ -2050,6 +2068,207 @@ Proof.
     + injection Heq as Hc Hys Hbd. subst c' ys' bd'.
       apply in_or_app. left. exact Hw.
     + apply in_or_app. right. apply IHbrs. exact Hin.
+Qed.
+
+(* ==================================================================== *)
+(* PIECE 7 (new): BlkAlpha -- a NON-bijective structural correspondence   *)
+(* relation, meant to eventually REPLACE the plain "e2 = rename_b sigma0  *)
+(* e1" hypothesis NEval_left_confluence currently needs.  Built to        *)
+(* resolve the SEVENTH gap (THEOREM2_PROCESS_NOTES.md Sec.33): trying to  *)
+(* reconcile NL_Fun's two independently-fresh renamings s/s2 via ONE      *)
+(* global bijection forced DEAD (never-taken-branch) positions to agree   *)
+(* too, and nothing rules out two UNRELATED levels' independently-fresh   *)
+(* choices numerically colliding there (batch_extend's own NoDup          *)
+(* precondition then fails, with no fix in sight -- see NL_Fun's own      *)
+(* in-proof comment). The fix: don't require ONE global sigma to relate   *)
+(* e1/e2 at EVERY position. At every BINDER (Let's own x, a Case branch's  *)
+(* own pattern vars), allow a LOCALLY-overridden correspondence function   *)
+(* instead of the ambient sigma -- a PLAIN function override, not a        *)
+(* bijection extension, so it is ALWAYS constructible: no NoDup/Hfix        *)
+(* precondition, no collision possible, ever (overriding a function at a    *)
+(* finite set of points needs nothing but the finite set itself). Only      *)
+(* genuinely LIVE positions (Let's own RHS e, a Case's own scrutinee)        *)
+(* still go through the ambient sigma -- exactly the positions the REST      *)
+(* of this file's machinery (heap correspondence, shape-inversion) ever      *)
+(* needs to agree on. A dead branch's own pattern vars/body get their OWN     *)
+(* local correspondence, unconstrained by and never composed with anything    *)
+(* else -- so two dead pairs from unrelated levels simply never meet.          *)
+(* NOT YET WIRED into NEval_left_confluence itself -- that is the next,        *)
+(* larger step (restate the theorem against BlkAlpha instead of literal        *)
+(* rename_b equality, redo all 11 cases). This piece is the foundation:         *)
+(* the relation itself, plus the key construction lemma (BlkAlpha_rename_       *)
+(* scoped) that will replace Hfinal at NL_Fun's own call site. *)
+Inductive Expr0Alpha (sigma : ren) : Expr0 -> Expr0 -> Prop :=
+| EA0_Var : forall x, Expr0Alpha sigma (EVar x) (EVar (sigma x))
+| EA0_Bot : Expr0Alpha sigma EBot EBot
+| EA0_Free : Expr0Alpha sigma EFree EFree
+| EA0_Choice : forall x y, Expr0Alpha sigma (EChoice x y) (EChoice (sigma x) (sigma y))
+| EA0_Fun : forall f args, Expr0Alpha sigma (EFun f args) (EFun f (map sigma args))
+| EA0_Con : forall c args, Expr0Alpha sigma (ECon c args) (ECon c (map sigma args)).
+
+Inductive BlkAlpha (sigma : ren) : Blk -> Blk -> Prop :=
+| BA_Expr : forall e1 e2, Expr0Alpha sigma e1 e2 -> BlkAlpha sigma (BExpr e1) (BExpr e2)
+| BA_Let : forall x1 x2 e1 e2 k1 k2 sigma',
+    Expr0Alpha sigma e1 e2 ->
+    sigma' x1 = x2 ->
+    (forall w, w <> x1 -> sigma' w = sigma w) ->
+    BlkAlpha sigma' k1 k2 ->
+    BlkAlpha sigma (BLet x1 e1 k1) (BLet x2 e2 k2)
+| BA_Case : forall x brs1 brs2,
+    BrsAlpha sigma brs1 brs2 ->
+    BlkAlpha sigma (BCase x brs1) (BCase (sigma x) brs2)
+with BrsAlpha (sigma : ren) : list (cname * list var * Blk) -> list (cname * list var * Blk) -> Prop :=
+| BrsA_nil : BrsAlpha sigma nil nil
+| BrsA_cons : forall c ys1 ys2 b1 b2 brs1 brs2 sigma',
+    Forall2 (fun y1 y2 => sigma' y1 = y2) ys1 ys2 ->
+    (forall w, ~ In w ys1 -> sigma' w = sigma w) ->
+    BlkAlpha sigma' b1 b2 ->
+    BrsAlpha sigma brs1 brs2 ->
+    BrsAlpha sigma ((c, ys1, b1) :: brs1) ((c, ys2, b2) :: brs2).
+
+(* A plain, always-total FUNCTION override at finitely many points -- NOT a
+   bijection extension, so unlike ext_sigma/batch_extend it needs no
+   fixed-point precondition at all: overriding a function's value at a
+   point never has to worry about what else might already map there. *)
+Fixpoint ren_override2 (ys1 ys2 : list var) (sigma : ren) : ren :=
+  match ys1, ys2 with
+  | y1 :: ys1', y2 :: ys2' => fun w => if Nat.eq_dec w y1 then y2 else ren_override2 ys1' ys2' sigma w
+  | _, _ => sigma
+  end.
+
+Lemma ren_override2_notin :
+  forall ys1 ys2 sigma w, ~ In w ys1 -> ren_override2 ys1 ys2 sigma w = sigma w.
+Proof.
+  induction ys1 as [| y1 ys1' IH]; intros ys2 sigma w Hw; destruct ys2 as [| y2 ys2']; try reflexivity.
+  simpl. destruct (Nat.eq_dec w y1) as [Heq | Hneq].
+  - exfalso. apply Hw. left. exact (eq_sym Heq).
+  - apply IH. intro Hc. apply Hw. right. exact Hc.
+Qed.
+
+(* Pointwise version: injective s means s w = s y forces w = y, so the
+   override at s w always lands on the pair actually keyed by w, regardless
+   of what else ys contains -- no NoDup needed. *)
+Lemma ren_override2_map_in :
+  forall (ys : list var) (s s2 sigma : ren), injective s ->
+  forall w, In w ys -> ren_override2 (map s ys) (map s2 ys) sigma (s w) = s2 w.
+Proof.
+  induction ys as [| y ys' IH]; intros s s2 sigma Hinj w Hw.
+  - destruct Hw.
+  - simpl. destruct (Nat.eq_dec (s w) (s y)) as [Heq | Hneq].
+    + assert (Hwy : w = y) by (apply Hinj; exact Heq). subst w. reflexivity.
+    + destruct Hw as [Hw | Hw].
+      * subst w. exfalso. exact (Hneq eq_refl).
+      * apply IH; [exact Hinj | exact Hw].
+Qed.
+
+Lemma Forall2_map_intro :
+  forall (A B : Type) (f g : A -> B) (R : B -> B -> Prop) (l : list A),
+  (forall a, In a l -> R (f a) (g a)) -> Forall2 R (map f l) (map g l).
+Proof.
+  intros A B f g R l. induction l as [| a l' IH]; intro H.
+  - constructor.
+  - simpl. constructor.
+    + apply H. left. reflexivity.
+    + apply IH. intros a' Ha'. apply H. right. exact Ha'.
+Qed.
+
+Lemma ren_override2_map_Forall2 :
+  forall (ys : list var) (s s2 sigma : ren), injective s ->
+  Forall2 (fun a b => ren_override2 (map s ys) (map s2 ys) sigma a = b) (map s ys) (map s2 ys).
+Proof.
+  intros ys s s2 sigma Hinj. apply Forall2_map_intro.
+  intros w Hw. apply ren_override2_map_in; [exact Hinj | exact Hw].
+Qed.
+
+Lemma Expr0Alpha_rename_scoped :
+  forall e s s2 sigma,
+  (forall w, In w (vars_of_e0 e) -> sigma (s w) = s2 w) ->
+  Expr0Alpha sigma (rename_e0 s e) (rename_e0 s2 e).
+Proof.
+  intros e s s2 sigma H. destruct e as [x | | | x y | f args | c args]; simpl.
+  - assert (Hx : sigma (s x) = s2 x) by (apply H; left; reflexivity).
+    rewrite <- Hx. constructor.
+  - constructor.
+  - constructor.
+  - assert (Hx : sigma (s x) = s2 x) by (apply H; left; reflexivity).
+    assert (Hy : sigma (s y) = s2 y) by (apply H; right; left; reflexivity).
+    rewrite <- Hx, <- Hy. constructor.
+  - assert (Hmap : map s2 args = map sigma (map s args)).
+    { rewrite map_map. apply map_ext_in. intros w Hw. symmetry. apply H. exact Hw. }
+    rewrite Hmap. constructor.
+  - assert (Hmap : map s2 args = map sigma (map s args)).
+    { rewrite map_map. apply map_ext_in. intros w Hw. symmetry. apply H. exact Hw. }
+    rewrite Hmap. constructor.
+Qed.
+
+(* THE KEY LEMMA: replaces Hfinal.  Only needs agreement on body's own
+   FREE variables (per-position, scope-aware, via free_vars_b) -- NOT on
+   every syntactic position vars_of_b would enumerate -- because every
+   BINDER (Let, Case's own branches) gets its own local override instead
+   of demanding the ambient sigma already know what to do there. *)
+Lemma BlkAlpha_rename_scoped :
+  forall n body, blk_size body < n ->
+  forall s s2 sigma, injective s ->
+  (forall w, In w (free_vars_b body) -> sigma (s w) = s2 w) ->
+  BlkAlpha sigma (rename_b s body) (rename_b s2 body).
+Proof.
+  induction n as [n IHn] using (well_founded_induction lt_wf).
+  intros body Hsize s s2 sigma Hinj H.
+  destruct body as [x e k | x brs | e].
+  - simpl.
+    assert (He : Expr0Alpha sigma (rename_e0 s e) (rename_e0 s2 e)).
+    { apply Expr0Alpha_rename_scoped. intros w Hw. apply H. simpl. apply in_or_app. left. exact Hw. }
+    set (sigma' := fun w => if Nat.eq_dec w (s x) then s2 x else sigma w).
+    apply (BA_Let sigma (s x) (s2 x) (rename_e0 s e) (rename_e0 s2 e) (rename_b s k) (rename_b s2 k) sigma').
+    + exact He.
+    + unfold sigma'. destruct (Nat.eq_dec (s x) (s x)) as [_ | Hne]; [reflexivity | congruence].
+    + intros w Hne. unfold sigma'. destruct (Nat.eq_dec w (s x)) as [Heq | Hneq]; [congruence | reflexivity].
+    + assert (Hn : blk_size k + 1 < n) by (simpl in Hsize; lia).
+      assert (Hm : blk_size k < blk_size k + 1) by lia.
+      apply (IHn (blk_size k + 1) Hn k Hm s s2 sigma' Hinj).
+      intros w Hw. unfold sigma'. destruct (Nat.eq_dec (s w) (s x)) as [Heq | Hneq].
+      * assert (Hwx : w = x) by (apply Hinj; exact Heq).
+        subst w. reflexivity.
+      * apply H. simpl. apply in_or_app. right.
+        apply in_in_remove; [intro Hc; apply Hneq; f_equal; exact Hc | exact Hw].
+  - simpl.
+    assert (Hx : sigma (s x) = s2 x) by (apply H; left; reflexivity).
+    rewrite <- Hx.
+    constructor.
+    assert (Hbrs : forall brs', (forall c ys bd, In (c, ys, bd) brs' -> In (c, ys, bd) brs) ->
+      BrsAlpha sigma
+        (map (fun p => match p with (c, ps, bd) => (c, map s ps, rename_b s bd) end) brs')
+        (map (fun p => match p with (c, ps, bd) => (c, map s2 ps, rename_b s2 bd) end) brs')).
+    { induction brs' as [| [[c ys] bd] brs'' IHbrs]; intros Hsub.
+      - constructor.
+      - simpl. assert (HinHead : In (c, ys, bd) brs) by (apply Hsub; left; reflexivity).
+        apply (BrsA_cons sigma c (map s ys) (map s2 ys) (rename_b s bd) (rename_b s2 bd)
+                 (map (fun p => match p with (c0, ps, bd0) => (c0, map s ps, rename_b s bd0) end) brs'')
+                 (map (fun p => match p with (c0, ps, bd0) => (c0, map s2 ps, rename_b s2 bd0) end) brs'')
+                 (ren_override2 (map s ys) (map s2 ys) sigma)).
+        + exact (ren_override2_map_Forall2 ys s s2 sigma Hinj).
+        + intros w Hw. apply ren_override2_notin. exact Hw.
+        + assert (Hn : blk_size bd + 1 < n).
+          { assert (Hlt : blk_size bd < blk_size (BCase x brs)) by exact (blk_size_in_bound x brs c ys bd HinHead).
+            lia. }
+          assert (Hm : blk_size bd < blk_size bd + 1) by lia.
+          apply (IHn (blk_size bd + 1) Hn bd Hm s s2 (ren_override2 (map s ys) (map s2 ys) sigma) Hinj).
+          intros w Hw.
+            destruct (in_dec Nat.eq_dec w ys) as [Hyin | Hynin].
+            -- (* w is one of THIS branch's own pattern vars -- the override
+                  pins it directly, independent of the ambient sigma/H. *)
+               apply ren_override2_map_in; [exact Hinj | exact Hyin].
+            -- (* w is genuinely free in bd (not a pattern var of ITS OWN
+                  branch) -- falls through to the ambient sigma, and is
+                  covered by H via free_vars_b_bcase_branch. *)
+               rewrite (ren_override2_notin (map s ys) (map s2 ys) sigma (s w))
+                 by (intro Hc; apply in_map_iff in Hc; destruct Hc as [y' [Hsy' Hiny']];
+                     apply Hynin; assert (Hwy' : w = y') by (apply Hinj; exact (eq_sym Hsy')); subst y'; exact Hiny').
+               apply H. apply (free_vars_b_bcase_branch x brs c ys bd HinHead).
+               apply remove_all_in_intro; [exact Hw | exact Hynin].
+        + apply (IHbrs (fun c0 ys0 bd0 Hin0 => Hsub c0 ys0 bd0 (or_intror Hin0))). }
+    apply Hbrs. intros c ys bd Hin. exact Hin.
+  - simpl. constructor. apply Expr0Alpha_rename_scoped. intros w Hw. apply H. exact Hw.
 Qed.
 
 Lemma hd_error_in : forall (l : list (cname * list var * Blk)) x, hd_error l = Some x -> In x l.

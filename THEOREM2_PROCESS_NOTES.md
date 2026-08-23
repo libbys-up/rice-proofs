@@ -2531,6 +2531,84 @@ own in-proof comment (right where `HfixBE_TOP` ends and the new admit begins).
 
 ---
 
+## 34. Choosing and building the gap-7 fix: `BlkAlpha`, a non-bijective correspondence relation
+
+**The user asked which direction to pursue for gap 7, then said to start building it.** Three
+candidates were on the table: (1) restrict `pa` to live pairs only, (2) weaken `Hfinal` so it doesn't
+need to hold syntactically over dead sub-terms, (3) a Barendregt-style global freshness hypothesis.
+The user picked (2). Traced it by hand before writing anything, per this project's own standing rule.
+
+**Why the obvious cheap version of (2) fails.** The natural first idea: don't require the *whole*
+term equation `e2 = rename_b sigma0 e1`, only require it to hold "on the live path." This doesn't
+parse: `rename_b` is a plain structural substitution — it rewrites *every* variable occurrence,
+dead branches included — so the equation is either exactly true at every syntactic position or
+false. There is no partial-credit reading of a literal term equation. A second attempt — let the
+hypothesis become "*some* witness renaming agreeing with `sigma0` on `e1`'s free variables, with
+`e2 = rename_b sigma1 e1`" — also fails for a structural reason, not an incidental one: getting
+`rename_b s2 body` out of `rename_b sigma1 (rename_b s body)` still forces `sigma1(s y) = s2(y)`
+at *every* `y` in `body`, dead ones included, because that's what term equality at that position
+means. Freedom to pick a fresh per-call witness doesn't remove the constraint; it only removes the
+requirement that the witness be shared elsewhere — and the constraint itself is exactly gap 7's
+own problem, relocated.
+
+**The actual fix: don't require one global relation to explain e2's structure at all.** Built
+`Expr0Alpha`/`BlkAlpha` (PIECE 7, `alpha_renaming_wip.v`, placed after `free_vars_b_bcase_branch`
+since it needs it): an inductive correspondence relation, parameterized by an ambient `sigma`,
+that only forces agreement with `sigma` at genuinely *live* positions (`Let`'s own RHS expression,
+a `Case`'s own scrutinee) — anywhere a *binder* is crossed (`Let`'s bound name, a `Case` branch's
+own pattern variables), the relation instead permits a **locally-overridden** correspondence
+function, built via a plain function override (`ren_override2`: `fun w => if w = y1 then y2 else
+sigma w`) rather than a bijection extension. This is the crux: a function override needs **no
+NoDup/Hfix precondition at all** — overriding a function's value at a finite set of points can
+never collide with anything, unlike extending a *bijection* (`batch_extend`'s whole reason for
+being finicky). Two dead pairs from unrelated levels, under this relation, simply never have to
+meet: each gets its own throwaway local override, never composed with anything else.
+
+**The key lemma, `BlkAlpha_rename_scoped`** (this session's actual replacement for `Hfinal`):
+given `injective s` and agreement between `sigma`/`s`/`s2` only on `body`'s own `free_vars_b`
+(scope-aware — per `FunBodyWellScoped`, this is ⊆ `ps`, i.e. tiny), `BlkAlpha sigma (rename_b s
+body) (rename_b s2 body)` holds. Proved by strong induction on `blk_size`, mirroring this file's
+own established idiom (`well_founded_induction lt_wf`, same call convention as
+`free_vars_b_subset_vars_of_b_bound`/`NEval_left_domain_mono`'s neighbors: `IHn (blk_size k + 1)
+Hn k Hm ...`, not `IHn (blk_size k)` directly — got this wrong on the first pass and had to match
+the existing pattern exactly). The `BLet` case needs no override at the head position at all when
+the bound name coincides with something `H` already covers, but genuinely needs one
+(`ren_override2`, pinning `s x ↦ s2 x` unconditionally) when it doesn't — that unconditional pin
+is exactly what makes it always constructible, dead or live. The `BCase` case needed a genuinely
+new pointwise lemma, `ren_override2_map_in` (injective `s` means `s w = s y` forces `w = y`, so
+the override at `s w` always lands on the pair actually keyed by `w`, regardless of what else the
+pattern-variable list contains — no `NoDup` needed, because `map s ys` and `map s2 ys` are always
+images of the *same* source list `ys`, so a repeated name repeats consistently on both sides, never
+conflicting).
+
+**Debugging notes worth keeping** (real mistakes hit and fixed this session, not just the design):
+constructor arguments for a *parameterized* `Inductive` (declared `Inductive X (sigma : ren) : ...`)
+still take the parameter as an explicit leading argument at each constructor unless marked
+implicit — `apply (BA_Let (s x) (s2 x) ...)` silently mis-slotted `s x` into `sigma`'s own position
+and produced a confusing type-mismatch several arguments later, not an obvious arity error; fixed
+by supplying `sigma` first. `List.In`'s `elem = query` unfold direction (T20) bit again in the
+`BLet` case's own `in_in_remove` call. A `lia` failure reported as the unhelpful "Cannot find
+witness" traced back to an over-eager `simpl in Hsize` that turned one instance of the *same*
+opaque term (`blk_size (BCase x brs)`, appearing in both `Hsize` and a freshly-`assert`ed `Hlt`)
+into two syntactically different ones — `lia` treats `blk_size (BCase x brs)` as an atom and can't
+see through a `simpl` that only unfolded *one* of its two occurrences; removing the stray `simpl`
+let the two inequalities compose by transitivity as intended.
+
+**Status**: `Expr0Alpha`, `BlkAlpha`/`BrsAlpha`, `ren_override2` and its lemmas, and
+`BlkAlpha_rename_scoped` are all fully Qed'd, zero admits — confirmed via a clean `coqc` (deleted
+all `.vo`/`.glob` first). This is a **standalone foundation**, not yet wired into
+`NEval_left_confluence` itself — the theorem still has its original 3 admits (`NL_Fun`'s gap-7 stop,
+`Select`, `Guess`), unchanged by this session, since PIECE 7 doesn't touch the theorem yet. **Next
+step**: restate `NEval_left_confluence` against `BlkAlpha sigma0 e1 e2` in place of the literal
+`e2 = rename_b sigma0 e1` hypothesis, and redo all 11 cases against it — the 8 non-`Fun`/`Select`/
+`Guess` cases should carry over close to mechanically (they only ever used the equation to invoke
+shape-inversion at a *live* position, which `BlkAlpha`'s own leaf/`BA_Case`/`BA_Let`-live-part
+cases still deliver directly); `NL_Fun`'s own case gets to use `BlkAlpha_rename_scoped` in place of
+`Hfinal`, closing gap 7. `theorem2` still has its one original admit; `curry_test_leftmost.v`/
+`curry.v` untouched.
+
+---
+
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
 
 This part catalogs, with real examples, every distinct tactic/pattern used repeatedly across
