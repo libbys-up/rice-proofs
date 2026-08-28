@@ -2607,6 +2607,329 @@ cases still deliver directly); `NL_Fun`'s own case gets to use `BlkAlpha_rename_
 `Hfinal`, closing gap 7. `theorem2` still has its one original admit; `curry_test_leftmost.v`/
 `curry.v` untouched.
 
+## 35. A considered, deliberately-not-taken alternative to `BlkAlpha`: a genuine global-freshness
+restriction on `NL_Fun`/`NL_Guess`, and why it was set aside in favor of finishing `BlkAlpha`'s wiring
+
+**The user asked, before resuming `BlkAlpha`'s wiring: would requiring let-bound names to be
+globally unique — decided at function-call entry, even for never-executed branches, the way an
+old C compiler pre-allocates storage for every local regardless of which branch runs — fix gap
+6/7 instead?**
+
+**Half of this is already true of `NL_Fun` as written.** Its own rule (`curry_test_leftmost.v:61-
+68`) already renames *every* non-parameter variable in the body via one injective `s`, chosen at
+call entry, before any branch is known to be live — `rename_b s body` is a plain structural
+substitution touching dead branches too. That much already matches the C-compiler analogy.
+
+**What's actually missing is that the freshness check is heap-relative, not global.** `Hfresh :
+forall y, ~ In y ps -> G (s y) = None` only rules out collision with what's *currently written* to
+the heap. A dead branch's reserved name is never written (nothing ever `hupd`s it), so it's
+invisible to every *other* call's own freshness check, forever — exactly gap 6/7's own mechanism.
+Strengthening this to genuine cross-call uniqueness (a monotone, ever-growing reserved-name supply,
+matching how real gensym-based implementations behave) would fix it, in principle — this is
+candidate (3) from Sec.34 ("a Barendregt-style global freshness hypothesis"), which was on the
+table there too.
+
+**Why it wasn't taken.** Unlike the `Hcontain0`/`ClosedHeap`/`FunBodyWellScoped`-style hypotheses
+threaded into `NEval_left_confluence` over the last dozen sessions — each naming something already
+*true* of every `NEval_left` derivation, and thus addable as a plain extra hypothesis on the proof
+— global freshness is **false** of `NEval_left` as currently defined; nothing in `NL_Fun`/`NL_Guess`
+stops two unrelated firings from colliding. Making it true requires changing the *relation itself*:
+threading a monotone reserved-set ghost parameter through all 11 constructors (not just the two that
+introduce names, since it has to persist and grow through the others too), rechecking that
+`theorem2`'s own first-conjunct existential witness construction still goes through under the
+stronger premise, and auditing every existing `NL_Fun`/`NL_Guess` call site in the ~8666-line
+`curry_test_leftmost.v` (several already `Qed`'d) against the new arity. That's a change with a
+blast radius across the whole base semantics, not a self-contained lemma — a materially bigger and
+riskier undertaking than finishing `BlkAlpha`'s wiring, whose foundation (`Expr0Alpha`/`BlkAlpha`/
+`BlkAlpha_rename_scoped`) was already built and `Qed`'d as of `5eee8d0`.
+
+**Decision: keep it as a recorded, validated fallback, not pursue it now.** If `BlkAlpha`'s wiring
+into `NEval_left_confluence` hits a wall too, this is a real, understood second option, not
+something to re-derive from scratch. Not attempted; no code changes from this discussion.
+
+## 36. Wiring `BlkAlpha` into `NEval_left_confluence`: gap 7 genuinely closed, the whole nine-piece
+`pa`/`PaInv`/`sigma0_TOP` apparatus dropped, three narrower admits remain
+
+**The user said to proceed with `BlkAlpha`'s wiring.** Restated `NEval_left_confluence`'s
+hypothesis from the literal `e2 = rename_b sigma0 e1` to `BlkAlpha sigma0 e1 e2`, and reproved the
+11 cases against it. This is a **substantially bigger win than planned**: not only does `BlkAlpha`
+fix the term-correspondence side of gap 7 (as designed), tracing it through concretely showed the
+**heap-correspondence side doesn't need the nine-piece machinery either** — `pa`, `PaInv`, `PaSub`,
+`sigma0_TOP`/`tau0_TOP`/`Gam1_TOP`/`Gam2_TOP` are all gone from the theorem's own signature now.
+
+**Why the heap side turns out fine too, traced concretely before coding (per this project's own
+standing discipline).** The nine-piece design existed because the *old*, literal-equality version
+of `NL_Fun` needed one bijection to explain the *whole* renamed body, dead branches included,
+forcing a monolithic construction that had to survive being merged across nesting levels (gap 7's
+own NoDup-disjointness wall). Under `BlkAlpha`, `NL_Fun`'s own case needs **no sigma extension at
+all**: `BlkAlpha_rename_scoped` only needs `sigma0` to agree with `s`/`s2` on `body`'s
+`free_vars_b`, which `FunBodyWellScoped` already confines to `ps` — exactly `Hparam`'s own
+conclusion (parameters always agree, no reconciliation needed), already available with zero new
+work. Both heaps and the ambient `sigma0`/`tau0` pass into the recursive `IH` call completely
+unchanged, since `NL_Fun` itself never touches the heap before recursing. Separately, the
+*induction itself only ever visits live binders* — a dead case branch is never part of any
+`NEval_left` derivation, so the induction can never reach one — meaning wherever a genuine renaming
+extension *is* still needed (`NL_Let`'s one fresh pair, `NL_Guess`'s one fresh batch), it only ever
+needs to be built **directly off the current `sigma0`/`tau0`**, one live pair/batch at a time, never
+merged with anything an ancestor introduced. That removes gap 7's own disjointness question
+entirely, not just for `NL_Fun`.
+
+**Result:** `NL_Fun`'s own case is now fully `Qed`'d, zero admits, with no `batch_extend`/
+`ps_pairs` at all — gap 7 is **closed**. 8 of 11 constructors are fully proven (`VarCons`,
+`VarSelf`, `VarFree`, `VarExp`, `ValFree`, `ValCon`, `Fun`, `Or`); most of these needed only a
+mechanical change (invert `BlkAlpha` to recover the same literal equation `subst e2` used to give,
+via a new `BlkAlpha_bexpr_det` — provable because a bare `BExpr e` position is a leaf: none of
+`Expr0Alpha`'s six constructors leave any freedom, so `BlkAlpha` and literal `rename_b` equality
+coincide there). New foundational lemmas built along the way, all `Qed`'d: `Expr0Alpha_det`/
+`Expr0Alpha_intro` (both directions of the leaf-determinism fact), `BlkAlpha_bexpr_det`,
+`BlkAlpha_refl` (`BlkAlpha sigma b (rename_b sigma b)` for *any* `b`, a one-line corollary of
+`BlkAlpha_rename_scoped` at `s := id` plus `rename_b_id` — needed at `NL_VarExp`, where the
+recursive premise's own "found at `G x`" term isn't necessarily `BExpr`-shaped), and
+`mutual_inverse_extend_gen` (generalizes `mutual_inverse_extend` to tolerate `a = b`, a genuine
+no-op in that case — needed because `NL_Let`'s own two fresh picks aren't guaranteed distinct a
+priori). Also built `NEval_left_blet_shape` (a `BLet` shape-inversion lemma mirroring
+`NEval_left_evar_shape`/`_bcase_shape`, missing until now) and `BlkAlpha_change_sigma` (a
+congruence lemma: a `BlkAlpha` derivation built under one ambient renaming transports to another
+that merely *agrees on the term's own free variables* — needs no injectivity or `NoDup` anywhere,
+unlike `rename_b_congr`, because `BlkAlpha`'s own binder-crossing machinery already tolerates a
+local override at every binder).
+
+**`NL_Let`: attempted, found a genuine new correction, left as a precisely-diagnosed admit rather
+than force a fix.** Reconciling the two independently-fresh single locations `x`/`x2` via one
+`mutual_inverse_extend`-style swap works for the *term* side (using `BlkAlpha_change_sigma` to
+bridge the swap-based renaming against whatever local override `BlkAlpha`'s own inversion handed
+back). But `Hcontain0`'s *output* conjunct — "wherever `sigma` moves something, both heaps have it
+defined" — genuinely fails at exactly the two positions this step introduces: `Gam1' = hupd G0 x _`
+defines `x` but not `x2`, and symmetrically `Gam2' = hupd Gam2 x2 _` defines `x2` but not `x`, so
+neither position satisfies the *conjunction* (both heaps) the old-style claim demands. This is
+**not** gap 6/7 resurfacing — no `batch_extend`, no cross-level merging, no disjointness question is
+involved. It's a narrower, structural point: `Hcontain0` needs a *per-heap* exemption for the pair
+each `Let`/`Guess` step introduces, threaded as a (much simpler than `pa`/`PaInv`) growing pair of
+exemption lists, one per heap, each maintained as "always a subset of that heap's own domain" — true
+by construction, since a position is only ever exempted the instant it's *written*, and heaps only
+grow, so a later freshness check automatically avoids every earlier exemption. Concretely this needs
+splitting `Hcontain0` into two per-heap facts rather than one conjoined one. Real, understood,
+buildable — just not attempted this pass, so as not to risk leaving the (much higher-value) `NL_Fun`
+case unverified partway through a bigger edit.
+
+**`NL_Select`/`NL_Guess`: left admitted, matching the pre-existing diagnosis** (BCase's own shape
+inversion is a two-way disjunction shared with `Guess`, needing `IH1` applied first to rule out D2
+picking the other shape; `Guess` additionally needs a `batch_extend` call restricted to just `ws`
+this level's own fresh batch, which the reasoning above suggests is safe under the new design but
+wasn't attempted).
+
+**Status:** `alpha_renaming_wip.v` compiles clean end to end (`coqc`), exactly 3 admits (`NL_Let`,
+`NL_Select`, `NL_Guess`), zero elsewhere — confirmed by grepping the compiled file for `admit`/
+`Admitted`. `curry_test_leftmost.v`/`curry.v` untouched. `theorem2` itself is unchanged (still its
+one original admit) — the corollary `NEval_left_self_confluence` that admit needs requires
+`NEval_left_confluence` fully `Qed`'d (not just `NL_Fun`'s own case), so PIECE 8's wiring into
+`curry_test_leftmost.v` is still blocked on closing the remaining three. **Next step:** fix
+`Hcontain0`'s per-heap-exemption gap at `NL_Let` (design above), then `NL_Guess` (same fix, plus a
+`batch_extend` call on just its own `ws`), then `NL_Select` (the `IH1`-first argument), then wire
+the finished theorem into `theorem2`'s own admit.
+
+## 37. Correction to Sec.36's own conclusion: gap 7 is closed for `NL_Fun` specifically, not in
+general — `NL_Let`'s per-heap exemption design has its own, deeper "gap 8," structurally the same
+collision as gap 6/7 but for a *live* pair, not a dead one. Diagnosed by hand, not yet fixed.
+
+**The user said to continue — picked up exactly where Sec.36 left off: build the per-heap-exemption
+fix for `NL_Let`.** Traced it through by hand before coding (no `.v` edits this session). Found the
+design *itself* has a hole, one level down from where it first looks fine.
+
+**The naive design (Sec.36's own sketch): bundle "`D` ⊆ that heap's own domain" with the exemption,
+per heap.** `HeapExempt sigma0 D Gam := (forall w, In w D -> Gam w <> None) /\ (forall w, sigma0 w
+<> w -> ~In w D -> Gam w <> None)`, one instance for `Gam1`, one for `Gam2`. At `NL_Let`, exempt
+`x2` from the `Gam1`-side instance (since `hupd G0 x _` never defines `x2`) and `x` from the
+`Gam2`-side instance (since `hupd Gam2 x2 _` never defines `x`). **This breaks immediately, by
+direct construction**: the very definition requires `In w D -> Gam w <> None` — but `x2` is being
+added to the `Gam1`-side `D` *precisely because* `Gam1` does **not** define it. The "domain" half
+and the "exemption" half of one bundled invariant are in direct tension the moment either heap's
+own exemption list contains the *other* heap's own fresh pick.
+
+**Splitting the two purposes apart doesn't dissolve the problem — it relocates it exactly where gap
+7 already found it.** Drop the "`D` ⊆ domain" requirement from the exemption fact itself; keep it
+only where it's actually used, to justify "fresh relative to a heap implies not in `D`" at the
+*next* level down. Trace what a **deeper**, nested `NL_Let` (inside `k`, evaluated against
+`Gam1' = hupd G0 x _` and its own descendants) needs: given its own fresh pick `x_deep` satisfies
+`G_deep x_deep = None`, it needs `sigma_ancestor(x_deep) = x_deep` to run `mutual_inverse_extend` at
+its own level. Via the (correctly) gated `Hcontain1`, this only follows if `x_deep` is *not* in the
+inherited exemption list — and `x2` (this level's own exemption) *is* in that list. **Nothing rules
+out `x_deep = x2`.** Concretely constructed, not just asserted: two derivations of
+`BLet x1 EFree (BLet x2 EFree (BExpr (EVar x2)))` from the same (empty) heap — D1 picks `x1 := 100`
+then, for its own *second* let, is free to pick `x2 := 101` (fresh only relative to
+`hupd Gam 100 _`, which says nothing about 101); D2 independently picks `x1' := 101` for its own
+*first* let (fresh relative to the same empty heap — 101 is available to it too, by sheer
+coincidence of D2's own free choice). Reconciling D1's first `Let` against D2's forces the swap
+`sigma_ancestor := ext_sigma id 100 101`, i.e. `sigma_ancestor(101) = 100`. D1's own *second* `Let`
+(picking `x2 = 101`) now needs `sigma_ancestor(101) = 101` to swap it against whatever D2 does at
+its own second position — but `sigma_ancestor(101) = 100`, not `101`. Both derivations are
+completely ordinary, well-typed `NEval_left` proofs; nothing about either is contrived.
+
+**Why none of the three already-built extension primitives absorb this.** `mutual_inverse_extend`,
+`cyc_extend`, and `batch_extend` (Sec.20-22's own machinery) all share one precondition shape:
+every point being incorporated must *already be a fixed point* of the ambient bijection. None of
+the three has any notion of "redirect a point the bijection already moves elsewhere, chaining
+through the existing target" — which is exactly what reconciling `x2` against D2's own second pick
+would require here (`sigma`'s value at 101 needs to become D2's own second choice, while whatever
+101 *used* to map to, `100`, needs to land somewhere sensible too — a genuine chain-extension, not a
+fresh pair). This is a different combinatorial primitive from anything built so far, not a small
+patch to an existing one.
+
+**This is structurally the same phenomenon as gap 6/7 (an ancestor's "invisible-on-this-side"
+position colliding with a descendant's own fresh pick), just for a different reason.** Gap 6/7's
+dead-branch positions were invisible because they're never evaluated at all. `NL_Let`'s `x2` is
+invisible to `G0`'s own lineage for a different reason — it's `x2` genuinely *is* live, but only on
+`Gam2`'s side, and `NEval_left`'s own freshness premises never check anything about the *other*
+derivation's heap. Both failure modes reduce to the same root cause identified back in Sec.31/§35's
+own discussion: `var := nat` carries no global, cross-derivation uniqueness discipline, so nothing
+stops two independently-fresh choices from numerically coinciding, whether across dead/live
+branches of the *same* derivation or across the *two* derivations being reconciled.
+
+**Correction to last session's own conclusion.** Sec.36 said "gap 7 is closed... no more
+disjointness worries." That's accurate for `NL_Fun` specifically — `BlkAlpha_rename_scoped` never
+needs a sigma extension there at all, so the whole question doesn't arise, and `NL_Fun`'s own case
+is genuinely, unconditionally `Qed`'d, unaffected by this section. It does **not** generalize to
+`NL_Let`/`NL_Guess`, both of which still need a genuine heap-level bijection extension (for
+`NHeapAlpha`, not for the term relation — confirmed by tracing the `NL_Let` case concretely:
+`NHeapAlpha` at `w := x2` genuinely requires `sigma(x) = x2`, it isn't an artifact of a clumsy
+construction), and that extension is exactly where this new collision lives.
+
+**Not attempted: the actual fix.** Likely needs a genuine "extend a bijection at a point it already
+moves, by chaining" primitive — a real generalization of `cyc_extend` (which already knows how to
+rotate an existing chain by one position; what's missing is *inserting a new link* into a chain
+whose other end is already fixed elsewhere). This is real, scoped, buildable work, comparable in
+size to Sec.21-22's own original development of `cyc_extend`/`batch_extend` — not attempted this
+session so as not to leave a partial, unverified construction in place. No `.v` files changed this
+session; `alpha_renaming_wip.v` is exactly as `HEAD` left it (`NL_Fun` `Qed`'d, `NL_Let`/`NL_Select`/
+`NL_Guess` admitted), `theorem2` still has its one original admit.
+
+## 38. Building the chain-redirect primitive: gap 8 itself genuinely closed, but wiring it into
+`NL_Let` exposes a third, separate bookkeeping problem, not yet resolved — reverted rather than
+leave a half-verified construction in place
+
+**The user said to build the chain-redirect.** Worked out the construction on paper first (per the
+project's own standing discipline), validated the combinatorial core in a scratch file before
+touching the real proof, then integrated it.
+
+**The primitive: `splice_sigma`/`splice_tau`.** Given `mutual_inverse sigma tau` and two points `a`,
+`d` (neither required to be a fixed point), insert the edge `a -> d` by *reconnecting* whatever `a`
+used to map to (`a' := sigma a`) with whatever used to map to `d` (`d' := tau d`): `d'` now maps to
+`a'`, closing the gap the redirect leaves behind.
+
+```coq
+Definition splice_sigma (sigma tau : ren) (a d : var) : ren :=
+  fun w => if Nat.eq_dec w a then d else if Nat.eq_dec w (tau d) then sigma a else sigma w.
+Definition splice_tau (sigma tau : ren) (a d : var) : ren :=
+  fun w => if Nat.eq_dec w d then a else if Nat.eq_dec w (sigma a) then tau d else tau w.
+```
+
+`splice_mutual_inverse : mutual_inverse sigma tau -> forall a d, mutual_inverse (splice_sigma sigma
+tau a d) (splice_tau sigma tau a d)` needs **no precondition on `a`/`d` at all** — a strict
+generalization of `ext_sigma`/`mutual_inverse_extend`'s own swap, which is exactly the special case
+`a' = a`, `d' = d` (both already fixed). Verified directly (`splice_is_swap_when_fixed`) and against
+the process notes' own gap-8 counterexample by hand-computation before being trusted. `NHeapAlpha_
+splice` is the matching heap-level lemma: given `NHeapAlpha sigma tau Gam1 Gam2`, `ClosedHeap Gam1`,
+and only the two *ordinary* freshness facts (`Gam1 x = None`, `Gam2 x2 = None` — no fixed-point
+facts needed), `NHeapAlpha` survives extending by `splice_sigma`/`splice_tau x x2`. Both lemmas
+compile clean, zero admits, fully standalone — genuine, reusable progress regardless of what
+happened next.
+
+**Wiring into `NL_Let`: gap 8 itself is resolved, but a third bookkeeping problem surfaces
+immediately behind it.** With `splice_sigma` available, `NL_Let`'s own construction no longer needs
+`Hxfixed`/`Hx2fixed` (fixed-point facts) at all — the swap goes through regardless of whether an
+ancestor already moved `x`. But the theorem's own **"extends" conjunct** (`sigma` agrees with
+`sigma0` wherever `sigma0` already moved something, or either heap already defines it) still needs
+`Hcontain0` to be *re-derivable* at every level — and `Hcontain0`'s own AND-shaped output ("both
+heaps defined wherever `sigma` moves something") genuinely fails at exactly the two positions
+`NL_Let`'s own splice touches (`x` defined only on `Gam1`'s side, `x2` only on `Gam2`'s) — the same
+shape of failure gap 6 first found, now for a *live* pair rather than a dead one. Unlike gap 8
+itself, this doesn't block on a missing combinatorial primitive (splice handles the construction
+fine either way) — it blocks on getting an **exemption-list design** right.
+
+**Tried, live, and found genuinely unresolved — reverted rather than leave it half-verified.**
+Attempted gating both `Hcontain0` and the "extends" conjunct by a single, growing, unstructured
+exemption list `D` (threaded like gap 6's own `pa`, but as a plain list, needing no `NoDup`/merging
+since `splice_sigma` never consumes `D` for its own construction). This runs into a genuine problem
+at `NL_VarExp`'s own case: its "extends" step needs `sigma x = sigma0 x` for `x` a value already
+*present* in `Gam1`'s domain (`Hgx0`) — which requires knowing `x` itself was never exempted, i.e.
+`~In x D'`. Establishing that needs a *third* invariant beyond `D`'s own growth — "every element of
+`D` is a position where *at least one* of the two input heaps was undefined at the moment it was
+added" — which is true by construction at `NL_Let` but wasn't threaded, and a single OR-shaped
+membership fact turned out to under-determine what's needed once `Hgx0` only rules out *one* of the
+two heaps (`Gam1`), leaving `Gam2`'s own state at `x` genuinely unconstrained. Considered leaving
+"extends" ungated (only gating `Hcontain0`'s own output) — traced through and found this breaks the
+*next* level down instead, for the same underlying reason (a deeper level's own "extends" argument
+needs exactly the fact the shallower level's gating was withholding). Each fix considered relocates
+the problem rather than closing it; a working design most likely needs **two separate, per-heap**
+exemption lists (`D1 ⊆` complement of `Gam1`'s domain, `D2 ⊆` complement of `Gam2`'s), not one
+combined list — genuine further design work, not attempted.
+
+**Decision: revert the theorem-level wiring, keep the validated primitive.** Restored
+`NEval_left_confluence`'s signature, all 8 already-`Qed`'d cases, and the corollary to the clean,
+compiling checkpoint from this session's earlier point (no `Hcontain0`/`D` threading at all — the 8
+cases never needed it in the first place, since none of them ever actually changes `sigma`).
+`splice_sigma`/`splice_tau`/`splice_mutual_inverse`/`NHeapAlpha_splice` stay in the file, `Qed`'d,
+ready for whoever next attempts `NL_Let` with the two-list design sketched above already in hand.
+
+**Status:** `alpha_renaming_wip.v` compiles clean end to end, exactly 3 admits (`NL_Let`, `NL_Select`,
+`NL_Guess`), zero elsewhere. `NL_Fun`'s own closure (gap 7) is completely unaffected — it never needs
+any sigma extension, so none of this arises there. `theorem2` unchanged, still its one original
+admit. **Next step:** design the two-separate-exemption-list version of `Hcontain0`/"extends"
+(`D1`/`D2`, each maintained as "subset of that heap's own domain's complement"), re-verify it doesn't
+break `NL_VarExp`'s own use before touching `NL_Let` again, then finish `NL_Let` with `splice_sigma`
+already in hand.
+
+## 39. The two-list design, attempted — and a simpler fix found instead: `Hcontain0` was never
+actually needed at all. `NL_Let` fully closed, zero admits
+
+**The user said to try the two-list design.** Before writing Coq, re-derived what `D1`/`D2` would
+each need to satisfy, tracking the *direction* of every use carefully (the exact discipline that was
+missing last time) — and that tracing dissolved the problem rather than confirming the design.
+
+**Re-deriving `Hcontain0`'s two roles separately.** Its *input* role (deriving `sigma0 w = w` from
+`Gam1 w = None`, used once, at `NL_VarExp`'s own `sigma x = sigma0 x` step) turns out to need nothing
+about `D` at all: `NL_VarExp`'s own `Gam1 x <> None` fact (`Hgx0`) is a *positive* fact, and a `D`
+containing only positions where some heap is *undefined* can never contain `x` in the first place —
+checked directly against a `D_ok : In w D -> Gam1 w = None \/ Gam2 w = None` invariant, `Gam1 x <>
+None` alone doesn't rule out the *other* disjunct (`Gam2 w = None`), reproducing the exact
+under-determination gap 8's own write-up already flagged. Splitting into `D1`/`D2` (one per heap) and
+gating `Hcontain0` per-side looked promising — until re-deriving *why* `Hcontain0` was needed at all
+found the actual answer: it was needed to prove `NL_Let`'s own `x`/`x2` are fixed points of `sigma0`,
+*specifically* so `mutual_inverse_extend`'s swap could apply. **`splice_sigma` doesn't have that
+precondition.** Once that's the only thing `Hcontain0` was for, and it's gone, `Hcontain0` itself has
+no remaining job — confirmed by grep: across all 8 already-`Qed`'d cases, `Hcontain0` was never
+*applied*, only threaded through untouched (since none of them ever change `sigma` at all).
+
+**Simplifying "extends" the same way.** The "extends" conjunct's own three disjuncts
+(`sigma0 w<>w`, `Gam1 w<>None`, `Gam2 w<>None`) were inherited from the pre-`BlkAlpha` design without
+re-checking which are actually *exercised*. Grepping every real application again: only `NL_VarExp`'s
+own `Gam1 w<>None` disjunct is ever used, anywhere. Dropped the statement to
+`forall w, Gam1 w <> None -> sigma w = sigma0 w` — the single conjunct that's actually load-bearing.
+Reverified this doesn't weaken anything needed downstream: since `Gam1` in the *conclusion* always
+means the *input* heap to the current call (not the post-write output), `NL_Let`'s own two special
+positions (`x`, and `tau0 x2` — the two positions `splice_sigma` touches) are *both* directly
+`Gam1`-undefined (`Hxfresh` for `x`; derived from `Halpha0` + `Hx2fresh` for `tau0 x2`, exactly as
+before) — meaning the simplified "extends" claim is **automatically vacuous at both**, with no
+exemption tracking, no `D`, no gating of any kind needed.
+
+**Result: `NL_Let` is fully `Qed`'d, zero admits.** The construction is now short and direct:
+`splice_sigma`/`splice_tau x x2` build the extended bijection unconditionally; `NHeapAlpha_splice`
+carries `NHeapAlpha` through it; `BlkAlpha_change_sigma` bridges the term relation using the same
+"`x`/`tau0 x2` are `Gam1`-undefined, hence excluded from any position `e`/`k` can actually reference"
+argument that closes `Herename`/`Hagreek`; the recursive `IH` call needs no new machinery beyond
+what's already built. No case-split on whether `x = x2` is needed anywhere (`splice_mutual_inverse`
+holds unconditionally, so the degenerate case that forced awkward branching in the old
+`mutual_inverse_extend_gen`-based attempt simply never arises).
+
+**Status:** `alpha_renaming_wip.v` compiles clean end to end, exactly **2 admits** (`NL_Select`,
+`NL_Guess`), zero elsewhere — down from 3. 9 of 11 constructors are `Qed`'d: `VarCons`, `VarSelf`,
+`VarFree`, `VarExp`, `ValFree`, `ValCon`, `Fun`, `Or`, and now `Let`. `theorem2` itself is unchanged
+(still its one original admit) — the corollary it needs requires all 11 cases closed. **Next step:**
+`NL_Select` (the `IH1`-first argument plus a `BrsAlpha`-lookup lemma, mechanism already understood,
+not yet written) and `NL_Guess` (the same `BrsAlpha`-lookup, plus a *batch* version of `splice_sigma`
+for its own `ws` list — plausibly straightforward now that a single splice needs no fixed-point
+precondition, but not yet attempted).
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
