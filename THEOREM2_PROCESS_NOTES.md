@@ -3707,6 +3707,60 @@ cases (mechanical pass mirroring §49, with real derivation needed only at `NL_L
 now trivial since those rules directly hand back the needed fact), then use it to close `Hinj1` and finish
 `NL_Select`'s (and, mirroring it, `NL_Guess`'s) actual proof body.
 
+## 52. Same session, continued: built `GlobalFreshHeap`/`NoCaptureProgB`/`NoCaptureProgHeap` and their joint
+preservation theorem, then threaded all three through `NEval_left_confluence` and `NEval_left_self_
+confluence` — zero admits added, `NL_Select`/`NL_Guess` still the only two remaining
+
+**The apparatus** (alpha_renaming_wip.v, right after `let_content_NoCapture`, ahead of everything that
+needs `bound_vars_b_rename`/`NoDup_app_disjoint`): `GlobalFreshHeap P G := forall x, ProgBoundName P x -> G
+x = None` (heap keys avoid the program's own static names); `NoCaptureProgB P b := forall x, In x
+(bound_vars_b b) -> ~ ProgBoundName P x` (a TERM's own bound names avoid them — deliberately NOT required
+of the term's free/unrenamed static occurrences, mirroring `NoCaptureB`'s own asymmetry); `NoCaptureProgHeap
+P G := forall z b, G z = Some b -> NoCaptureProgB P b` (every heap-STORED value satisfies it too — needed
+for the same reason `NoShadowHeap`/`NoCaptureHeap`/`BrsUniqHeap` were needed: `NL_VarExp` pulls a term IN
+from the heap, not from `e`'s own structure, so nothing about `e` implies anything about it).
+
+**`NEval_left_globalfresh_preserved`** mirrors `NEval_left_closed_preserved` case for case (identical
+`ClosedHeap`/free-closedness bookkeeping, duplicated rather than invoked, since every case's own recursive
+IH call needs the new facts threaded ALONGSIDE the old ones, not instead of them) — `VarCons`/`VarSelf`/
+`ValFree`/`ValCon` immediate, `VarFree`/`VarExp` via a `hupd`-at-an-already-defined-key contrapositive
+argument (if `ProgBoundName P x` held, `GlobalFreshHeap` would already force `G x = None`, contradicting the
+rule's own precondition that `x` is already heap-resident — so the newly-written key can never itself be a
+static name), `Fun` via `bound_vars_b_rename` (`bound_vars_b (rename_b s body) = map s (bound_vars_b
+body)`, general, no injectivity needed) composed with `ProgNoShadowWF`'s own `NoDup (ps ++ bound_vars_b
+body)` (pins down that `body`'s own bound names are never among `ps`) and NL_Fun's OWN new premise (`Hnb`)
+applied there, `Let` via `Hnb` directly (the new key literally IS what `Hnb` exempts), `Select` via `zipsubst_
+in` + `NEval_left_closed_preserved`'s own already-established `zs`-defined-in-`G1` fact, contrapositived
+against `GlobalFreshHeap G1`, `Guess` via `Hnb` directly again (simpler than Select — `ws`'s own freshness
+against `ProgBoundName` is a DIRECT hypothesis here, no indirection through heap-definedness needed).
+**Compiled clean on the first attempt, zero admits, `Print Assumptions` confirms "Closed under the global
+context."**
+
+**Threading into `NEval_left_confluence`/`NEval_left_self_confluence`:** added `GlobalFreshHeap P Gam1`,
+`NoCaptureProgHeap P Gam1`, `NoCaptureProgB P e1` as three new top-level hypotheses (mirroring exactly where
+`ClosedHeap`/`NoShadowHeap`/`NoCaptureHeap`/`NoCaptureB e1` already sit), then touched every `IH`/`IH1`/`IH2`
+call site that recurses into an UNCHANGED heap (`VarExp`, `Fun`, `Or`) with a straight pass-through (or, for
+`VarExp`, extracting the heap-stored value's own `NoCaptureProgB` fact from `NoCaptureProgHeap` — mirroring
+`He0BrsUniq`'s own precedent exactly) and the one case that grows the heap in a way this proof's own
+recursion still needs (`Let`) with the same `HnewGF`/`HnewNCHeap` construction already written inside
+`NEval_left_globalfresh_preserved` itself, copied in (not invoked — confluence's own induction needs its OWN
+copy of the bookkeeping, since its `IH` is a fact about ITSELF, not about the standalone preservation
+theorem). **`Select`/`Guess` themselves were NOT touched** — both remain a bare `admit.`; the new hypotheses
+just sit unused in their local context for now, available for the next step. One purely mechanical surprise
+along the way: two bare `destruct H2 as [...]` shape-inversion sites (not `induction`, so the earlier
+sed pass's naming convention didn't match them) needed the same one-more-binder fix by hand, caught
+immediately by the compiler.
+
+**Status:** both files still compile clean, zero errors, zero new admits anywhere — `alpha_renaming_wip.v`
+still exactly 2 admits (`NL_Select`, `NL_Guess`), `curry_test_leftmost.v` unchanged from §51. **Next step:**
+actually write `NL_Select`'s proof body — branch-identification via `BrsAlpha_lookup`/`brs_label_unique`
+(already built, per the case's own long-standing comment), `zipsubst_compose_in`/`zipsubst_compose_out` for
+`Hagree`, `NEval_left_forced_args_stay_defined` for the zs-freshness half of `Hinj2`/`Hconsistent`, `Hbt` via
+`NoCaptureB`, `Hinj1` NOW via `NEval_left_globalfresh_preserved` (called on `Hrec1` to get `GlobalFreshHeap P
+G1`, then the same `zipsubst_in`-plus-contrapositive argument already proven inside that theorem's own
+Select case), and finally `BlkAlpha_compose_rename` itself to close the case — genuinely the first time
+every single piece it needs has existed, Qed'd, before starting; `NL_Guess` mirrors it afterward.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary

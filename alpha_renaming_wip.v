@@ -3770,6 +3770,262 @@ Proof. intros x e0. destruct e0; apply NoShadowB_bexpr. Qed.
 Lemma let_content_NoCapture : forall x e0, NoCaptureB (let_content x e0).
 Proof. intros x e0. destruct e0; apply NoCaptureB_bexpr. Qed.
 
+(* ==================================================================== *)
+(* Global freshness (THEOREM2_PROCESS_NOTES.md Sec.50-51): closes NL_Select's *)
+(* own Hinj1 gap. ProgBoundName lives in curry_test_leftmost.v (ahead of      *)
+(* NEval_left itself, since NL_Let/NL_Fun/NL_Guess's own new premises need    *)
+(* it there); GlobalFreshHeap/NoCaptureProgB/NoCaptureProgHeap and their       *)
+(* joint preservation theorem live here, mirroring NEval_left_closed_         *)
+(* preserved's own precedent exactly (identical premise list/case structure   *)
+(* for the ClosedHeap half) but tracking a SECOND fact -- freedom from the    *)
+(* program's own static bound names -- alongside the first (definedness). *)
+Definition GlobalFreshHeap (P : Prog) (G : NHeap) : Prop :=
+  forall x, ProgBoundName P x -> G x = None.
+
+Definition NoCaptureProgB (P : Prog) (b : Blk) : Prop :=
+  forall x, In x (bound_vars_b b) -> ~ ProgBoundName P x.
+
+Definition NoCaptureProgHeap (P : Prog) (G : NHeap) : Prop :=
+  forall z b, G z = Some b -> NoCaptureProgB P b.
+
+Lemma NoCaptureProgB_bexpr : forall P e, NoCaptureProgB P (BExpr e).
+Proof. intros P e x Hx. destruct Hx. Qed.
+
+Lemma NoCaptureProgB_let_content : forall P x e, NoCaptureProgB P (let_content x e).
+Proof. intros P x e. unfold let_content. destruct e; apply NoCaptureProgB_bexpr. Qed.
+
+Lemma NoCaptureProgB_let_k :
+  forall P x e k, NoCaptureProgB P (BLet x e k) -> NoCaptureProgB P k.
+Proof. intros P x e k H y Hy. apply H. simpl. right. exact Hy. Qed.
+
+Lemma NoCaptureProgB_bcase_branch :
+  forall P x brs c ys bd, In (c, ys, bd) brs -> NoCaptureProgB P (BCase x brs) ->
+  NoCaptureProgB P bd.
+Proof.
+  intros P x brs c ys bd Hin H y Hy.
+  apply H. apply (bound_vars_b_bcase_branch x brs c ys bd Hin). right. exact Hy.
+Qed.
+
+(* Mirrors NEval_left_closed_preserved case for case; the ClosedHeap/free-
+   closedness bookkeeping in each branch is IDENTICAL to that theorem's own
+   (duplicated rather than invoked, since each case's own recursive IH call
+   here needs GlobalFreshHeap/NoCaptureProgHeap/NoCaptureProgB threaded
+   ALONGSIDE it, not just ClosedHeap alone) -- only VarExp, Fun, Let, Select,
+   Guess need real new derivation; VarCons/VarSelf/VarFree/ValFree/ValCon/Or
+   are immediate (heap doesn't grow at a NEW key, or the written value is
+   BExpr-shaped, hence trivially NoCaptureProgB). *)
+Theorem NEval_left_globalfresh_preserved :
+  forall P F G e G' v, NEval_left P F G e G' v ->
+  FunBodyWellScoped P -> ProgNoShadowWF P ->
+  ClosedHeap G -> (forall w, In w (free_vars_b e) -> G w <> None) ->
+  GlobalFreshHeap P G -> NoCaptureProgHeap P G -> NoCaptureProgB P e ->
+  GlobalFreshHeap P G' /\ NoCaptureProgHeap P G' /\ NoCaptureProgB P v.
+Proof.
+  intros P F G e G' v H.
+  induction H as
+    [ F0 G0 z c args Hz
+    | F0 G0 z Hz
+    | F0 G0 z Hz
+    | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
+    | F0 G0
+    | F0 G0 c args
+    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v0 HzFresh Hnb Hrec IH
+    | F0 G0 x1 y1 G1 v0 Hrec IH
+    | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
+    ]; intros HScoped HProgNoShadow Hclosed Heclosed Hgf HNCHeap HeNC.
+  - (* VarCons *)
+    split; [exact Hgf | split; [exact HNCHeap | exact (NoCaptureProgB_bexpr P (ECon c args))]].
+  - (* VarSelf *)
+    split; [exact Hgf | split; [exact HNCHeap | exact (NoCaptureProgB_bexpr P (EVar z))]].
+  - (* VarFree *)
+    split.
+    + intros x Hx.
+      assert (Hxz : x <> z).
+      { intro Heq; subst x. specialize (Hgf z Hx). rewrite Hz in Hgf. discriminate Hgf. }
+      rewrite (hupd_neq G0 z (BExpr (EVar z)) x Hxz). exact (Hgf x Hx).
+    + split.
+      * intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w z) eqn:Heqw.
+        -- injection Hwb as Hwb; subst b. exact (NoCaptureProgB_bexpr P (EVar z)).
+        -- exact (HNCHeap w b Hwb).
+      * exact (NoCaptureProgB_bexpr P (EVar z)).
+  - (* VarExp *)
+    assert (He0NC : NoCaptureProgB P e0) by exact (HNCHeap z e0 Hz).
+    assert (He0closed : forall w, In w (free_vars_b e0) -> G0 w <> None).
+    { intros w Hw. apply (Hclosed z e0 Hz). apply free_vars_b_subset_vars_of_b. exact Hw. }
+    destruct (IH HScoped HProgNoShadow Hclosed He0closed Hgf HNCHeap He0NC) as [HgfG1 [HNCHeapG1 Hv0NC]].
+    split.
+    + intros x Hx.
+      assert (Hxz : x <> z).
+      { intro Heq; subst x. specialize (Hgf z Hx). rewrite Hz in Hgf. discriminate Hgf. }
+      rewrite (hupd_neq G1 z v0 x Hxz). exact (HgfG1 x Hx).
+    + split.
+      * intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w z) eqn:Heqw.
+        -- injection Hwb as Hwb; subst b. exact Hv0NC.
+        -- exact (HNCHeapG1 w b Hwb).
+      * exact Hv0NC.
+  - (* ValFree *)
+    split; [exact Hgf | split; [exact HNCHeap | exact (NoCaptureProgB_bexpr P EFree)]].
+  - (* ValCon *)
+    split; [exact Hgf | split; [exact HNCHeap | exact (NoCaptureProgB_bexpr P (ECon c args))]].
+  - (* Fun *)
+    assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b s body)) -> G0 w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset s body w Hw) as [y [Hy Hsy]].
+      assert (Hyps : In y ps) by (exact (HScoped f ps body HPf y Hy)).
+      destruct (In_nth_error ps y Hyps) as [i Hi].
+      assert (Hips : i < length ps) by (apply nth_error_Some; rewrite Hi; discriminate).
+      assert (Hiargs : i < length args) by (rewrite <- Hlen; exact Hips).
+      destruct (nth_error args i) as [a | ] eqn:Ha.
+      - assert (Hsya : s y = a) by (exact (Hmatch i y a Hi Ha)).
+        apply Heclosed. rewrite <- Hsy, Hsya. eapply nth_error_In. exact Ha.
+      - exfalso. assert (Ha' : nth_error args i <> None) by (apply nth_error_Some; exact Hiargs).
+        apply Ha'. exact Ha. }
+    assert (HbodyNC : NoCaptureProgB P (rename_b s body)).
+    { intros y Hy. rewrite bound_vars_b_rename in Hy. apply in_map_iff in Hy.
+      destruct Hy as [y0 [Hsy0 Hy0in]]. subst y.
+      assert (Hy0notin : ~ In y0 ps).
+      { intro Hc. exact (NoDup_app_disjoint var ps (bound_vars_b body) (HProgNoShadow f ps body HPf) y0 Hc Hy0in). }
+      exact (Hnb y0 Hy0notin). }
+    exact (IH HScoped HProgNoShadow Hclosed Hbodyclosed Hgf HNCHeap HbodyNC).
+  - (* Let *)
+    assert (He0closed : forall w, In w (vars_of_e0 e0) -> G0 w <> None).
+    { intros w Hw. apply Heclosed. simpl. apply in_or_app. left. exact Hw. }
+    assert (Hkclosed : forall w, In w (free_vars_b k) -> hupd G0 z (let_content z e0) w <> None).
+    { intros w Hw. destruct (Nat.eq_dec w z) as [Heq | Hneq].
+      - subst w. unfold hupd. rewrite Nat.eqb_refl. discriminate.
+      - apply hupd_preserves_some. apply Heclosed. simpl. apply in_or_app. right.
+        apply in_in_remove; [exact Hneq | exact Hw]. }
+    assert (HnewClosed : ClosedHeap (hupd G0 z (let_content z e0))).
+    { intros w b Hwb y Hy. unfold hupd in Hwb.
+      destruct (Nat.eqb w z) eqn:Heqw.
+      - apply Nat.eqb_eq in Heqw; subst w. injection Hwb as Hwb; subst b.
+        apply let_content_vars in Hy. destruct Hy as [Hy | Hy].
+        + subst y. unfold hupd. rewrite Nat.eqb_refl. discriminate.
+        + apply hupd_preserves_some. apply He0closed. exact Hy.
+      - apply hupd_preserves_some. apply (Hclosed w b Hwb y Hy). }
+    assert (HkNC : NoCaptureProgB P k) by exact (NoCaptureProgB_let_k P z e0 k HeNC).
+    assert (HnewGF : GlobalFreshHeap P (hupd G0 z (let_content z e0))).
+    { intros x Hx. destruct (Nat.eq_dec x z) as [Heq | Hneq].
+      - subst x. exfalso. exact (Hnb Hx).
+      - rewrite (hupd_neq G0 z (let_content z e0) x Hneq). exact (Hgf x Hx). }
+    assert (HnewNCHeap : NoCaptureProgHeap P (hupd G0 z (let_content z e0))).
+    { intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w z) eqn:Heqw.
+      - injection Hwb as Hwb; subst b. exact (NoCaptureProgB_let_content P z e0).
+      - exact (HNCHeap w b Hwb). }
+    exact (IH HScoped HProgNoShadow HnewClosed Hkclosed HnewGF HnewNCHeap HkNC).
+  - (* Or *)
+    apply IH.
+    + exact HScoped.
+    + exact HProgNoShadow.
+    + exact Hclosed.
+    + simpl. intros w Hin. destruct Hin as [Hw | []]. subst w.
+      apply Heclosed. simpl. left. reflexivity.
+    + exact Hgf.
+    + exact HNCHeap.
+    + exact (NoCaptureProgB_bexpr P (EVar x1)).
+  - (* Select *)
+    assert (Hzclosed : forall w, In w (free_vars_b (BExpr (EVar z))) -> G0 w <> None).
+    { intros w Hw. simpl in Hw. destruct Hw as [Hw | []]. subst w.
+      apply Heclosed. simpl. left. reflexivity. }
+    destruct (IH1 HScoped HProgNoShadow Hclosed Hzclosed Hgf HNCHeap (NoCaptureProgB_bexpr P (EVar z)))
+      as [HgfG1 [HNCHeapG1 _]].
+    destruct (NEval_left_closed_preserved P F0 G0 (BExpr (EVar z)) G1 (BExpr (ECon c zs)) Hrec1
+                HScoped Hclosed Hzclosed) as [HclosedG1 HzsClosed].
+    simpl in HzsClosed.
+    assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b (zipsubst ys zs) body)) -> G1 w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset (zipsubst ys zs) body w Hw) as [y [Hy Hsy]].
+      destruct (in_dec Nat.eq_dec y ys) as [Hyin | Hynin].
+      - assert (Hwzs : In w zs) by (rewrite <- Hsy; apply (zipsubst_in ys zs Hlen y Hyin)).
+        apply HzsClosed. exact Hwzs.
+      - assert (Hzid : zipsubst ys zs y = y) by (apply zipsubst_notin; exact Hynin).
+        assert (HinBCase : In y (free_vars_b (BCase z brs))).
+        { apply (free_vars_b_bcase_branch z brs c ys body HIn).
+          apply remove_all_in_intro; [exact Hy | exact Hynin]. }
+        assert (HG0y : G0 y <> None) by (apply Heclosed; exact HinBCase).
+        assert (HG1y : G1 y <> None)
+          by (exact (NEval_left_domain_mono P F0 G0 (BExpr (EVar z)) G1 (BExpr (ECon c zs)) Hrec1 y HG0y)).
+        rewrite <- Hsy, Hzid. exact HG1y. }
+    assert (HbodyNC0 : NoCaptureProgB P body) by exact (NoCaptureProgB_bcase_branch P z brs c ys body HIn HeNC).
+    assert (HbodyNC : NoCaptureProgB P (rename_b (zipsubst ys zs) body)).
+    { intros y0 Hy0. rewrite bound_vars_b_rename in Hy0. apply in_map_iff in Hy0.
+      destruct Hy0 as [y1 [Heqy1 Hy1in]]. subst y0.
+      destruct (in_dec Nat.eq_dec y1 ys) as [Hyin | Hynin].
+      - assert (Hwzs : In (zipsubst ys zs y1) zs) by exact (zipsubst_in ys zs Hlen y1 Hyin).
+        intro Hpb. exact (HzsClosed (zipsubst ys zs y1) Hwzs (HgfG1 (zipsubst ys zs y1) Hpb)).
+      - rewrite (zipsubst_notin ys zs y1 Hynin). exact (HbodyNC0 y1 Hy1in). }
+    exact (IH2 HScoped HProgNoShadow HclosedG1 Hbodyclosed HgfG1 HNCHeapG1 HbodyNC).
+  - (* Guess *)
+    assert (Hzclosed : forall w, In w (free_vars_b (BExpr (EVar z))) -> G0 w <> None).
+    { intros w Hw. simpl in Hw. destruct Hw as [Hw | []]. subst w.
+      apply Heclosed. simpl. left. reflexivity. }
+    destruct (IH1 HScoped HProgNoShadow Hclosed Hzclosed Hgf HNCHeap (NoCaptureProgB_bexpr P (EVar z)))
+      as [HgfG1 [HNCHeapG1 _]].
+    destruct (NEval_left_closed_preserved P F0 G0 (BExpr (EVar z)) G1 (BExpr (EVar z')) Hrec1
+                HScoped Hclosed Hzclosed) as [HclosedG1 Hz'closed].
+    simpl in Hz'closed. assert (HG1z' : G1 z' <> None) by (apply Hz'closed; left; reflexivity).
+    assert (Hbr1In : In (c1, ys1, body1) brs) by (apply (hd_error_in brs (c1, ys1, body1) Hhd)).
+    set (Hnew := hupd G1 z' (BExpr (ECon c1 ws))).
+    assert (HnewClosed : ClosedHeap (hupd_list Hnew ws (map (fun w => BExpr (EVar w)) ws))).
+    { intros w b Hwb y Hy. destruct (in_dec Nat.eq_dec w ws) as [Hwws | Hwnws].
+      - rewrite (hupd_list_map_self ws Hnew w Hwws) in Hwb. injection Hwb as Hwb; subst b.
+        simpl in Hy. destruct Hy as [Hy | []]. subst y.
+        rewrite (hupd_list_map_self ws Hnew w Hwws). discriminate.
+      - rewrite (hupd_list_notin ws Hnew _ w Hwnws) in Hwb.
+        unfold Hnew in Hwb. unfold hupd in Hwb.
+        destruct (Nat.eqb w z') eqn:Heqw.
+        + apply Nat.eqb_eq in Heqw; subst w. injection Hwb as Hwb; subst b.
+          simpl in Hy. rewrite (hupd_list_map_self ws Hnew y Hy). discriminate.
+        + destruct (in_dec Nat.eq_dec y ws) as [Hyws | Hynws].
+          * rewrite (hupd_list_map_self ws Hnew y Hyws). discriminate.
+          * rewrite (hupd_list_notin ws Hnew _ y Hynws). unfold Hnew. apply hupd_preserves_some.
+            apply (HclosedG1 w b Hwb y Hy). }
+    assert (Hbodyclosed :
+      forall w, In w (free_vars_b (rename_b (zipsubst ys1 ws) body1)) ->
+      hupd_list Hnew ws (map (fun w0 => BExpr (EVar w0)) ws) w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset (zipsubst ys1 ws) body1 w Hw) as [y [Hy Hsy]].
+      destruct (in_dec Nat.eq_dec y ys1) as [Hyin | Hynin].
+      - assert (Hwws : In w ws) by (rewrite <- Hsy; apply (zipsubst_in ys1 ws (eq_sym Hlen) y Hyin)).
+        rewrite (hupd_list_map_self ws Hnew w Hwws). discriminate.
+      - assert (Hzid : zipsubst ys1 ws y = y) by (apply zipsubst_notin; exact Hynin).
+        assert (HinBCase : In y (free_vars_b (BCase z brs))).
+        { apply (free_vars_b_bcase_branch z brs c1 ys1 body1 Hbr1In).
+          apply remove_all_in_intro; [exact Hy | exact Hynin]. }
+        assert (HG0y : G0 y <> None) by (apply Heclosed; exact HinBCase).
+        assert (HG1y : G1 y <> None)
+          by (exact (NEval_left_domain_mono P F0 G0 (BExpr (EVar z)) G1 (BExpr (EVar z')) Hrec1 y HG0y)).
+        destruct (in_dec Nat.eq_dec y ws) as [Hyws | Hynws].
+        + exfalso. apply HG1y. apply (Hfr y Hyws).
+        + rewrite <- Hsy, Hzid. rewrite (hupd_list_notin ws Hnew _ y Hynws). unfold Hnew.
+          apply hupd_preserves_some. exact HG1y. }
+    assert (HGF' : GlobalFreshHeap P (hupd_list Hnew ws (map (fun w => BExpr (EVar w)) ws))).
+    { intros x Hx. destruct (in_dec Nat.eq_dec x ws) as [Hxws | Hxnws].
+      - exfalso. exact (Hnb x Hxws Hx).
+      - rewrite (hupd_list_notin ws Hnew _ x Hxnws). unfold Hnew.
+        assert (Hxz' : x <> z').
+        { intro Heq; subst x. exact (HG1z' (HgfG1 z' Hx)). }
+        rewrite (hupd_neq G1 z' (BExpr (ECon c1 ws)) x Hxz'). exact (HgfG1 x Hx). }
+    assert (HNCHeap' : NoCaptureProgHeap P (hupd_list Hnew ws (map (fun w => BExpr (EVar w)) ws))).
+    { intros w b Hwb. destruct (in_dec Nat.eq_dec w ws) as [Hwws | Hwnws].
+      - rewrite (hupd_list_map_self ws Hnew w Hwws) in Hwb. injection Hwb as Hwb; subst b.
+        exact (NoCaptureProgB_bexpr P (EVar w)).
+      - rewrite (hupd_list_notin ws Hnew _ w Hwnws) in Hwb.
+        unfold Hnew in Hwb. unfold hupd in Hwb.
+        destruct (Nat.eqb w z') eqn:Heqw.
+        + injection Hwb as Hwb; subst b. exact (NoCaptureProgB_bexpr P (ECon c1 ws)).
+        + exact (HNCHeapG1 w b Hwb). }
+    assert (Hbody1NC0 : NoCaptureProgB P body1)
+      by exact (NoCaptureProgB_bcase_branch P z brs c1 ys1 body1 Hbr1In HeNC).
+    assert (Hbody1NC : NoCaptureProgB P (rename_b (zipsubst ys1 ws) body1)).
+    { intros y0 Hy0. rewrite bound_vars_b_rename in Hy0. apply in_map_iff in Hy0.
+      destruct Hy0 as [y1 [Heqy1 Hy1in]]. subst y0.
+      destruct (in_dec Nat.eq_dec y1 ys1) as [Hyin | Hynin].
+      - assert (Hwws : In (zipsubst ys1 ws y1) ws) by exact (zipsubst_in ys1 ws (eq_sym Hlen) y1 Hyin).
+        exact (Hnb (zipsubst ys1 ws y1) Hwws).
+      - rewrite (zipsubst_notin ys1 ws y1 Hynin). exact (Hbody1NC0 y1 Hy1in). }
+    exact (IH2 HScoped HProgNoShadow HnewClosed Hbodyclosed HGF' HNCHeap' Hbody1NC).
+Qed.
+
 (* Local (finite-domain) versions of ren_override2_map_in/_map_Forall2:
    only ever needs s injective ON ys, not globally -- exactly what a
    zipsubst-shaped theta (identity off ys) can actually offer. *)
@@ -4115,8 +4371,9 @@ Theorem NEval_left_confluence :
   (forall w, In w F1 -> Gam1 w <> None) -> (forall w, In w F2 -> Gam2 w <> None) ->
   FunBodyWellScoped P -> ProgBrsUniqWF P -> ProgNoShadowWF P -> ProgNoCaptureWF P ->
   ClosedHeap Gam1 -> BrsUniqHeap Gam1 -> NoShadowHeap Gam1 -> NoCaptureHeap Gam1 ->
+  GlobalFreshHeap P Gam1 -> NoCaptureProgHeap P Gam1 ->
   (forall w, In w (free_vars_b e1) -> Gam1 w <> None) -> BrsUniqB e1 ->
-  NoShadowB e1 -> NoShadowB e2 -> NoCaptureB e1 ->
+  NoShadowB e1 -> NoShadowB e2 -> NoCaptureB e1 -> NoCaptureProgB P e1 ->
   forall Gam2' v2, NEval_left P F2 Gam2 e2 Gam2' v2 ->
   exists sigma tau, mutual_inverse sigma tau /\
     (forall w, Gam1 w <> None -> sigma w = sigma0 w) /\
@@ -4138,8 +4395,8 @@ Proof.
                                                                           (* NL_Guess *)
     ; intros sigma0 tau0 Hmi0 F2 HF2eq Gam2 e2 He2 Halpha0
       HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
-      Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1
-      He1closed He1BrsUniq He1NoShadow He2NoShadow He1NoCapture Gam2' v2 H2.
+      Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1
+      He1closed He1BrsUniq He1NoShadow He2NoShadow He1NoCapture He1NCProg Gam2' v2 H2.
   - (* NL_VarCons *)
     destruct Hmi0 as [Hst0 Hts0].
     assert (Hgamx : Gam2 (sigma0 x) = Some (BExpr (ECon c0 (map sigma0 args0)))).
@@ -4232,14 +4489,15 @@ Proof.
       assert (He0BrsUniq : BrsUniqB e) by exact (HBrsUniqHeap1 x e Hgx0).
       assert (He0NoShadow : NoShadowB e) by exact (HNoShadowHeap1 x e Hgx0).
       assert (He0NoCapture : NoCaptureB e) by exact (HNoCaptureHeap1 x e Hgx0).
+      assert (He0NCProg : NoCaptureProgB P e) by exact (HNCHeap1 x e Hgx0).
       assert (Hinj0 : injective sigma0) by exact (mutual_inverse_injective_l sigma0 tau0 (conj Hst0 Hts0)).
       assert (He0NoShadow2 : NoShadowB (rename_b sigma0 e)) by exact (NoShadowB_rename sigma0 e He0NoShadow Hinj0).
       destruct (IH sigma0 tau0 (conj Hst0 Hts0) (sigma0 x :: map sigma0 F0) eq_refl Gam2
                   (rename_b sigma0 e) (BlkAlpha_refl sigma0 Hinj0 e) Halpha0
                   HFdom1' HFdom2'
                   HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
-                  Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1
-                  He0closed He0BrsUniq He0NoShadow He0NoShadow2 He0NoCapture G1' v2 Hrec2)
+                  Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1
+                  He0closed He0BrsUniq He0NoShadow He0NoShadow2 He0NoCapture He0NCProg G1' v2 Hrec2)
         as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
       exists sigma, tau. split; [exact Hmisig | ].
       split; [exact Hext | ].
@@ -4258,11 +4516,11 @@ Proof.
     destruct H2 as
       [ F1a G1a z c a Hz | F1a G1a z Hz | F1a G1a z Hz | F1a G1a z e0 G1b v0 Hz1 Hz2 Hz3 Hz4 Hz5 HrecA
       | F1a G1a | F1a G1a c a
-      | F1a G1a G1b f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HrecB
-      | F1a G1a G1b z e0 k v1 Hzf HrecC
+      | F1a G1a G1b f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbB HrecB
+      | F1a G1a G1b z e0 k v1 Hzf HnbC HrecC
       | F1a G1a x1 y1 G1b v1 HrecD
       | F1a G1a z c a brs ys body G1b v1 G2 HrecE1 HIn Hlen HrecE2
-      | F1a G1a z G1b z' c1 ys1 body1 brs G2 v1 ws HrecF1 Hhd Hlen HND Hfr HrecF2
+      | F1a G1a z G1b z' c1 ys1 body1 brs G2 v1 ws HrecF1 Hhd Hlen HND Hfr HnbF HrecF2
       ]; intros Ht; try discriminate Ht.
     exists sigma0, tau0.
     split; [exact Hmi0 | ].
@@ -4276,11 +4534,11 @@ Proof.
     destruct H2 as
       [ F1a G1a z c a Hz | F1a G1a z Hz | F1a G1a z Hz | F1a G1a z e0 G1b v0 Hz1 Hz2 Hz3 Hz4 Hz5 HrecA
       | F1a G1a | F1a G1a c a
-      | F1a G1a G1b f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HrecB
-      | F1a G1a G1b z e0 k v1 Hzf HrecC
+      | F1a G1a G1b f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbB HrecB
+      | F1a G1a G1b z e0 k v1 Hzf HnbC HrecC
       | F1a G1a x1 y1 G1b v1 HrecD
       | F1a G1a z c a brs ys body G1b v1 G2 HrecE1 HIn Hlen HrecE2
-      | F1a G1a z G1b z' c1 ys1 body1 brs G2 v1 ws HrecF1 Hhd Hlen HND Hfr HrecF2
+      | F1a G1a z G1b z' c1 ys1 body1 brs G2 v1 ws HrecF1 Hhd Hlen HND Hfr HnbF HrecF2
       ]; intros Ht; try discriminate Ht.
     exists sigma0, tau0.
     split; [exact Hmi0 | ].
@@ -4333,10 +4591,16 @@ Proof.
       by exact (NoShadowB_rename s2 body HbodyNS Hinj2).
     assert (HbodyNoCapture : NoCaptureB (rename_b s body))
       by exact (NoCaptureB_rename s body (HProgNoCapture f ps body HPf) Hinj).
+    assert (HbodyNCProg : NoCaptureProgB P (rename_b s body)).
+    { intros y0 Hy0. rewrite bound_vars_b_rename in Hy0. apply in_map_iff in Hy0.
+      destruct Hy0 as [y1 [Hsy1 Hy1in]]. subst y0.
+      assert (Hy1notin : ~ In y1 ps).
+      { intro Hc. exact (NoDup_app_disjoint var ps (bound_vars_b body) (HProgNoShadow f ps body HPf) y1 Hc Hy1in). }
+      exact (Hnb y1 Hy1notin). }
     destruct (IH sigma0 tau0 Hmi0 (map sigma0 F0) eq_refl Gam2 (rename_b s2 body) HBA Halpha0
                 HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
-                Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1
-                Hbodyclosed HbodyBrsUniq HbodyNoShadow HbodyNoShadow2 HbodyNoCapture Gam2' v2 Hrec2)
+                Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1
+                Hbodyclosed HbodyBrsUniq HbodyNoShadow HbodyNoShadow2 HbodyNoCapture HbodyNCProg Gam2' v2 Hrec2)
       as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
     exists sigma, tau. split; [exact Hmisig | ].
     split; [exact Hext | ].
@@ -4426,6 +4690,15 @@ Proof.
     { intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w x) eqn:Heqw.
       - injection Hwb as Hwb; subst b. apply let_content_NoCapture.
       - exact (HNoCaptureHeap1 w b Hwb). }
+    assert (HkNCProg : NoCaptureProgB P k) by exact (NoCaptureProgB_let_k P x e k He1NCProg).
+    assert (HnewGF : GlobalFreshHeap P (hupd G0 x (let_content x e))).
+    { intros x0 Hx0. destruct (Nat.eq_dec x0 x) as [Heq | Hneq].
+      - subst x0. exfalso. exact (Hnb Hx0).
+      - rewrite (hupd_neq G0 x (let_content x e) x0 Hneq). exact (Hgf1 x0 Hx0). }
+    assert (HnewNCHeap : NoCaptureProgHeap P (hupd G0 x (let_content x e))).
+    { intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w x) eqn:Heqw.
+      - injection Hwb as Hwb; subst b. exact (NoCaptureProgB_let_content P x e).
+      - exact (HNCHeap1 w b Hwb). }
     assert (Hxnotinf0 : ~ In x F0) by (intro Hin; exact (HFdom1 x Hin Hxfresh)).
     assert (Htx2notinf0 : ~ In (tau0 x2n) F0) by (intro Hin; exact (HFdom1 (tau0 x2n) Hin HG0tx2n)).
     assert (HF2eq'' : F2 = map sigma0'' F0).
@@ -4437,8 +4710,8 @@ Proof.
                 k2n Hbk'' Hpt
                 HFdom1' HFdom2'
                 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
-                HnewClosed HnewBrsUniqHeap HnewNoShadowHeap HnewNoCaptureHeap
-                Hkclosed HkBrsUniq HkNoShadow Hk2NoShadow HkNoCapture Gam2' v2 Hrec2)
+                HnewClosed HnewBrsUniqHeap HnewNoShadowHeap HnewNoCaptureHeap HnewGF HnewNCHeap
+                Hkclosed HkBrsUniq HkNoShadow Hk2NoShadow HkNoCapture HkNCProg Gam2' v2 Hrec2)
       as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
     exists sigma, tau. split; [exact Hmisig | ].
     split.
@@ -4458,11 +4731,11 @@ Proof.
     destruct H2 as
       [ F1a G1a z c a Hz | F1a G1a z Hz | F1a G1a z Hz | F1a G1a z e0 G1b v0 Hz1 Hz2 Hz3 Hz4 Hz5 HrecA
       | F1a G1a | F1a G1a c a
-      | F1a G1a G1b f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HrecB
-      | F1a G1a G1b z e0 k v1 Hzf HrecC
+      | F1a G1a G1b f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbB HrecB
+      | F1a G1a G1b z e0 k v1 Hzf HnbC HrecC
       | F1a G1a x1 y1 G1b v1 HrecD
       | F1a G1a z c a brs ys body G1b v1 G2 HrecE1 HIn Hlen HrecE2
-      | F1a G1a z G1b z' c1 ys1 body1 brs G2 v1 ws HrecF1 Hhd Hlen HND Hfr HrecF2
+      | F1a G1a z G1b z' c1 ys1 body1 brs G2 v1 ws HrecF1 Hhd Hlen HND Hfr HnbF HrecF2
       ]; intros Ht HF2eq; try discriminate Ht.
     injection Ht as Htx Hty. subst x1 y1.
     assert (Hxclosed : forall w, In w (free_vars_b (BExpr (EVar x))) -> G0 w <> None).
@@ -4471,9 +4744,9 @@ Proof.
       by (constructor; apply Expr0Alpha_intro).
     destruct (IH sigma0 tau0 Hmi0 F1a HF2eq G1a (BExpr (EVar (sigma0 x))) HBAx Halpha0
                 HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
-                Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1
+                Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1
                 Hxclosed I (NoShadowB_bexpr (EVar x)) (NoShadowB_bexpr (EVar (sigma0 x)))
-                (NoCaptureB_bexpr (EVar x)) G1b v1 HrecD)
+                (NoCaptureB_bexpr (EVar x)) (NoCaptureProgB_bexpr P (EVar x)) G1b v1 HrecD)
       as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
     exists sigma, tau. split; [exact Hmisig | ].
     split; [exact Hext | ].
@@ -4563,13 +4836,15 @@ Corollary NEval_left_self_confluence :
   (forall w, In w F -> Gam w <> None) ->
   FunBodyWellScoped P -> ProgBrsUniqWF P -> ProgNoShadowWF P -> ProgNoCaptureWF P ->
   ClosedHeap Gam -> BrsUniqHeap Gam -> NoShadowHeap Gam -> NoCaptureHeap Gam ->
+  GlobalFreshHeap P Gam -> NoCaptureProgHeap P Gam ->
   (forall w, In w (free_vars_b e) -> Gam w <> None) -> BrsUniqB e ->
-  NoShadowB e -> NoCaptureB e ->
+  NoShadowB e -> NoCaptureB e -> NoCaptureProgB P e ->
   forall Gam2 v2, NEval_left P F Gam e Gam2 v2 ->
   exists sigma tau, mutual_inverse sigma tau /\ NHeapAlpha sigma tau Gam1 Gam2 /\ v2 = rename_b sigma v1.
 Proof.
   intros P F Gam e Gam1 v1 H1 HFdom HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
-    Hclosed HBrsUniqHeap HNoShadowHeap HNoCaptureHeap Heclosed HeBrsUniq HeNoShadow HeNoCapture Gam2 v2 H2.
+    Hclosed HBrsUniqHeap HNoShadowHeap HNoCaptureHeap Hgf HNCHeap
+    Heclosed HeBrsUniq HeNoShadow HeNoCapture HeNCProg Gam2 v2 H2.
   assert (HBAid : BlkAlpha (fun w => w) e e).
   { assert (H := BlkAlpha_refl (fun w => w) (fun x y H => H) e). rewrite (rename_b_id e) in H. exact H. }
   destruct (NEval_left_confluence P F Gam e Gam1 v1 H1
@@ -4578,8 +4853,8 @@ Proof.
               (NHeapAlpha_refl Gam)
               HFdom HFdom
               HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
-              Hclosed HBrsUniqHeap HNoShadowHeap HNoCaptureHeap
-              Heclosed HeBrsUniq HeNoShadow HeNoShadow HeNoCapture
+              Hclosed HBrsUniqHeap HNoShadowHeap HNoCaptureHeap Hgf HNCHeap
+              Heclosed HeBrsUniq HeNoShadow HeNoShadow HeNoCapture HeNCProg
               Gam2 v2 H2)
     as [sigma [tau [Hmi [_ [Halpha Heq]]]]].
   exists sigma, tau. split; [exact Hmi | split; [exact Halpha | exact Heq]].
