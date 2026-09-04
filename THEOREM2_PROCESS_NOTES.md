@@ -3613,6 +3613,100 @@ constructor argument value drawn from the heap immunity from colliding with any 
 term being matched against it, with its own preservation argument through the induction) before finishing
 `NL_Select`'s proof body.
 
+## 51. Next session: diagnosed §50's gap down to a concrete example (a case scrutinee forcing to `Con c
+[7]` colliding with a `let 7 = ...` bound inside an unreached branch of the matched body), then — on the
+user's explicit direction, after a checkpoint commit/push as a fallback — strengthened `NL_Let`/`NL_Fun`/
+`NL_Guess` themselves rather than building the smaller, contained "derivation-indexed predicate" alternative
+
+**The diagnosis.** `N_Select`'s `zs` (and `N_Fun`'s `s`, `N_Let`'s `x`, `N_Guess`'s `ws`) were only ever
+required fresh against the *current heap* (`G x = None`-style side conditions) — never against the finite
+set of names the *program itself* binds, statically, in its own source text. Nothing in the operational
+semantics stops a runtime-chosen name from coinciding with an unrelated bound name written elsewhere in the
+program, including inside branches never executed. This is a real gap in the formalization, not a proof-
+technique shortfall: a real implementation gets this for free because compiled-away source names and
+malloc'd addresses are disjoint namespaces, but this development types both as the same `var`.
+
+**The two candidate fixes, and the choice.** (a) A *derivation-indexed* predicate (`Fixpoint` over an
+`NEval_left` proof term, recursing into each sub-derivation, asserting the needed fact only at `NL_Let`/
+`NL_Fun`/`NL_Guess`) — contained entirely to `alpha_renaming_wip.v`, zero changes to `NEval_left` or its
+~50 other call sites, but less reusable/elegant. (b) Strengthen `NL_Let`/`NL_Fun`/`NL_Guess`'s own premises
+directly with a new `ProgBoundName` side condition — the "textbook correct" fix (a real, reusable
+`GlobalFreshHeap`-style invariant), but changes the base relation's constructor arities, which a `grep`
+before starting showed touches roughly 50 pattern-match sites across `curry_test_leftmost.v` (8,666 lines)
+and `alpha_renaming_wip.v`, plus (found only once inside it) 14 *construction* sites needing real new proof
+content, not just mechanical pattern updates. The user chose (b) explicitly, after being shown the real
+scope, and asked for a checkpoint commit+push first as a fallback — done (`a5052fd`) before any surgery.
+
+**The apparatus, built in `curry_test_leftmost.v` ahead of `NEval_left`'s own definition** (Coq requires
+every identifier fully defined before use, so `bound_vars_b` — previously living deep inside
+`alpha_renaming_wip.v` — was relocated here too):
+```
+Fixpoint bound_vars_b (b : Blk) : list var := ...  (* moved, unchanged *)
+Definition ProgBoundName (P : Prog) (x : var) : Prop :=
+  exists f ps body, P f = Some (ps, body) /\ (In x ps \/ In x (bound_vars_b body)).
+```
+`NL_Let`/`NL_Fun`/`NL_Guess` each gained one new premise, inserted right after their existing heap-freshness
+condition: `~ ProgBoundName P x` (`NL_Let`), `forall y, ~ In y ps -> ~ ProgBoundName P (s y)` (`NL_Fun`),
+`forall w, In w ws -> ~ ProgBoundName P w` (`NL_Guess`). `NEval_left_to_NEval` (the embedding into plain,
+unstrengthened `NEval`) needed only its pattern updated — the new fact is simply dropped, since `NEval`'s
+own rules don't need it.
+
+**The sweep, done compile-error-driven rather than by pre-reading every site** (Coq's own arity-mismatch
+errors are a complete, precise checklist of every site touching the changed constructors): a blanket `sed`
+first inserted a new bound name (`Hnb`) into every `induction ... as [...]` pattern whose `NL_Fun`/`NL_Let`/
+`NL_Guess` arm used the file's own extremely consistent naming convention (`Hfresh Hrec IH`, `HzFresh Hrec
+IH`, `HND Hfr Hrec2 IH2`) — catching the vast majority of the ~50 sites in three commands. **This first
+sed pass had a real bug**, caught by the very next compile: `GEval`'s *own*, completely unrelated `G_Fun`/
+`G_CaseConFree` constructors (unchanged, in `curry.v`) happen to use the *identical* variable-naming
+convention at their own `induction`/`destruct` sites, so the blanket substitution corrupted ~22 `GEval`-
+shaped patterns that were never supposed to change — caught immediately (every corrupted line was
+distinguishable by lacking `NEval_left`'s own leading `F0` guard-set argument) and reverted by exact line
+number before continuing. Lesson for next time: a naming-convention-based blanket `sed` across a large file
+needs an explicit structural discriminator (here, "does the pattern start with F0") checked *before* trusting
+its results, not just a post-hoc compile check — the compile check caught it here only because the *count*
+of `GEval` inductions was large enough to hit early, not because the corruption was self-evidently visible.
+
+**The remaining sites needed real content, handled case by case as the compiler surfaced each one:**
+- Two shape-inversion lemmas needed the new fact threaded into their own *conclusions*, since callers
+  destructure them to get at `NL_Guess`'s witnesses: `NEval_left_bcase_shape` (10 call sites) and (found
+  transitively) `NEval_left_fwd_transfer_fwdhere_free`/`HeapCorr_fwd_transfer_fwdhere_free`'s own signatures.
+  Each of the ~15 downstream call sites got the mechanical "add one more binder to the destructuring
+  pattern" treatment, plus (where the branch's own proof actually consumed the freshness fact to construct
+  a further `NL_Guess`) a real `exact Hnb`/`exact Hnbws` substitution — never a new obligation, since in
+  every case the witness being reused (`s`, `x`, `ws`) was *the same* witness the fact already existed for.
+- **The one genuinely new, unavoidable class of gap:** sites bridging `GEval` (the graph semantics, in
+  `curry.v`, deliberately left untouched) into `NEval_left` construction — `GEval`'s `G_Fun`/`G_Let`/
+  `G_CaseConFree` carry no `ProgBoundName` fact about their own witnesses at all (mirroring the exact same
+  gap on the graph side), so nothing exists to discharge the new `NEval_left` premise from. Checked, before
+  admitting any of these, whether the *enclosing* lemma was already fully `Qed`'d or already `Admitted` in
+  the pre-surgery checkpoint (`git show a5052fd:... | awk ...`) — every single one (`NEval_left_let_chain_
+  to_fwd`, `NEval_left_let_chain_to_con`, `NEval_left_let_chain_to_value`, and `curry_test_leftmost.v`'s own
+  restatement of `theorem2` itself) was *already* `Admitted` before this session touched anything, so a new
+  `admit` there adds a new, clearly-`(* NEW GAP *)`-commented gap to an already-incomplete result, not a
+  regression of a previously-closed one. **Verified, not just argued:** `Admitted.`-terminator count in
+  `curry_test_leftmost.v` is unchanged (9 before, 9 after) despite 10 new `admit`s being added, and every
+  one of the ~6 lemmas fixed with *real* content (`NEval_left_frame_guarded`, `NEval_left_choice_as_alias_
+  bcase`, `NEval_left_fwd_transfer`, `NEval_left_fwd_transfer_fwdhere_free`, `HeapCorr_fwd_transfer_
+  fwdhere_free`, `NEval_left_bcase_shape`) still ends in `Qed.` with no `admit` inside it.
+
+**Crucial point for the actual project this session serves:** `curry.v`'s own `theorem2` (the result the
+very first commit calls "the main theorem") uses the *original*, unmodified `NEval` — completely untouched
+by any of this. `curry_test_leftmost.v`'s *separate* restatement of `theorem2` via `NEval_left` (built later,
+as a stepping stone toward the leftmost-bias confluence work this session actually cares about) was already
+`Admitted` before this session started, so gaining a few more precisely-scoped, clearly-commented admits
+inside it is not a regression of anything the project considers "done."
+
+**Status:** both `curry_test_leftmost.v` and `alpha_renaming_wip.v` compile clean, zero errors.
+`curry_test_leftmost.v`: 9 `Admitted.` (unchanged from before this session), `admit` count 29 → 39 (10 new,
+all inside already-`Admitted` lemmas, each `(* NEW GAP *)`-commented). `alpha_renaming_wip.v`: still exactly
+**2 admits** (`NL_Select`, `NL_Guess`) — unchanged, zero regressions; the whole point of the surgery (a real,
+program-wide `ProgBoundName`/`GlobalFreshHeap`-style fact usable at `NL_Select`'s own call site) is now
+available but **not yet used** — `Hinj1` itself has not yet been attempted against it. **Next step:** build
+`GlobalFreshHeap`/an initial-heap hypothesis on `NEval_left_confluence`, prove it preserved through all 11
+cases (mechanical pass mirroring §49, with real derivation needed only at `NL_Let`/`NL_Fun`/`NL_Guess`,
+now trivial since those rules directly hand back the needed fact), then use it to close `Hinj1` and finish
+`NL_Select`'s (and, mirroring it, `NL_Guess`'s) actual proof body.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary

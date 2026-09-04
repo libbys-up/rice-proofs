@@ -3,6 +3,36 @@ Import ListNotations.
 Require Import curry.
 
 (* ==================================================================== *)
+(* Global-freshness apparatus (THEOREM2_PROCESS_NOTES.md Sec.50-51):     *)
+(* relocated ahead of NEval_left's own definition (bound_vars_b used to   *)
+(* live much later, in alpha_renaming_wip.v, but NL_Let/NL_Fun/NL_Guess    *)
+(* below need it in their own premises, and Coq requires every identifier *)
+(* fully defined before use -- see THEOREM2_PROCESS_NOTES.md's own T16).   *)
+(*                                                                        *)
+(* The problem this closes: N_Select's zs (and N_Fun's s, N_Let's x,       *)
+(* N_Guess's ws) were only ever required fresh against the CURRENT HEAP    *)
+(* -- never against the finitely many names the PROGRAM ITSELF binds,      *)
+(* statically, in its own source text.  A real implementation gets this    *)
+(* for free (compiled-away source names and malloc'd addresses are          *)
+(* disjoint namespaces); this formalization types both as the same `var`   *)
+(* and so has to state the disjointness explicitly.  ProgBoundName is       *)
+(* "x is bound somewhere, syntactically, in P" (a parameter of some          *)
+(* function, or bound anywhere in some function's own body, reached or      *)
+(* not); NL_Let/NL_Fun/NL_Guess below are strengthened to require every      *)
+(* newly-introduced heap key avoid it, giving a real, reusable               *)
+(* GlobalFreshHeap invariant (built in alpha_renaming_wip.v). *)
+Fixpoint bound_vars_b (b : Blk) : list var :=
+  match b with
+  | BLet x e k => x :: bound_vars_b k
+  | BCase x brs =>
+      fold_right (fun p acc => match p with (c, ps, bd) => ps ++ bound_vars_b bd ++ acc end) nil brs
+  | BExpr e => nil
+  end.
+
+Definition ProgBoundName (P : Prog) (x : var) : Prop :=
+  exists f ps body, P f = Some (ps, body) /\ (In x ps \/ In x (bound_vars_b body)).
+
+(* ==================================================================== *)
 (* GEval is a DETERMINISTIC execution model (a real compiler has to be):  *)
 (* G_CaseChoice only ever forwards to the FIRST operand of an EChoice,    *)
 (* never the second (there is no companion rule).  NEval's own N_Or is    *)
@@ -64,10 +94,12 @@ Inductive NEval_left : list var -> NHeap -> Blk -> NHeap -> Blk -> Prop :=
     injective s ->
     (forall i x a, nth_error ps i = Some x -> nth_error args i = Some a -> s x = a) ->
     (forall y, ~ In y ps -> G (s y) = None) ->
+    (forall y, ~ In y ps -> ~ ProgBoundName P (s y)) ->
     NEval_left F G (rename_b s body) G1 v ->
     NEval_left F G (BExpr (EFun f args)) G1 v
 | NL_Let : forall F G G1 x (e : Expr0) k v,
     G x = None ->
+    ~ ProgBoundName P x ->
     NEval_left F (hupd G x (let_content x e)) k G1 v ->
     NEval_left F G (BLet x e k) G1 v
 (* THE ONLY CHANGE from NEval: N_Or's `i = x \/ i = y` becomes just `i = x` --
@@ -87,6 +119,7 @@ Inductive NEval_left : list var -> NHeap -> Blk -> NHeap -> Blk -> Prop :=
     length ws = length ys1 ->
     NoDup ws ->
     (forall w, In w ws -> G1 w = None) ->
+    (forall w, In w ws -> ~ ProgBoundName P w) ->
     NEval_left F (hupd_list (hupd G1 x' (BExpr (ECon c1 ws))) ws (map (fun w => BExpr (EVar w)) ws))
            (rename_b (zipsubst ys1 ws) body1)
            G2 v ->
@@ -105,11 +138,11 @@ Proof.
     | F0 G z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c args
-    | F0 G G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z e0 k v HzFresh Hrec IH
+    | F0 G G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z e0 k v HzFresh Hnb Hrec IH
     | F0 G x1 y1 G1 v Hrec IH
     | F0 G z c zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ].
   - apply N_VarCons. exact Hz.
   - apply N_VarSelf. exact Hz.
@@ -138,11 +171,11 @@ Proof.
     | F0 G z e0 G1 v0 HnF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c args
-    | F0 G G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z e0 k v HzFresh Hrec IH
+    | F0 G G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z e0 k v HzFresh Hnb Hrec IH
     | F0 G x1 y1 G1 v Hrec IH
     | F0 G z c zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros Gam2 Heq.
   - exists Gam2. split; [apply NL_VarCons; rewrite Heq; exact Hz | intro w; apply Heq].
   - exists Gam2. split; [apply NL_VarSelf; rewrite Heq; exact Hz | intro w; apply Heq].
@@ -158,13 +191,13 @@ Proof.
   - exists Gam2. split; [apply NL_ValCon | intro w; apply Heq].
   - destruct (IH Gam2 Heq) as [G2' [HNE2 Heq2]].
     exists G2'. split; [ | exact Heq2].
-    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact HNE2].
+    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact Hnb | exact HNE2].
     intros w Hw. rewrite Heq. exact (Hfresh w Hw).
   - assert (Heq' : forall w, hupd Gam2 z (let_content z e0) w = hupd G z (let_content z e0) w).
     { intro w; unfold hupd; destruct (Nat.eqb w z); [reflexivity | apply Heq]. }
     destruct (IH (hupd Gam2 z (let_content z e0)) Heq') as [G2' [HNE2 Heq2]].
     exists G2'. split; [ | exact Heq2].
-    apply NL_Let; [rewrite Heq; exact HzFresh | exact HNE2].
+    apply NL_Let; [rewrite Heq; exact HzFresh | exact Hnb | exact HNE2].
   - destruct (IH Gam2 Heq) as [G2' [HNE2 Heq2]].
     exists G2'. split; [eapply NL_Or; exact HNE2 | exact Heq2].
   - destruct (IH1 Gam2 Heq) as [G1' [HNE1 Heq1]].
@@ -181,7 +214,7 @@ Proof.
       by (apply hupd_list_pointwise; exact Heq'0).
     destruct (IH2 _ Heq') as [G2' [HNE2 Heq2]].
     exists G2'. split; [ | exact Heq2].
-    eapply NL_Guess; [exact HNE1 | exact Hhd | exact Hlen | exact HND | | exact HNE2].
+    eapply NL_Guess; [exact HNE1 | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNE2].
     intros w Hw. rewrite Heq1. exact (Hfr w Hw).
 Qed.
 
@@ -206,11 +239,11 @@ Proof.
     | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G0
     | F0 G0 c args
-    | F0 G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G0 G1 z e0 k v1 HzFresh Hrec IH
+    | F0 G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v1 HzFresh Hnb Hrec IH
     | F0 G0 x1 y1 G1 v1 Hrec IH
     | F0 G0 z c zs brs ys body G1 v1 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v1 ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v1 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros y Ht; try discriminate Ht.
   - injection Ht as Ht; subst z.
     left. split; [exact Hz | split; [reflexivity | exists c, args; reflexivity]].
@@ -235,7 +268,7 @@ Lemma NEval_left_bcase_shape :
   (exists x' G1 c1 ys1 body1 ws,
      NEval_left P F Gam (BExpr (EVar x)) G1 (BExpr (EVar x')) /\
      hd_error brs = Some (c1, ys1, body1) /\ length ws = length ys1 /\ NoDup ws /\
-     (forall w, In w ws -> G1 w = None) /\
+     (forall w, In w ws -> G1 w = None) /\ (forall w, In w ws -> ~ ProgBoundName P w) /\
      NEval_left P F (hupd_list (hupd G1 x' (BExpr (ECon c1 ws))) ws (map (fun w => BExpr (EVar w)) ws))
            (rename_b (zipsubst ys1 ws) body1) G' v).
 Proof.
@@ -249,11 +282,11 @@ Proof.
     | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G0
     | F0 G0 c args
-    | F0 G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G0 G1 z e0 k v1 HzFresh Hrec IH
+    | F0 G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v1 HzFresh Hnb Hrec IH
     | F0 G0 x1 y1 G1 v1 Hrec IH
     | F0 G0 z c zs brs0 ys body G1 v1 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G0 z G1 z' c1 ys1 body1 brs0 G2 v1 ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs0 G2 v1 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros x brs Ht; try discriminate Ht.
   - injection Ht as Ht1 Ht2. subst z brs0.
     left. exists c, zs, ys, body, G1.
@@ -261,7 +294,7 @@ Proof.
   - injection Ht as Ht1 Ht2. subst z brs0.
     right. exists z', G1, c1, ys1, body1, ws.
     split; [exact Hrec1 | split; [exact Hhd | split; [exact Hlen | split; [exact HND |
-      split; [exact Hfr | exact Hrec2]]]]].
+      split; [exact Hfr | split; [exact Hnb | exact Hrec2]]]]]].
 Qed.
 
 (* Forcing a variable always memoizes ITS OWN slot to the result, whichever  *)
@@ -828,11 +861,11 @@ Proof.
     | F0 G0 z e0 G1 v0 HnF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G0
     | F0 G0 c args
-    | F0 G0 G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G0 G1 z e0 k v HzFresh Hrec IH
+    | F0 G0 G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v HzFresh Hnb Hrec IH
     | F0 G0 x1 y1 G1 v Hrec IH
     | F0 G0 z c zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G0 z G1 z'0 c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G0 z G1 z'0 c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros z' Ht; try discriminate Ht.
   - injection Ht as Ht; subst z. exact Hz.
   - injection Ht as Ht; subst z. unfold hupd. rewrite Nat.eqb_refl. reflexivity.
@@ -859,11 +892,11 @@ Proof.
     | F0 G z e0 G1 v0 HnF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c0 args0
-    | F0 G G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z e0 k v HzFresh Hrec IH
+    | F0 G G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z e0 k v HzFresh Hnb Hrec IH
     | F0 G x1 y1 G1 v Hrec IH
     | F0 G z c0 zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros w c cargs Hw.
   - exact Hw.
   - exact Hw.
@@ -914,11 +947,11 @@ Proof.
     | F0 G z e0 G1 v0 HnF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c0 args0
-    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z e0 k v HzFresh Hrec IH
+    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z e0 k v HzFresh Hnb Hrec IH
     | F0 G x1 y1 G1 v Hrec IH
     | F0 G z c0 zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros Hgx Hgy.
   - split; [exact Hgx | exact Hgy].
   - split; [exact Hgx | exact Hgy].
@@ -1005,11 +1038,11 @@ Proof.
     | F0 G z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c args
-    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z e0 k v HzFresh Hrec IH
+    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z e0 k v HzFresh Hnb Hrec IH
     | F0 G x1 y1 G1 v Hrec IH
     | F0 G z c zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros F2 Hsub.
   - apply NL_VarCons. exact Hz.
   - apply NL_VarSelf. exact Hz.
@@ -1023,11 +1056,11 @@ Proof.
     + apply IH. intros w [Heq | Hin]; [left; exact Heq | right; apply Hsub; exact Hin].
   - apply NL_ValFree.
   - apply NL_ValCon.
-  - eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact Hfresh | apply IH; exact Hsub].
-  - apply NL_Let; [exact HzFresh | apply IH; exact Hsub].
+  - eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact Hfresh | exact Hnb | apply IH; exact Hsub].
+  - apply NL_Let; [exact HzFresh | exact Hnb | apply IH; exact Hsub].
   - eapply NL_Or; apply IH; exact Hsub.
   - eapply NL_Select; [apply IH1; exact Hsub | exact HIn | exact Hlen | apply IH2; exact Hsub].
-  - eapply NL_Guess; [apply IH1; exact Hsub | exact Hhd | exact Hlen | exact HND | exact Hfr | apply IH2; exact Hsub].
+  - eapply NL_Guess; [apply IH1; exact Hsub | exact Hhd | exact Hlen | exact HND | exact Hfr | exact Hnb | apply IH2; exact Hsub].
 Qed.
 
 Lemma NEval_left_F_perm :
@@ -1043,11 +1076,11 @@ Proof.
     | F0 G z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c args
-    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z e0 k v HzFresh Hrec IH
+    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z e0 k v HzFresh Hnb Hrec IH
     | F0 G x1 y1 G1 v Hrec IH
     | F0 G z c zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros F2 Hperm.
   - apply NL_VarCons. exact Hz.
   - apply NL_VarSelf. exact Hz.
@@ -1063,11 +1096,11 @@ Proof.
       * intros [Heq | Hin]; [left; exact Heq | right; apply (Hperm w); exact Hin].
   - apply NL_ValFree.
   - apply NL_ValCon.
-  - eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact Hfresh | apply IH; exact Hperm].
-  - apply NL_Let; [exact HzFresh | apply IH; exact Hperm].
+  - eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact Hfresh | exact Hnb | apply IH; exact Hperm].
+  - apply NL_Let; [exact HzFresh | exact Hnb | apply IH; exact Hperm].
   - eapply NL_Or; apply IH; exact Hperm.
   - eapply NL_Select; [apply IH1; exact Hperm | exact HIn | exact Hlen | apply IH2; exact Hperm].
-  - eapply NL_Guess; [apply IH1; exact Hperm | exact Hhd | exact Hlen | exact HND | exact Hfr | apply IH2; exact Hperm].
+  - eapply NL_Guess; [apply IH1; exact Hperm | exact Hhd | exact Hlen | exact HND | exact Hfr | exact Hnb | apply IH2; exact Hperm].
 Qed.
 
 Lemma NEval_left_alias_frozen :
@@ -1087,11 +1120,11 @@ Proof.
     | F0 G z e1 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c0 args0
-    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z e1 k v HzFresh Hrec IH
+    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z e1 k v HzFresh Hnb Hrec IH
     | F0 G x1 y1 G1 v Hrec IH
     | F0 G z c0 zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros HyF Hgx Hgy.
   - assert (Hzx : z <> x) by (intro Heq; subst z; rewrite Hz in Hgx; discriminate Hgx).
     assert (Hzy : z <> y) by (intro Heq; subst z; rewrite Hz in Hgy; injection Hgy as Hgy; subst e0y; exact (Hey1 c0 args0 eq_refl)).
@@ -1180,11 +1213,11 @@ Proof.
     | F0 G z e1 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c0 args0
-    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z e1 k v HzFresh Hrec IH
+    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z e1 k v HzFresh Hnb Hrec IH
     | F0 G x1 y1 G1 v Hrec IH
     | F0 G z c0 zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros HyF Hgx Hgy.
   - apply NL_VarCons. exact Hz.
   - apply NL_VarSelf. exact Hz.
@@ -1223,7 +1256,7 @@ Proof.
            ++ exact (IH HyF' Hgx Hgy).
   - apply NL_ValFree.
   - apply NL_ValCon.
-  - eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact Hfresh | ].
+  - eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact Hfresh | exact Hnb | ].
     exact (IH HyF Hgx Hgy).
   - assert (Hzx : z <> x) by (intro Heq; subst z; rewrite HzFresh in Hgx; discriminate Hgx).
     assert (Hzy : z <> y) by (intro Heq; subst z; rewrite HzFresh in Hgy; discriminate Hgy).
@@ -1231,7 +1264,7 @@ Proof.
       by (rewrite (hupd_neq G z (let_content z e1) x (not_eq_sym Hzx)); exact Hgx).
     assert (Hgy2 : hupd G z (let_content z e1) y = Some e0y)
       by (rewrite (hupd_neq G z (let_content z e1) y (not_eq_sym Hzy)); exact Hgy).
-    apply NL_Let; [exact HzFresh | exact (IH HyF Hgx2 Hgy2)].
+    apply NL_Let; [exact HzFresh | exact Hnb | exact (IH HyF Hgx2 Hgy2)].
   - eapply NL_Or; exact (IH HyF Hgx Hgy).
   - destruct (NEval_left_alias_frozen P x y Hxy e0y Hey1 Hey2 Hey3 F0 G (BExpr (EVar z)) G1 (BExpr (ECon c0 zs)) Hrec1 HyF Hgx Hgy)
       as [IH1x IH1y].
@@ -1254,7 +1287,7 @@ Proof.
     assert (Hgy3 : hupd_list (hupd G1 z' (BExpr (ECon c1 ws))) ws (map (fun w => BExpr (EVar w)) ws) y
                      = Some e0y).
     { rewrite hupd_list_notin by exact Hynotin. rewrite (hupd_neq G1 z' (BExpr (ECon c1 ws)) y Hyz'). exact IH1y. }
-    eapply NL_Guess; [exact (IH1 HyF Hgx Hgy) | exact Hhd | exact Hlen | exact HND | exact Hfr | exact (IH2 HyF Hgx3 Hgy3)].
+    eapply NL_Guess; [exact (IH1 HyF Hgx Hgy) | exact Hhd | exact Hlen | exact HND | exact Hfr | exact Hnb | exact (IH2 HyF Hgx3 Hgy3)].
 Qed.
 
 Lemma NEval_left_alias_weaken_force_y :
@@ -1378,11 +1411,11 @@ Proof.
     | F0 G z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c0 args0
-    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z e0 k v HzFresh Hrec IH
+    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z e0 k v HzFresh Hnb Hrec IH
     | F0 G x1 y1 G1 v Hrec IH
     | F0 G z c0 zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros Hgx Hgy.
   - destruct (Nat.eq_dec z x) as [Heq | Hne].
     + subst z.
@@ -1441,7 +1474,7 @@ Proof.
     + intro w; reflexivity.
   - destruct (IH Hgx Hgy) as [G1' [HNE' Heq']].
     exists G1'. split.
-    + eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact HNE'].
+    + eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact Hnb | exact HNE'].
       intros y0 Hy0.
       assert (Hne : s y0 <> x).
       { intro Heq. specialize (Hfresh y0 Hy0). rewrite Heq in Hfresh.
@@ -1467,6 +1500,7 @@ Proof.
     exists G2''. split.
     + apply NL_Let.
       * rewrite (hupd_neq G x (BExpr (ECon c args)) z Hzx). exact HzFresh.
+      * exact Hnb.
       * exact HNE2''.
     + intro w. rewrite (Heq2'' w). exact (Heq' w).
   - destruct (IH Hgx Hgy) as [G1' [HNE' Heq']].
@@ -1524,7 +1558,7 @@ Proof.
                 Hcong)
       as [G2'' [HNE2'' Heq2'']].
     exists G2''. split.
-    + eapply NL_Guess; [exact HNE1' | exact Hhd | exact Hlen | exact HND | | exact HNE2''].
+    + eapply NL_Guess; [exact HNE1' | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNE2''].
       intros w Hw.
       destruct (Nat.eq_dec w x) as [Heqwx | Hnewx].
       * subst w. exfalso. exact (Hxnotin Hw).
@@ -1577,11 +1611,11 @@ Proof.
     | F0 G z0 e0 G1 v0 Hz0F Hz0 Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c0 args0
-    | F0 G G1 f args1 ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z0 e0 k v1 Hz0Fresh Hrec IH
+    | F0 G G1 f args1 ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z0 e0 k v1 Hz0Fresh Hnb Hrec IH
     | F0 G x1 y1 G1 v1 Hrec IH
     | F0 G z0 c0 zs brs ys body G1 v1 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z0 G1 z' c1 ys1 body1 brs G2 v1 ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z0 G1 z' c1 ys1 body1 brs G2 v1 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros Hgx Hgz.
   - (* NL_VarCons *)
     destruct (Nat.eq_dec z0 x) as [Heq | Hne].
@@ -1652,7 +1686,7 @@ Proof.
   - (* NL_Fun *)
     destruct (IH HxF Hgx Hgz) as [G1' [HNE' [Hptw Hdisj]]].
     exists G1'. split.
-    + eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact HNE'].
+    + eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact Hnb | exact HNE'].
       intros y0 Hy0.
       assert (Hne : s y0 <> x).
       { intro Heq. specialize (Hfresh y0 Hy0). rewrite Heq in Hfresh. rewrite Hgx in Hfresh. discriminate Hfresh. }
@@ -1676,6 +1710,7 @@ Proof.
     exists G2''. split.
     + apply NL_Let.
       * rewrite (hupd_neq G x (BExpr (EVar z)) z0 Hzx0). exact Hz0Fresh.
+      * exact Hnb.
       * exact HNE2''.
     + split.
       * intros w Hw. rewrite (Heq2'' w). exact (Hptw w Hw).
@@ -1781,7 +1816,7 @@ Proof.
                   Hcong)
         as [G2'' [HNE2'' Heq2'']].
       exists G2''. split.
-      * eapply NL_Guess; [exact HNE1' | exact Hhd | exact Hlen | exact HND | | exact HNE2''].
+      * eapply NL_Guess; [exact HNE1' | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNE2''].
         intros w Hw.
         destruct (Nat.eq_dec w x) as [Heqwx | Hnewx].
         -- subst w. exfalso. exact (Hxnotin Hw).
@@ -1864,7 +1899,7 @@ Proof.
                   (fun w => eq_sym (HcombW w)))
         as [G2'' [HNE2'' Heq2'']].
       exists G2''. split.
-      * eapply NL_Guess; [exact HNE1' | exact Hhd | exact Hlen | exact HND | | exact HNE2''].
+      * eapply NL_Guess; [exact HNE1' | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNE2''].
         intros w Hw.
         destruct (Nat.eq_dec w x) as [Heqwx | Hnewx].
         -- subst w. exfalso. exact (Hxnotin Hw).
@@ -1969,11 +2004,11 @@ Proof.
     | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G0
     | F0 G0 c args
-    | F0 G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G0 G1 z e0 k v1 HzFresh Hrec IH
+    | F0 G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v1 HzFresh Hnb Hrec IH
     | F0 G0 x1 y1 G1 v1 Hrec IH
     | F0 G0 z c zs brs ys body G1 v1 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G0 z G1 z' c1' ys1 body1 brs G2 v1 ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G0 z G1 z' c1' ys1 body1 brs G2 v1 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros y Ht z1 c1 args1 Hcl1 Hz1; try discriminate Ht.
   - injection Ht as Ht; subst z.
     assert (HCEy : CorrE G y (BExpr (ECon c args))) by (eapply HeapCorr_Gam_CorrE; [exact HGam | exact Hz]).
@@ -2814,11 +2849,11 @@ Proof.
     | F0 G z e1 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c0 args0
-    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z e1 k v HzFresh Hrec IH
+    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z e1 k v HzFresh Hnb Hrec IH
     | F0 G x1 y1 G1 v Hrec IH
     | F0 G z c0 zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros HxF Hgx.
   - assert (Hzx : z <> x).
     { intro Heq; subst z. assert (Hexeq : ex = BExpr (ECon c0 args0)) by congruence. exact (Hex1 c0 args0 Hexeq). }
@@ -3132,6 +3167,7 @@ Lemma NEval_left_fwd_transfer_fwdhere_free :
     NEval_left P nil Gam (BExpr (EVar y)) Gmid (BExpr (EVar x')) ->
     hd_error brs = Some (c1, ys1, body1) -> length ws = length ys1 -> NoDup ws ->
     (forall w, In w ws -> Gmid w = None) ->
+    (forall w, In w ws -> ~ ProgBoundName P w) ->
     NEval_left P nil (hupd_list (hupd Gmid x' (BExpr (ECon c1 ws))) ws (map (fun w => BExpr (EVar w)) ws))
                (rename_b (zipsubst ys1 ws) body1) Gam' v' ->
   exists Gam'', NEval_left P nil Gam (BCase x brs) Gam'' v' /\
@@ -3139,7 +3175,7 @@ Lemma NEval_left_fwd_transfer_fwdhere_free :
                   (x' <> y -> ContractLoc G1 y x') ->
                   HeapCorr2 G1 Gam' -> HeapCorr G1 Gam'').
 Proof.
-  intros P G Gam HGam x y HGx Hxy Hb brs x' c1 ys1 body1 ws Gmid Gam' v' Hrec1 Hhd Hlen HND Hfr Hrec2.
+  intros P G Gam HGam x y HGx Hxy Hb brs x' c1 ys1 body1 ws Gmid Gam' v' Hrec1 Hhd Hlen HND Hfr Hnb Hrec2.
   destruct (NEval_left_evar_shape P nil Gam y Gmid (BExpr (EVar x')) Hrec1) as
     [ [Hcase1 [HeqGmid [c'' [args'' Heqv]]]]
     | [ [Hcase2 [HeqGmid Heqv]]
@@ -3179,7 +3215,7 @@ Proof.
                 Heq)
       as [Gam2 [HNE2 HeqGam2]].
     exists Gam2. split.
-    + eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact HNE2].
+    + eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNE2].
       intros w Hin.
       assert (Hwx : x <> w) by (intro Heqxw; subst w; rewrite (Hfr x Hin) in Hb; discriminate Hb).
       rewrite (hupd_neq Gam x (BExpr (EVar y)) w (not_eq_sym Hwx)). exact (Hfr w Hin).
@@ -3226,7 +3262,7 @@ Proof.
                 Heq)
       as [Gam2 [HNE2 HeqGam2]].
     exists Gam2. split.
-    + eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact HNE2].
+    + eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNE2].
       intros w Hin.
       assert (Hwy : y <> w).
       { intro Heqyw; subst w. assert (Hfry := Hfr y Hin).
@@ -3299,7 +3335,7 @@ Proof.
                      (map (fun w0 => BExpr (EVar w0)) ws))
                   Heq) as [Gam2 [HNE2 HeqGam2]].
       exists Gam2. split.
-      * eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact HNE2].
+      * eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNE2].
         intros w Hin.
         assert (Hwx : x <> w).
         { intro Heqxw; subst w. assert (Hfrw := Hfr x Hin). rewrite Hgmidx in Hfrw. discriminate Hfrw. }
@@ -3444,7 +3480,7 @@ Proof.
          (see HeapCorr's own comment above for why plain CorrE has no room
          for that shape here). *)
       exists Gam2raw. split.
-      * eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact HNEtarget].
+      * eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNEtarget].
         intros w Hin.
         assert (Hwx : x <> w) by (intro Heqxw; subst w; exact (Hxnotinws Hin)).
         rewrite (hupd_neq Gmid x (BExpr (EVar x')) w (not_eq_sym Hwx)). exact (Hfr w Hin).
@@ -3630,7 +3666,7 @@ Proof.
   intros P G Gam HGam x y HGx F0 HxF0 HyF0 brs Gam' v' H.
   destruct (NEval_left_bcase_shape P F0 Gam y brs Gam' v' H) as
     [ [c [zs [ys [body [Gmid [Hrec1 [HIn [Hlen Hrec2]]]]]]]]
-    | [x' [Gmid [c1' [ys1 [body1 [ws [Hrec1 [Hhd [Hlen [HND [Hfr Hrec2]]]]]]]]]]] ].
+    | [x' [Gmid [c1' [ys1 [body1 [ws [Hrec1 [Hhd [Hlen [HND [Hfr [Hnb Hrec2]]]]]]]]]]]] ].
   - assert (HGamx := proj1 HGam x). rewrite HGx in HGamx.
     destruct HGamx as [b [Hb HCEx]].
     destruct (CorrE_forced_shape G x b HCEx) as
@@ -3731,7 +3767,13 @@ Proof.
     assert (HfreshGam : forall y0, ~ In y0 ps -> Gam (s y0) = None).
     { intros y0 Hin. specialize (Hfresh y0 Hin). specialize (proj1 HGam (s y0)) as HGamsy0.
       rewrite Hfresh in HGamsy0. exact HGamsy0. }
-    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | ].
+    (* NEW GAP (global-freshness strengthening, THEOREM2_PROCESS_NOTES.md
+       Sec.51): GEval's own G_Fun carries no ProgBoundName fact about `s` at
+       all -- this cross-relation lemma (already Admitted before this
+       session, see its own G_CaseFun case below) has no way to derive one
+       from anything currently proven. Genuinely new admit, not a
+       regression: this lemma was already incomplete. *)
+    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | admit | ].
     exact (Hplug F0 Gamk vk Hforce).
   - (* G_Let *)
     intros Gam HGam HWF x Hxdom Hxeq.
@@ -3752,7 +3794,9 @@ Proof.
     + intros F0 Gamk vk Hforce.
       assert (HGamx0 : Gam x0 = None)
         by (specialize (proj1 HGam x0) as HGamx0'; rewrite HxFresh in HGamx0'; exact HGamx0').
-      apply NL_Let; [exact HGamx0 | exact (Hplug F0 Gamk vk Hforce)].
+      (* NEW GAP, same reason as the G_Fun case above: GEval's G_Let carries
+         no ProgBoundName fact about x0. *)
+      apply NL_Let; [exact HGamx0 | admit | exact (Hplug F0 Gamk vk Hforce)].
   - (* G_CaseFwd: body cases on something before reaching y -- not yet handled *)
     admit.
   - (* G_CaseFun: body cases (via ANOTHER unevaluated call) before reaching y -- not yet handled *)
@@ -3810,7 +3854,9 @@ Proof.
     assert (HfreshGam : forall y0, ~ In y0 ps -> Gam (s y0) = None).
     { intros y0 Hin. specialize (Hfresh y0 Hin). specialize (proj1 HGam (s y0)) as HGamsy0.
       rewrite Hfresh in HGamsy0. exact HGamsy0. }
-    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | exact HNE].
+    (* NEW GAP (global-freshness strengthening): GEval's G_Fun carries no
+       ProgBoundName fact about s. *)
+    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | admit | exact HNE].
   - (* G_Let *)
     intros Gam HGam HWF x Hxdom Hxeq F0.
     assert (Hxz : x <> x0).
@@ -3829,7 +3875,8 @@ Proof.
     + rewrite Hgx1. rewrite (hupd_neq Gam x0 (let_content x0 e0) x Hxz). reflexivity.
     + assert (HGamx0 : Gam x0 = None)
         by (specialize (proj1 HGam x0) as HGamx0'; rewrite HxFresh in HGamx0'; exact HGamx0').
-      apply NL_Let; [exact HGamx0 | exact HNE].
+      (* NEW GAP, same reason: GEval's G_Let carries no ProgBoundName fact. *)
+      apply NL_Let; [exact HGamx0 | admit | exact HNE].
   - (* G_CaseFwd: not yet handled, see NEval_left_let_chain_to_fwd's own scope note *)
     admit.
   - (* G_CaseFun: not yet handled *)
@@ -3872,7 +3919,7 @@ Proof.
   intros P G Gam HGam x y HGx brs Gam' v' H.
   destruct (NEval_left_bcase_shape P nil Gam y brs Gam' v' H) as
     [ [c [zs [ys [body [Gmid [Hrec1 [HIn [Hlen Hrec2]]]]]]]]
-    | [x' [Gmid [c1' [ys1 [body1 [ws [Hrec1 [Hhd [Hlen [HND [Hfr Hrec2]]]]]]]]]]] ].
+    | [x' [Gmid [c1' [ys1 [body1 [ws [Hrec1 [Hhd [Hlen [HND [Hfr [Hnb Hrec2]]]]]]]]]]]] ].
   - assert (HGamx := proj1 HGam x). rewrite HGx in HGamx.
     destruct HGamx as [b [Hb HCEx]].
     destruct (CorrE_forced_shape G x b HCEx) as
@@ -3912,7 +3959,7 @@ Proof.
         rewrite Hz in Hgy. injection Hgy as Hgy. exact (Hne1 c zs Hgy).
   - destruct (Nat.eq_dec x y) as [Heqxy | Hxy].
     + subst y. exists Gam'. split.
-      * eapply NL_Guess; [exact Hrec1 | exact Hhd | exact Hlen | exact HND | exact Hfr | exact Hrec2].
+      * eapply NL_Guess; [exact Hrec1 | exact Hhd | exact Hlen | exact HND | exact Hfr | exact Hnb | exact Hrec2].
       * intros G1 _ _ HHC. apply HeapCorr2_to_HeapCorr. exact HHC.
     + assert (HGamx := proj1 HGam x). rewrite HGx in HGamx.
       destruct HGamx as [b [Hb HCEx]].
@@ -3928,7 +3975,7 @@ Proof.
         try (rewrite HGx in Hgx; discriminate Hgx).
       * rewrite HGx in Hgx. injection Hgx as Hgx. subst y0. subst b.
         destruct (NEval_left_fwd_transfer_fwdhere_free P G Gam HGam x y HGx Hxy Hb
-                 brs x' c1' ys1 body1 ws Gmid Gam' v' Hrec1 Hhd Hlen HND Hfr Hrec2) as [Gam'' [HNE HTrans]].
+                 brs x' c1' ys1 body1 ws Gmid Gam' v' Hrec1 Hhd Hlen HND Hfr Hnb Hrec2) as [Gam'' [HNE HTrans]].
         exists Gam''. split.
         -- exact HNE.
         -- intros G1 HG1x Hxfwd_general HHC2.
@@ -4307,11 +4354,11 @@ Proof.
     | F0 G z e1 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G
     | F0 G c0 args0
-    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G G1 z e1 k v HzFresh Hrec IH
+    | F0 G G1 f args1 ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G G1 z e1 k v HzFresh Hnb Hrec IH
     | F0 G x1 y1 G1 v Hrec IH
     | F0 G z c0 zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G z G1 z' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros HxF Hgx Gam2 Heq Hgx2.
   - assert (Hzx : z <> x).
     { intro Heq'; subst z. assert (Hexeq : ex = BExpr (ECon c0 args0)) by congruence. exact (Hex1 c0 args0 Hexeq). }
@@ -4345,7 +4392,7 @@ Proof.
   - exists Gam2. split; [apply NL_ValCon | intros w Hwx; exact (Heq w Hwx)].
   - destruct (IH HxF Hgx Gam2 Heq Hgx2) as [G2' [HNE2 Heq2]].
     exists G2'. split.
-    + eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact HNE2].
+    + eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact Hnb | exact HNE2].
       intros y0 Hy0.
       assert (Hsyx : s y0 <> x).
       { intro Heqsy. specialize (Hfresh y0 Hy0). rewrite Heqsy in Hfresh. rewrite Hgx in Hfresh. discriminate Hfresh. }
@@ -4360,7 +4407,7 @@ Proof.
       by (rewrite (hupd_neq Gam2 z (let_content z e1) x (not_eq_sym Hzx)); exact Hgx2).
     destruct (IH HxF Hgx' (hupd Gam2 z (let_content z e1)) Heq' Hgx2') as [G2' [HNE2 Heq2]].
     exists G2'. split.
-    + apply NL_Let; [rewrite (Heq z Hzx); exact HzFresh | exact HNE2].
+    + apply NL_Let; [rewrite (Heq z Hzx); exact HzFresh | exact Hnb | exact HNE2].
     + exact Heq2.
   - destruct (IH HxF Hgx Gam2 Heq Hgx2) as [G2' [HNE2 Heq2]].
     exists G2'. split; [eapply NL_Or; exact HNE2 | exact Heq2].
@@ -4398,7 +4445,7 @@ Proof.
     { rewrite hupd_list_notin by exact Hxnotin. rewrite (hupd_neq G1' z' (BExpr (ECon c1 ws)) x Hxz'). exact HG1x'. }
     destruct (IH2 HxF Hgx3 _ Heq1' Hgx3') as [G2' [HNE2 Heq2]].
     exists G2'. split.
-    + eapply NL_Guess; [exact HNE1 | exact Hhd | exact Hlen | exact HND | | exact HNE2].
+    + eapply NL_Guess; [exact HNE1 | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNE2].
       intros w Hw.
       destruct (Nat.eq_dec w x) as [Heqwx | Hnewx].
       * subst w. exfalso. exact (Hxnotin Hw).
@@ -4478,7 +4525,7 @@ Proof.
   intros P x y z Hxy brs Gam Gam1 v H Hgx Gam2 Heq Hgx2.
   destruct (NEval_left_bcase_shape P nil Gam x brs Gam1 v H) as
     [ [c [zs [ys [body [Gmid [Hforce [HIn [Hlen Hbody]]]]]]]]
-    | [x' [Gmid [c1 [ys1 [body1 [ws [Hforce [Hhd [Hlenws [HNDws [Hfrws Hbodyguess]]]]]]]]]]] ].
+    | [x' [Gmid [c1 [ys1 [body1 [ws [Hforce [Hhd [Hlenws [HNDws [Hfrws [Hnbws Hbodyguess]]]]]]]]]]]] ].
   - destruct (NEval_left_choice_as_alias_force P x y z Hxy Gam Gmid (BExpr (ECon c zs)) Hforce Hgx Gam2 Heq Hgx2)
       as [Gmid' [Hforce' Heqmid]].
     destruct (NEval_left_pointwise_heap P nil Gmid (rename_b (zipsubst ys zs) body) Gam1 v Hbody Gmid' Heqmid)
@@ -4497,7 +4544,7 @@ Proof.
                 (rename_b (zipsubst ys1 ws) body1) Gam1 v Hbodyguess _ Heqguessheap)
       as [Gam1' [Hbodyguess' Heqfinal]].
     exists Gam1'. split.
-    + eapply NL_Guess; [exact Hforce' | exact Hhd | exact Hlenws | exact HNDws | | exact Hbodyguess'].
+    + eapply NL_Guess; [exact Hforce' | exact Hhd | exact Hlenws | exact HNDws | | exact Hnbws | exact Hbodyguess'].
       intros w Hw. rewrite (Heqmid w). exact (Hfrws w Hw).
     + exact Heqfinal.
 Qed.
@@ -5276,7 +5323,7 @@ Proof.
   destruct (IH c args Hcorr (hupd Gam x (BExpr (EVar y))) HGam_mid) as [Gam1 [HNE1 HHC1]].
   destruct (NEval_left_bcase_shape P nil (hupd Gam x (BExpr (EVar y))) y brs Gam1 (BExpr (ECon c args)) HNE1) as
     [ [c0 [zs [ys [body [Gmid' [Hrec1 [HIn [Hlen Hrec2]]]]]]]]
-    | [x' [Gmid' [c1' [ys1 [body1 [ws [Hrec1 [Hhd [Hlen [HND [Hfr Hrec2]]]]]]]]]]] ].
+    | [x' [Gmid' [c1' [ys1 [body1 [ws [Hrec1 [Hhd [Hlen [HND [Hfr [Hnb Hrec2]]]]]]]]]]]] ].
   - (* Nat-Select : y forces (from Gam_mid) to a constructor c0 zs *)
     assert (Hgmidx : hupd Gam x (BExpr (EVar y)) x = Some (BExpr (EVar y)))
       by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
@@ -5620,7 +5667,7 @@ Proof.
       destruct (NEval_left_bcase_shape P nil (hupd Gam1 x (BExpr (ECon c0 zs0))) x brs Gam2
                   (BExpr (ECon c args')) HNE2) as
         [ [c1 [zs1 [ys1 [body1 [Gmid1 [Hrec1' [HIn1 [Hlen1 Hrec2']]]]]]]]
-        | [x' [Gmid1 [c1' [ys1' [body1' [ws [Hrec1' [Hhd1 [Hlen1' [HND1 [Hfr1 Hrec2']]]]]]]]]]] ].
+        | [x' [Gmid1 [c1' [ys1' [body1' [ws [Hrec1' [Hhd1 [Hlen1' [HND1 [Hfr1 [Hnb1 Hrec2']]]]]]]]]]]] ].
       * destruct (NEval_left_evar_shape P nil (hupd Gam1 x (BExpr (ECon c0 zs0))) x Gmid1
                     (BExpr (ECon c1 zs1)) Hrec1') as
           [ [Hcase1 [HeqGmid _]]
@@ -5660,7 +5707,7 @@ Proof.
     destruct (NEval_left_bcase_shape P nil (hupd Gam1' x (BExpr (EVar y))) x brs Gam2_res
                 (BExpr (ECon c args')) HNE2_res) as
       [ [c0 [zs0 [ys0 [body0 [Gmid'' [Hrec1'' [HIn'' [Hlen'' Hrec2'']]]]]]]]
-      | [x' [Gmid'' [c1' [ys1' [body1' [ws [Hrec1'' [Hhd'' [Hlen1' [HND'' [Hfr'' Hrec2'']]]]]]]]]]] ].
+      | [x' [Gmid'' [c1' [ys1' [body1' [ws [Hrec1'' [Hhd'' [Hlen1' [HND'' [Hfr'' [Hnb'' Hrec2'']]]]]]]]]]]] ].
     + (* Nat-Select : x forces (from Gam_mid) via its alias to y, to a constructor c0 zs0.
          Unlike theorem2_G_CaseChoice_case (which decomposes CASING y, the deeper
          location), here bcase_shape already decomposed CASING x itself (x is what
@@ -6244,6 +6291,7 @@ Lemma HeapCorr_fwd_transfer_fwdhere_free :
     NEval_left P nil Gam (BExpr (EVar y)) Gmid (BExpr (EVar x')) ->
     hd_error brs = Some (c1, ys1, body1) -> length ws = length ys1 -> NoDup ws ->
     (forall w, In w ws -> Gmid w = None) ->
+    (forall w, In w ws -> ~ ProgBoundName P w) ->
     NEval_left P nil (hupd_list (hupd Gmid x' (BExpr (ECon c1 ws))) ws (map (fun w => BExpr (EVar w)) ws))
                (rename_b (zipsubst ys1 ws) body1) Gam' v' ->
   exists Gam'', NEval_left P nil Gam (BCase x brs) Gam'' v' /\
@@ -6251,7 +6299,7 @@ Lemma HeapCorr_fwd_transfer_fwdhere_free :
                   (x' <> y -> ContractLoc G1 y x') ->
                   HeapCorr G1 Gam' -> HeapCorr G1 Gam'').
 Proof.
-  intros P G Gam HGam x y HGx Hxy Hb brs x' c1 ys1 body1 ws Gmid Gam' v' Hrec1 Hhd Hlen HND Hfr Hrec2.
+  intros P G Gam HGam x y HGx Hxy Hb brs x' c1 ys1 body1 ws Gmid Gam' v' Hrec1 Hhd Hlen HND Hfr Hnb Hrec2.
   destruct (NEval_left_evar_shape P nil Gam y Gmid (BExpr (EVar x')) Hrec1) as
     [ [Hcase1 [HeqGmid [c'' [args'' Heqv]]]]
     | [ [Hcase2 [HeqGmid Heqv]]
@@ -6291,7 +6339,7 @@ Proof.
                 Heq)
       as [Gam2 [HNE2 HeqGam2]].
     exists Gam2. split.
-    + eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact HNE2].
+    + eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNE2].
       intros w Hin.
       assert (Hwx : x <> w) by (intro Heqxw; subst w; rewrite (Hfr x Hin) in Hb; discriminate Hb).
       rewrite (hupd_neq Gam x (BExpr (EVar y)) w (not_eq_sym Hwx)). exact (Hfr w Hin).
@@ -6338,7 +6386,7 @@ Proof.
                 Heq)
       as [Gam2 [HNE2 HeqGam2]].
     exists Gam2. split.
-    + eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact HNE2].
+    + eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNE2].
       intros w Hin.
       assert (Hwy : y <> w).
       { intro Heqyw; subst w. assert (Hfry := Hfr y Hin).
@@ -6411,7 +6459,7 @@ Proof.
                      (map (fun w0 => BExpr (EVar w0)) ws))
                   Heq) as [Gam2 [HNE2 HeqGam2]].
       exists Gam2. split.
-      * eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact HNE2].
+      * eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNE2].
         intros w Hin.
         assert (Hwx : x <> w).
         { intro Heqxw; subst w. assert (Hfrw := Hfr x Hin). rewrite Hgmidx in Hfrw. discriminate Hfrw. }
@@ -6556,7 +6604,7 @@ Proof.
          (see HeapCorr's own comment above for why plain CorrE has no room
          for that shape here). *)
       exists Gam2raw. split.
-      * eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact HNEtarget].
+      * eapply NL_Guess; [exact HforceX | exact Hhd | exact Hlen | exact HND | | exact Hnb | exact HNEtarget].
         intros w Hin.
         assert (Hwx : x <> w) by (intro Heqxw; subst w; exact (Hxnotinws Hin)).
         rewrite (hupd_neq Gmid x (BExpr (EVar x')) w (not_eq_sym Hwx)). exact (Hfr w Hin).
@@ -7414,7 +7462,9 @@ Proof.
     assert (HfreshGam : forall y0, ~ In y0 ps -> Gam (s y0) = None).
     { intros y0 Hin. specialize (Hfresh y0 Hin).
       assert (HGamsy0 := HGam (s y0)). rewrite Hfresh in HGamsy0. exact HGamsy0. }
-    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | ].
+    (* NEW GAP (global-freshness strengthening): GEval's G_Fun carries no
+       ProgBoundName fact about s. *)
+    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | admit | ].
     exact (Hplug F0 Gamk vk Hforce).
   - (* G_Let *)
     destruct HNAL as [Hne0 HNALk].
@@ -7442,7 +7492,8 @@ Proof.
     + intros F0 Gamk vk Hforce.
       assert (HGamxh : Gam xh = None)
         by (assert (HGamxh' := HGam xh); rewrite HxFresh in HGamxh'; exact HGamxh').
-      apply NL_Let; [exact HGamxh | exact (Hplug F0 Gamk vk Hforce)].
+      (* NEW GAP, same reason: GEval's G_Let carries no ProgBoundName fact. *)
+      apply NL_Let; [exact HGamxh | admit | exact (Hplug F0 Gamk vk Hforce)].
   - (* G_CaseBot: body cases on something before reaching a value -- same
        scope limit the older _to_fwd/_to_con already had; not yet handled *)
     admit.
@@ -7655,7 +7706,9 @@ Proof.
       { intros y0 Hin. specialize (Hfresh y0 Hin).
         specialize (HGam (s y0)) as HGamsy0. rewrite Hfresh in HGamsy0. exact HGamsy0. }
       exists Gam1. split.
-      * eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | exact HNE].
+      * (* NEW GAP (global-freshness strengthening): GEval's G_Fun carries no
+           ProgBoundName fact about s. *)
+        eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | admit | exact HNE].
       * exact HHC1.
     + intros x brs Hcontra. discriminate Hcontra.
   - (* G_Let *)
@@ -7677,7 +7730,8 @@ Proof.
       destruct (IH (hupd Gam x0 (let_content x0 e0)) HHCext HNVText HNALk HWText HCCext HACext) as [IH1 _].
       destruct (IH1 c args Hcorr) as [Gam' [HNE HHC]].
       exists Gam'. split.
-      * eapply NL_Let; [exact HGamx0 | exact HNE].
+      * (* NEW GAP, same reason: GEval's G_Let carries no ProgBoundName fact. *)
+        eapply NL_Let; [exact HGamx0 | admit | exact HNE].
       * exact HHC.
     + intros x brs Hcontra. discriminate Hcontra.
   - (* G_CaseBot *)
@@ -7718,7 +7772,7 @@ Proof.
       destruct (IH1 c args Hcorr) as [Gamy0 [HNEy HHCy0]].
       destruct (NEval_left_bcase_shape P nil Gam y0 brs0 Gamy0 (BExpr (ECon c args)) HNEy) as
         [ [c' [zs [ys [body [Gmid [Hforcey0 [HIn [Hlen Hbody]]]]]]]]
-        | [x' [Gmid [c1' [ys1 [body1 [ws [Hforcey0 [Hhd [Hlenws [HNDws [Hfrws Hbodyguess]]]]]]]]]]] ].
+        | [x' [Gmid [c1' [ys1 [body1 [ws [Hforcey0 [Hhd [Hlenws [HNDws [Hfrws [Hnbws Hbodyguess]]]]]]]]]]]] ].
       * (* NL_Select shape: y0's own scrutinee-forcing reaches an achieved constructor directly *)
         assert (HGamx0 := HGam x0). rewrite Hgx0 in HGamx0.
         destruct HGamx0 as [b [Hb HCE3]].
@@ -7934,7 +7988,7 @@ Proof.
               assert (Hclx' : ContractLoc G1 y0 x') by exact (IH2 y0 brs0 eq_refl nil Gmid x' Hforcey0).
               destruct (HeapCorr_fwd_transfer_fwdhere_free P G0 Gam HGam x0 y0 Hgx0 Hx0y0 Hb
                           brs0 x' c1' ys1 body1 ws Gmid Gamy0 (BExpr (ECon c args))
-                          Hforcey0 Hhd Hlenws HNDws Hfrws Hbodyguess) as [Gam'' [HNEfinal HHCtransfer]].
+                          Hforcey0 Hhd Hlenws HNDws Hfrws Hnbws Hbodyguess) as [Gam'' [HNEfinal HHCtransfer]].
               exists Gam''. split.
               { exact HNEfinal. }
               { exact (HHCtransfer G1 (GEval_fwd_permanent P G0 (BCase y0 brs0) G1 v1 Hrec x0 y0 Hgx0)
@@ -8160,7 +8214,7 @@ Proof.
            destruct (NEval_left_bcase_shape P nil (hupd Gam1 x0 (BExpr (ECon c1 args1))) x0 brs0 Gam2
                        (BExpr (ECon c args)) HNE2) as
              [ [c' [zs [ys [body [Gmid [Hforce0 [HIn [Hlen Hbody0]]]]]]]]
-             | [x' [Gmid [c1' [ys1 [body1 [ws [Hforce0 [Hhd [Hlenws [HNDws [Hfrws Hbodyguess]]]]]]]]]]] ].
+             | [x' [Gmid [c1' [ys1 [body1 [ws [Hforce0 [Hhd [Hlenws [HNDws [Hfrws [Hnbws Hbodyguess]]]]]]]]]]]] ].
            ++ destruct (NEval_left_evar_shape P nil (hupd Gam1 x0 (BExpr (ECon c1 args1))) x0 Gmid
                           (BExpr (ECon c' zs)) Hforce0) as
                 [ [Hcase1 [HeqGmid _]]
@@ -8218,7 +8272,7 @@ Proof.
         destruct (NEval_left_bcase_shape P nil (hupd Gam1 x0 (BExpr (EVar y0'))) x0 brs0 Gam2
                     (BExpr (ECon c args)) HNE2) as
           [ [c' [zs [ys [body [Gmid [Hforce0 [HIn [Hlen Hbody0]]]]]]]]
-          | [x' [Gmid [c1' [ys1 [body1 [ws [Hforce0 [Hhd [Hlenws [HNDws [Hfrws Hbodyguess]]]]]]]]]]] ].
+          | [x' [Gmid [c1' [ys1 [body1 [ws [Hforce0 [Hhd [Hlenws [HNDws [Hfrws [Hnbws Hbodyguess]]]]]]]]]]]] ].
         -- (* NL_Select shape: x0's OWN scrutinee-forcing (Hforce0) is NOT yet
               guarded, but x0's slot is EVar y0' (non-terminal), so it must be
               NL_VarExp -- inverting it directly hands back the guarded
@@ -8344,7 +8398,7 @@ Proof.
                           Heqheap2)
                 as [Gam2''' [Hbodyfinal Heqfinal2]].
               exists Gam2'''. split.
-              +++ eapply NL_Guess; [exact HforceX0 | exact Hhd | exact Hlenws | exact HNDws | | exact Hbodyfinal].
+              +++ eapply NL_Guess; [exact HforceX0 | exact Hhd | exact Hlenws | exact HNDws | | exact Hnbws | exact Hbodyfinal].
                   intros w Hw. rewrite (Heqheap w). exact (Hfrws w Hw).
               +++ eapply HeapCorr_pointwise; [exact HHC2 | exact Heqfinal2].
     + (* Second conjunct (ContractLoc-matching): e IS BCase x0 brs0 here (theorem2's
@@ -8398,7 +8452,7 @@ Proof.
       destruct (IH1 c args Hcorr) as [Gam1 [HNE HHC]].
       destruct (NEval_left_bcase_shape P nil (hupd Gam x0 (BExpr (EVar y0))) y0 brs0 Gam1 (BExpr (ECon c args)) HNE) as
         [ [c' [zs [ys [body [Gmid [Hforcey0 [HIn [Hlen Hbody]]]]]]]]
-        | [x' [Gmid [c1' [ys1 [body1 [ws [Hforcey0 [Hhd [Hlenws [HNDws [Hfrws Hbodyguess]]]]]]]]]]] ].
+        | [x' [Gmid [c1' [ys1 [body1 [ws [Hforcey0 [Hhd [Hlenws [HNDws [Hfrws [Hnbws Hbodyguess]]]]]]]]]]]] ].
       * (* NL_Select shape *)
         assert (Hex1 : forall cc argscc, BExpr (EVar y0) <> BExpr (ECon cc argscc))
           by (intros cc argscc Hcontra; discriminate Hcontra).
@@ -8480,7 +8534,7 @@ Proof.
         destruct (HeapCorr_fwd_transfer_fwdhere_free P (hupd G0 x0 (GFwd y0)) (hupd Gam x0 (BExpr (EVar y0)))
                     HGam' x0 y0 Hg0x0fwd Hx0y0 Hgamx0eq
                     brs0 x' c1' ys1 body1 ws Gmid Gam1 (BExpr (ECon c args))
-                    Hforcey0 Hhd Hlenws HNDws Hfrws Hbodyguess)
+                    Hforcey0 Hhd Hlenws HNDws Hfrws Hnbws Hbodyguess)
           as [Gam'' [HNE'' HTransfer]].
         destruct (NEval_left_choice_as_alias_bcase P x0 y0 z0 Hx0y0 brs0
                     (hupd Gam x0 (BExpr (EVar y0))) Gam'' (BExpr (ECon c args)) HNE'' Hgamx0eq
@@ -8635,12 +8689,15 @@ Proof.
                    HGam2 HNVT2 HNALbody HWF2 HCC2 HAC2) as [IH1 _].
       destruct (IH1 c args Hcorr) as [Gam1 [HNE HHC]].
       exists Gam1. split.
-      * eapply NL_Guess.
+      * (* NEW GAP (global-freshness strengthening): GEval's G_CaseConFree
+           carries no ProgBoundName fact about ws. *)
+        eapply NL_Guess.
         -- apply NL_VarSelf. exact Hbx.
         -- exact Hhd.
         -- exact Hlen.
         -- exact HND.
         -- exact HfreshGam.
+        -- admit.
         -- exact HNE.
       * exact HHC.
     + intros x brs Heqxbrs. injection Heqxbrs as Heqx Heqbrs. subst x brs.

@@ -2163,11 +2163,11 @@ Proof.
     | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G0
     | F0 G0 c args
-    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G0 G1 z e0 k v0 HzFresh Hrec IH
+    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v0 HzFresh Hnb Hrec IH
     | F0 G0 x1 y1 G1 v0 Hrec IH
     | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros w Hw.
   - exact Hw.
   - exact Hw.
@@ -2707,11 +2707,11 @@ Proof.
     | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G0
     | F0 G0 c args
-    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G0 G1 z e0 k v0 HzFresh Hrec IH
+    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v0 HzFresh Hnb Hrec IH
     | F0 G0 x1 y1 G1 v0 Hrec IH
     | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros HScoped Hclosed Heclosed.
   - (* VarCons *)
     split; [exact Hclosed | ].
@@ -2955,11 +2955,11 @@ Proof.
     | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G0
     | F0 G0 c args
-    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G0 G1 z e0 k v0 HzFresh Hrec IH
+    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v0 HzFresh Hnb Hrec IH
     | F0 G0 x1 y1 G1 v0 Hrec IH
     | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros HProg HBrsUniq HeBrsUniq.
   - (* VarCons *)
     split; [exact HBrsUniq | exact I].
@@ -3283,11 +3283,11 @@ Proof.
     | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
     | F0 G0
     | F0 G0 c args
-    | F0 G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | F0 G0 G1 z e0 k1 v1 HzFresh Hrec IH
+    | F0 G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k1 v1 HzFresh Hnb Hrec IH
     | F0 G0 x1 y1 G1 v1 Hrec IH
     | F0 G0 z c zs brs ys body G1 v1 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v1 ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v1 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
     ]; intros x e k Ht; try discriminate Ht.
   injection Ht as Htz Hte Htk; subst z e0 k1.
   split; [exact HzFresh | exact Hrec].
@@ -3545,21 +3545,18 @@ Proof.
     + apply in_or_app. right. apply in_or_app. right. apply IHbrs. exact Hin.
 Qed.
 
-(* The set of names INTRODUCED AS A BINDER anywhere in b -- the dual of
-   free_vars_b, and deliberately NOT the same as "vars_of_b minus
-   free_vars_b": x is included here even when x is ALSO free in e (e.g.
-   `let x = x + 1 in k`), since x is unambiguously a binder occurrence
-   there regardless of whether it happens to ALSO occur free. Needed for
+(* bound_vars_b used to be defined here -- the set of names INTRODUCED AS A
+   BINDER anywhere in b, the dual of free_vars_b, and deliberately NOT the
+   same as "vars_of_b minus free_vars_b": x is included even when x is ALSO
+   free in e (e.g. `let x = x + 1 in k`), since x is unambiguously a binder
+   occurrence there regardless of whether it happens to ALSO occur free.
+   RELOCATED to curry_test_leftmost.v (ahead of NEval_left's own
+   definition): NL_Let/NL_Fun/NL_Guess's new global-freshness premises
+   (THEOREM2_PROCESS_NOTES.md Sec.51) need it in ProgBoundName, and Coq
+   requires it defined before that Inductive block. Still used here for
    BlkAlpha_compose_rename's own no-shadowing hypothesis, which must rule
    OUT "this outer name is also reused as a binder somewhere inside" --
    free_vars_b/vars_of_b alone can't state that distinction. *)
-Fixpoint bound_vars_b (b : Blk) : list var :=
-  match b with
-  | BLet x e k => x :: bound_vars_b k
-  | BCase x brs =>
-      fold_right (fun p acc => match p with (c, ps, bd) => ps ++ bound_vars_b bd ++ acc end) nil brs
-  | BExpr e => nil
-  end.
 
 Lemma bound_vars_b_bcase_branch :
   forall x brs c ys bd, In (c, ys, bd) brs ->
@@ -4133,11 +4130,11 @@ Proof.
     | F0 G0 x e G1 v Hnf Hgx0 Hnc Hne Hnfr Hrec IH                       (* NL_VarExp *)
     | F0 G0                                                              (* NL_ValFree *)
     | F0 G0 c0 args0                                                     (* NL_ValCon *)
-    | F0 G0 G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh Hrec IH    (* NL_Fun *)
-    | F0 G0 G1 x e k v Hxfresh Hrec IH                                  (* NL_Let *)
+    | F0 G0 G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH    (* NL_Fun *)
+    | F0 G0 G1 x e k v Hxfresh Hnb Hrec IH                              (* NL_Let *)
     | F0 G0 x y G1 v Hrec IH                                            (* NL_Or *)
     | F0 G0 x c0 zs brs ys body G1 v G2 Hrec1 IH1 HIn Hlen Hrec2 IH2     (* NL_Select *)
-    | F0 G0 x G1 x' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlenws HND Hfresh2 Hrec2 IH2 ]
+    | F0 G0 x G1 x' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlenws HND Hfresh2 Hnb Hrec2 IH2 ]
                                                                           (* NL_Guess *)
     ; intros sigma0 tau0 Hmi0 F2 HF2eq Gam2 e2 He2 Halpha0
       HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
