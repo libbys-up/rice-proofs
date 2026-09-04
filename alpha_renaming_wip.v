@@ -13,36 +13,62 @@ Require Import curry_test_leftmost.
 (* (Require Import curry_test_leftmost, for NEval_left itself) -- fine,  *)
 (* piece 4 wires into curry_test_leftmost anyway.                        *)
 (*                                                                        *)
-(* ===== CURRENT STATUS (Sec.39 session, supersedes everything below): *)
+(* ===== CURRENT STATUS (Sec.40 session, supersedes everything below): *)
 (* NEval_left_confluence uses BlkAlpha (PIECE 7) in place of the literal   *)
 (* "e2 = rename_b sigma0 e1" hypothesis; the nine-piece pa/PaInv/          *)
 (* sigma0_TOP apparatus is GONE (Sec.36); Hcontain0 is GONE ENTIRELY       *)
-(* (Sec.39 -- turned out to be pure dead weight once splice_sigma removed  *)
-(* its only real use, fixed-point facts for a swap); and the "extends"     *)
-(* conjunct is simplified to its OWN single live disjunct, "Gam1 w<>None   *)
-(* -> sigma w = sigma0 w" (Sec.39 -- the sigma0-already-moved and Gam2-    *)
-(* defined disjuncts were NEVER actually used by any of the 11 cases,      *)
-(* confirmed by grepping every actual application, not just assumed).      *)
-(* PIECE 1a-bis: splice_sigma/splice_tau (near ext_sigma/ext_tau) extend a *)
-(* bijection by ONE new edge with NO fixed-point precondition on EITHER    *)
-(* endpoint -- a strict generalization of ext_sigma's own swap, needed     *)
-(* because NL_Let's own fresh pick can already be moved by an ancestor.    *)
-(* NHeapAlpha_splice (near NEval_left_blet_shape) is the matching heap-    *)
-(* level lemma.  Both zero admits, fully standalone.                       *)
+(* (Sec.39); and the "extends" conjunct is simplified to its OWN single    *)
+(* live disjunct, "Gam1 w<>None -> sigma w = sigma0 w" (Sec.39).           *)
 (* RESULT: 9 of 11 constructors are fully Qed'd -- VarCons, VarSelf,       *)
-(* VarFree, VarExp, ValFree, ValCon, Fun, Or, AND NOW Let.  Only TWO        *)
-(* admits remain: NL_Select, NL_Guess (mechanism understood -- BCase's own *)
-(* shape-inversion is a two-way disjunction with Guess, needing IH1 first  *)
-(* to rule out D2 picking the other shape, plus a BrsAlpha-lookup lemma    *)
-(* not yet built; NL_Guess additionally needs a BATCH version of splice    *)
-(* for its own ws list -- not yet attempted).  File compiles clean end to  *)
-(* end (`coqc`), zero unplanned admits, exactly these two.  theorem2       *)
-(* itself is UNCHANGED (still its one original admit) -- PIECE 8's own     *)
-(* wiring into curry_test_leftmost.v is still the next step, blocked on    *)
-(* Select/Guess closing first (the corollary NEval_left_self_confluence,   *)
-(* which theorem2's admit actually calls, needs NEval_left_confluence      *)
-(* fully Qed'd, not just NL_Fun's own case). See THEOREM2_PROCESS_NOTES.md *)
-(* Sec.36-39 for the full history of how this design was reached.         *)
+(* VarFree, VarExp, ValFree, ValCon, Fun, Or, Let.  Only TWO admits        *)
+(* remain: NL_Select, NL_Guess.  Sec.40 built BrsAlpha_lookup (+ an        *)
+(* index-based BrsAlpha_nth_error helper) and used it to start NL_Select,  *)
+(* which surfaced a genuinely NEW required hypothesis (not just an         *)
+(* unwritten proof): brs needs unique constructor labels, since nothing    *)
+(* ruled out D2's own shape-inversion witness and BrsAlpha_lookup's own    *)
+(* found branch being two DIFFERENT same-constructor entries.  Fixed by    *)
+(* adding BrsUniqB (a NoBareChoiceB-shaped recursive predicate demanding   *)
+(* NoDup constructor labels at every BCase) + BrsUniqHeap + ProgBrsUniqWF, *)
+(* threaded as three new theorem hypotheses (mirroring FunBodyWellScoped/  *)
+(* ClosedHeap's own precedent), backed by a full NEval_left_BrsUniqHeap_   *)
+(* preserved theorem (mirrors NEval_left_closed_preserved, substantially   *)
+(* SIMPLER since BrsUniqB carries no per-variable payload) plus            *)
+(* BrsAlpha_labels_eq/brs_label_unique to close the ambiguity.  All 9      *)
+(* already-Qed'd cases + the NEval_left_self_confluence corollary updated  *)
+(* to carry the 3 new hypotheses through.  NL_Select's proof then reached  *)
+(* a SECOND, deeper gap: composing the matched branch's own BlkAlpha with  *)
+(* the two SEPARATE zipsubst renamings needs ys2 (branch2's own pattern    *)
+(* names) to avoid colliding with sigma0's image of names free elsewhere.  *)
+(* CONFIRMED genuine, not a proof-technique shortfall (Sec.41): a fully    *)
+(* machine-checked, zero-axiom counterexample (NEval_left_confluence_stmt_ *)
+(* is_false, now in failed_attempts.v Sec.6) derives False from the        *)
+(* OLD (unconstrained) BlkAlpha's own version of the theorem's statement.  *)
+(* FIXED (Sec.42): BA_Case/BrsA_cons gained a "local injectivity" premise  *)
+(* -- sigma' injective on ys1++free_vars_b b1 -- which turns out to close  *)
+(* not one but TWO distinct soundness bugs at once (capture: an outer      *)
+(* reference landing in ys2; conflation: two distinct pattern names        *)
+(* collapsing to the same target).  All 9 Qed'd cases + the corollary re-  *)
+(* verified against the fix (BlkAlpha_rename_scoped/BlkAlpha_refl each     *)
+(* gained their own now-necessary `injective` hypothesis, satisfiable      *)
+(* at every real call site).  zipsubst_compose_in/_out (near zipsubst_in)  *)
+(* give the resulting per-position commutation fact NL_Select needs AT    *)
+(* THE TOP LEVEL of the matched branch body.  Sec.43: BlkAlpha_compose_    *)
+(* rename is NOW BUILT AND QED'D (zero admits, zero axioms), lifting that   *)
+(* fact through the branch body's own POSSIBLY-NESTED structure -- it       *)
+(* generalizes BlkAlpha_rename_scoped and BlkAlpha_change_sigma_bound at    *)
+(* once, needs theta1/theta2 injective only LOCALLY (never globally, since  *)
+(* zipsubst manifestly isn't), and needs no separate "BlkAlpha preserves    *)
+(* free variables" lemma (every membership fact is derived directly from    *)
+(* the concrete BrsAlpha witness in hand at each level).  NOT YET WIRED     *)
+(* into NL_Select's own case (still admits): discharging its Hinj1/Hinj2    *)
+(* hypotheses at that call site reduces to "no zs/zs2 value collides with   *)
+(* some OTHER name bound INSIDE the branch body" -- a genuine freshness      *)
+(* question about the DYNAMIC heap values zs, in the Hfresh/HND family,     *)
+(* NOT a repeat of Sec.42's BlkAlpha bug (already fixed).  theorem2 itself   *)
+(* is UNCHANGED (still its one original admit) -- PIECE 8's own wiring      *)
+(* into curry_test_leftmost.v is still blocked on Select/Guess closing      *)
+(* first.  See THEOREM2_PROCESS_NOTES.md Sec.36-43 for the full history     *)
+(* of how this design was reached.                                        *)
 (*                                                                        *)
 (* STATUS (updated after a fifth work session -- PIECE 3 started):        *)
 (*                                                                        *)
@@ -2165,6 +2191,80 @@ Qed.
 Definition FunBodyWellScoped (P : Prog) : Prop :=
   forall f ps body, P f = Some (ps, body) -> forall w, In w (free_vars_b body) -> In w ps.
 
+(* Another genuinely new, previously-unstated well-formedness fact, found
+   while building NL_Select's own confluence case: nothing anywhere in
+   this development says a BCase's own branch list has no two entries
+   sharing a constructor label.  Real pattern-match compilation always
+   has this (one branch per constructor); NEval_left_confluence's cross-
+   heap argument actually NEEDS it -- without it, NEval_left_bcase_shape's
+   own In-witness for D2's chosen branch and BrsAlpha_lookup's own
+   BrsAlpha-image of D1's chosen branch could be two DIFFERENT entries of
+   brs2 sharing the same constructor, with nothing forcing them equal.
+   Structured exactly like NoBareChoiceB (curry.v ~104): recurse through
+   BLet's continuation and every BCase branch's own body, and at each
+   BCase additionally demand NoDup on that level's own constructor list. *)
+Fixpoint BrsUniqB (b : Blk) : Prop :=
+  match b with
+  | BLet x e k => BrsUniqB k
+  | BCase x brs =>
+      NoDup (map (fun p => match p with (c, _, _) => c end) brs) /\
+      fold_right (fun p acc => BrsUniqB (match p with (_, _, bd) => bd end) /\ acc) True brs
+  | BExpr e => True
+  end.
+
+(* Renaming never touches constructor labels (rename_b's own BCase case
+   only renames the scrutinee and each branch's pattern vars/body, per
+   curry.v's rename_b definition), so BrsUniqB survives it -- same
+   well-founded-on-blk_size shape as NoBareChoiceB_rename_bound, since
+   Blk's auto-generated induction principle doesn't give a usable IH for
+   bodies nested inside brs. *)
+Lemma BrsUniqB_rename_bound :
+  forall n b, blk_size b < n -> forall s, BrsUniqB b -> BrsUniqB (rename_b s b).
+Proof.
+  induction n as [n IHn] using (well_founded_induction lt_wf).
+  intros b Hsize s Hbu.
+  destruct b as [x e k | x brs | e].
+  - simpl in *.
+    assert (Hn : blk_size k + 1 < n) by lia.
+    assert (Hm : blk_size k < blk_size k + 1) by lia.
+    exact (IHn (blk_size k + 1) Hn k Hm s Hbu).
+  - simpl in *. destruct Hbu as [HND Hrest].
+    split.
+    + assert (Heq : map (fun p => match p with (c, _, _) => c end)
+                      (map (fun p => match p with (c, ps, bd) => (c, map s ps, rename_b s bd) end) brs)
+                    = map (fun p => match p with (c, _, _) => c end) brs).
+      { rewrite map_map. apply map_ext. intros [[c ps0] bd]. reflexivity. }
+      rewrite Heq. exact HND.
+    + induction brs as [| [[c ys] bd] brs' IHbrs].
+      * exact I.
+      * (* `induction brs` auto-generalized HND too (it depends on brs),
+           so IHbrs now additionally demands a NoDup fact for brs' itself
+           -- peel one NoDup layer off HND (NoDup (c::L) -> NoDup L) to
+           supply it. *)
+        assert (HNDtail : NoDup (map (fun p => match p with (c0, _, _) => c0 end) brs')).
+        { simpl in HND. inversion HND as [| ? ? ? HNDtail']; subst; exact HNDtail'. }
+        simpl in Hsize.
+        assert (Hbd : blk_size bd + 1 < n) by lia.
+        assert (Hm : blk_size bd < blk_size bd + 1) by lia.
+        assert (Hrest' : S (fold_right (fun p acc => blk_size (match p with (_,_,bd0) => bd0 end) + acc) 0 brs') < n)
+          by lia.
+        split.
+        -- exact (IHn (blk_size bd + 1) Hbd bd Hm s (proj1 Hrest)).
+        -- apply IHbrs; [exact Hrest' | exact HNDtail | exact (proj2 Hrest)].
+  - simpl. exact I.
+Qed.
+
+Lemma BrsUniqB_rename : forall s b, BrsUniqB b -> BrsUniqB (rename_b s b).
+Proof.
+  intros s b H. exact (BrsUniqB_rename_bound (S (blk_size b)) b (Nat.lt_succ_diag_r _) s H).
+Qed.
+
+(* Program-level version, parallel to FunBodyWellScoped: every function
+   body's own BrsUniqB holds, so NL_Fun's own body-unfolding preserves it
+   (via BrsUniqB_rename above) into the theorem's own recursive IH call. *)
+Definition ProgBrsUniqWF (P : Prog) : Prop :=
+  forall f ps body, P f = Some (ps, body) -> BrsUniqB body.
+
 
 (* Small helper lemmas the four remaining cases each need, gathered here so
    the theorem's own case-by-case proof stays readable. *)
@@ -2254,6 +2354,29 @@ with BrsAlpha (sigma : ren) : list (cname * list var * Blk) -> list (cname * lis
 | BrsA_cons : forall c ys1 ys2 b1 b2 brs1 brs2 sigma',
     Forall2 (fun y1 y2 => sigma' y1 = y2) ys1 ys2 ->
     (forall w, ~ In w ys1 -> sigma' w = sigma w) ->
+    (* LOCAL INJECTIVITY (Sec.42, upgraded from a narrower capture-only
+       premise while finishing NL_Select): sigma' must be injective on
+       EVERYTHING this branch actually names -- its own pattern vars ys1
+       PLUS b1's own free vars.  This single condition packages two
+       distinct failure modes NEval_left_confluence_stmt_is_false (and a
+       second, later-found sibling of it) exposed as genuine
+       inconsistencies, not proof-technique gaps:
+         1. CAPTURE: w free in b1 outside ys1 with sigma' w (= sigma w, by
+            the offset clause) landing IN ys2 -- a name that should stay a
+            free reference on the b2 side gets silently captured the
+            moment something (e.g. NL_Select's own zipsubst) substitutes
+            into ys2.  (Follows from this premise + Forall2: if sigma w
+            landed in ys2 at position i, sigma w = sigma' w = sigma'
+            ys1[i], forcing w = ys1[i] by injectivity -- contradicting w
+            outside ys1.)
+         2. CONFLATION: two DISTINCT pattern names y<>y' in ys1 mapping to
+            the SAME sigma' y = sigma' y' -- then zipsubst on the b2 side
+            can only ever resolve to ONE of the two intended positions
+            (whichever comes first in ys2), silently losing the other.
+            (Ruled out directly: this premise's conclusion is exactly
+            y = y' when both are in ys1.) *)
+    (forall w1 w2, (In w1 ys1 \/ In w1 (free_vars_b b1)) -> (In w2 ys1 \/ In w2 (free_vars_b b1)) ->
+       sigma' w1 = sigma' w2 -> w1 = w2) ->
     BlkAlpha sigma' b1 b2 ->
     BrsAlpha sigma brs1 brs2 ->
     BrsAlpha sigma ((c, ys1, b1) :: brs1) ((c, ys2, b2) :: brs2).
@@ -2340,12 +2463,12 @@ Qed.
    of demanding the ambient sigma already know what to do there. *)
 Lemma BlkAlpha_rename_scoped :
   forall n body, blk_size body < n ->
-  forall s s2 sigma, injective s ->
+  forall s s2 sigma, injective s -> injective s2 ->
   (forall w, In w (free_vars_b body) -> sigma (s w) = s2 w) ->
   BlkAlpha sigma (rename_b s body) (rename_b s2 body).
 Proof.
   induction n as [n IHn] using (well_founded_induction lt_wf).
-  intros body Hsize s s2 sigma Hinj H.
+  intros body Hsize s s2 sigma Hinj Hinj2 H.
   destruct body as [x e k | x brs | e].
   - simpl.
     assert (He : Expr0Alpha sigma (rename_e0 s e) (rename_e0 s2 e)).
@@ -2357,7 +2480,7 @@ Proof.
     + intros w Hne. unfold sigma'. destruct (Nat.eq_dec w (s x)) as [Heq | Hneq]; [congruence | reflexivity].
     + assert (Hn : blk_size k + 1 < n) by (simpl in Hsize; lia).
       assert (Hm : blk_size k < blk_size k + 1) by lia.
-      apply (IHn (blk_size k + 1) Hn k Hm s s2 sigma' Hinj).
+      apply (IHn (blk_size k + 1) Hn k Hm s s2 sigma' Hinj Hinj2).
       intros w Hw. unfold sigma'. destruct (Nat.eq_dec (s w) (s x)) as [Heq | Hneq].
       * assert (Hwx : w = x) by (apply Hinj; exact Heq).
         subst w. reflexivity.
@@ -2380,11 +2503,44 @@ Proof.
                  (ren_override2 (map s ys) (map s2 ys) sigma)).
         + exact (ren_override2_map_Forall2 ys s s2 sigma Hinj).
         + intros w Hw. apply ren_override2_notin. exact Hw.
+        + (* LOCAL-INJECTIVITY obligation (Sec.42): every relevant position
+             (map s ys, or free in rename_b s bd) is `s` applied to SOME y0
+             in ys or free in bd; ren_override2 composed with s always
+             gives s2 y0 there (ren_override2_map_in on ys,
+             ren_override2_notin + H off it), so the whole obligation
+             reduces to s2's own global injectivity (Hinj2). *)
+          assert (Hkey : forall y0, In y0 ys \/ In y0 (free_vars_b bd) ->
+                    ren_override2 (map s ys) (map s2 ys) sigma (s y0) = s2 y0).
+          { intros y0 [Hy0 | Hy0].
+            - apply ren_override2_map_in; [exact Hinj | exact Hy0].
+            - destruct (in_dec Nat.eq_dec y0 ys) as [Hyin | Hynin].
+              + apply ren_override2_map_in; [exact Hinj | exact Hyin].
+              + rewrite (ren_override2_notin (map s ys) (map s2 ys) sigma (s y0))
+                  by (intro Hc; apply in_map_iff in Hc; destruct Hc as [y' [Hsy' Hiny']];
+                      apply Hynin; assert (Hwy' : y0 = y') by (apply Hinj; exact (eq_sym Hsy')); subst y'; exact Hiny').
+                apply H. apply (free_vars_b_bcase_branch x brs c ys bd HinHead).
+                apply remove_all_in_intro; [exact Hy0 | exact Hynin]. }
+          intros w1 w2 Hw1 Hw2 Heq.
+          assert (Hw1' : exists y0, (In y0 ys \/ In y0 (free_vars_b bd)) /\ s y0 = w1).
+          { destruct Hw1 as [Hw1 | Hw1].
+            - apply in_map_iff in Hw1. destruct Hw1 as [y0 [Hsy0 Hiny0]]. exists y0. split; [left; exact Hiny0 | exact Hsy0].
+            - destruct (free_vars_b_rename_subset s bd w1 Hw1) as [y0 [Hy0 Hsy0]].
+              exists y0. split; [right; exact Hy0 | exact Hsy0]. }
+          assert (Hw2' : exists y0, (In y0 ys \/ In y0 (free_vars_b bd)) /\ s y0 = w2).
+          { destruct Hw2 as [Hw2 | Hw2].
+            - apply in_map_iff in Hw2. destruct Hw2 as [y0 [Hsy0 Hiny0]]. exists y0. split; [left; exact Hiny0 | exact Hsy0].
+            - destruct (free_vars_b_rename_subset s bd w2 Hw2) as [y0 [Hy0 Hsy0]].
+              exists y0. split; [right; exact Hy0 | exact Hsy0]. }
+          destruct Hw1' as [y1 [Hy1 Hsy1]]. destruct Hw2' as [y2 [Hy2 Hsy2]].
+          subst w1 w2.
+          rewrite (Hkey y1 Hy1), (Hkey y2 Hy2) in Heq.
+          assert (Hy12 : y1 = y2) by (apply Hinj2; exact Heq).
+          f_equal. exact Hy12.
         + assert (Hn : blk_size bd + 1 < n).
           { assert (Hlt : blk_size bd < blk_size (BCase x brs)) by exact (blk_size_in_bound x brs c ys bd HinHead).
             lia. }
           assert (Hm : blk_size bd < blk_size bd + 1) by lia.
-          apply (IHn (blk_size bd + 1) Hn bd Hm s s2 (ren_override2 (map s ys) (map s2 ys) sigma) Hinj).
+          apply (IHn (blk_size bd + 1) Hn bd Hm s s2 (ren_override2 (map s ys) (map s2 ys) sigma) Hinj Hinj2).
           intros w Hw.
             destruct (in_dec Nat.eq_dec w ys) as [Hyin | Hynin].
             -- (* w is one of THIS branch's own pattern vars -- the override
@@ -2430,6 +2586,79 @@ Proof.
     + simpl. destruct (Nat.eqb y y0) eqn:Heq.
       * left. reflexivity.
       * right. apply IH; [injection Hlen as Hlen; exact Hlen | exact Hy].
+Qed.
+
+(* Sec.42, NL_Select's own zipsubst composition step: given sigma' locally
+   injective on ys (a SPECIAL CASE of BrsA_cons's own new premise --
+   BrsAlpha_lookup hands back exactly this), zipsubst ys zs and zipsubst
+   ys2 zs2 (zs2 the sigma-image of zs) commute with sigma/sigma' at every
+   w THIS branch's own pattern list actually names.  Without the
+   injectivity hypothesis this is FALSE: if two distinct y,y' in ys both
+   map to the same sigma' value, zipsubst ys2 zs2 can only ever resolve to
+   ONE of the two intended target positions. *)
+Lemma zipsubst_compose_in :
+  forall ys zs ys2 zs2 sigma sigma',
+  length ys = length zs -> zs2 = map sigma zs ->
+  Forall2 (fun y1 y2 => sigma' y1 = y2) ys ys2 ->
+  (forall w1 w2, In w1 ys -> In w2 ys -> sigma' w1 = sigma' w2 -> w1 = w2) ->
+  forall w, In w ys -> sigma (zipsubst ys zs w) = zipsubst ys2 zs2 (sigma' w).
+Proof.
+  induction ys as [| y ys' IH]; intros zs ys2 zs2 sigma sigma' Hlen Hzs2 HF Hinjys w Hw.
+  - destruct Hw.
+  - destruct zs as [| z zs']; [discriminate Hlen | ].
+    inversion HF as [| y0 y2 ys0 ys2' Hy Hrest Heq1 Heq2]; subst y0 ys0.
+    simpl in Hzs2. subst zs2. simpl.
+    destruct (Nat.eqb w y) eqn:E.
+    + apply Nat.eqb_eq in E. subst w. rewrite Hy. rewrite Nat.eqb_refl. reflexivity.
+    + assert (Hwy : w <> y) by (intro Hc; subst w; rewrite Nat.eqb_refl in E; discriminate E).
+      destruct Hw as [Hw | Hw]; [exfalso; exact (Hwy (eq_sym Hw)) | ].
+      assert (Hne2 : sigma' w <> y2).
+      { intro Heq. apply Hwy. apply Hinjys; [right; exact Hw | left; reflexivity | rewrite Heq, Hy; reflexivity]. }
+      destruct (Nat.eqb (sigma' w) y2) eqn:E2.
+      * apply Nat.eqb_eq in E2. exfalso. exact (Hne2 E2).
+      * apply (IH zs' ys2' (map sigma zs') sigma sigma').
+        -- injection Hlen as Hlen. exact Hlen.
+        -- reflexivity.
+        -- exact Hrest.
+        -- intros w1 w2 Hw1 Hw2 Heq. apply Hinjys; [right; exact Hw1 | right; exact Hw2 | exact Heq].
+        -- exact Hw.
+Qed.
+
+(* Generic: In on a Forall2's SECOND list traces back to a related element
+   of the first -- standard, not in this codebase yet under this name. *)
+Lemma Forall2_in_r :
+  forall (A B : Type) (R : A -> B -> Prop) (l1 : list A) (l2 : list B), Forall2 R l1 l2 ->
+  forall v, In v l2 -> exists u, In u l1 /\ R u v.
+Proof.
+  induction 1 as [| a b l1' l2' Hab Hrest IH]; intros v Hv.
+  - destruct Hv.
+  - destruct Hv as [Hv | Hv].
+    + subst v. exists a. split; [left; reflexivity | exact Hab].
+    + destruct (IH v Hv) as [u [Hu HR]]. exists u. split; [right; exact Hu | exact HR].
+Qed.
+
+(* The companion "outside ys" fact: sigma/sigma' agree there (offset), and
+   the CAPTURE half of local injectivity (w outside ys but sigma(w)
+   colliding with ys2 would force w into ys1 via Forall2 + injectivity)
+   keeps zipsubst ys2 zs2 from touching it either. *)
+Lemma zipsubst_compose_out :
+  forall ys zs ys2 zs2 sigma sigma' body1,
+  Forall2 (fun y1 y2 => sigma' y1 = y2) ys ys2 ->
+  (forall w, ~ In w ys -> sigma' w = sigma w) ->
+  (forall w1 w2, (In w1 ys \/ In w1 (free_vars_b body1)) -> (In w2 ys \/ In w2 (free_vars_b body1)) ->
+     sigma' w1 = sigma' w2 -> w1 = w2) ->
+  forall w, In w (free_vars_b body1) -> ~ In w ys -> sigma (zipsubst ys zs w) = zipsubst ys2 zs2 (sigma' w).
+Proof.
+  intros ys zs ys2 zs2 sigma sigma' body1 HF Hoffset Hinj w Hwfree Hwnin.
+  assert (H1 : zipsubst ys zs w = w) by (apply zipsubst_notin; exact Hwnin).
+  assert (H2 : sigma' w = sigma w) by (apply Hoffset; exact Hwnin).
+  assert (H3 : zipsubst ys2 zs2 (sigma' w) = sigma' w).
+  { apply zipsubst_notin.
+    intro Hc.
+    destruct (Forall2_in_r var var (fun y1 y2 => sigma' y1 = y2) ys ys2 HF (sigma' w) Hc) as [y0 [Hy0in Hy0eq]].
+    assert (Hy0w : y0 = w) by (apply Hinj; [left; exact Hy0in | right; exact Hwfree | exact Hy0eq]).
+    apply Hwnin. rewrite <- Hy0w. exact Hy0in. }
+  rewrite H1, H3, H2. reflexivity.
 Qed.
 
 Lemma hupd_list_map_self :
@@ -2616,6 +2845,178 @@ Proof.
     exact (IH2 HScoped HnewClosed Hbodyclosed).
 Qed.
 
+(* ==================================================================== *)
+(* THEOREM2_PROCESS_NOTES.md Sec.46: the "separate freshness question     *)
+(* about the dynamic heap values zs/zs2" Sec.43 flagged as needing its    *)
+(* own resolution, closed OPERATIONALLY rather than via any BlkAlpha       *)
+(* change.  Two dead-end attempts at a machine-checked counterexample      *)
+(* (mirroring Sec.41/45's own methodology, targeting a nested BLet whose   *)
+(* freshly-chosen bound name is made to coincide with a substituted        *)
+(* scrutinee value) both failed for the SAME underlying reason: whatever   *)
+(* ends up in a forced constructor's own argument list is ALREADY          *)
+(* required, by ClosedHeap, to be heap-defined at that point -- and        *)
+(* NHeapAlpha's own correspondence (via IH1, not just its "extends"        *)
+(* half) then FORCES the corresponding position on the OTHER side to be    *)
+(* heap-defined too, for every element of zs, not just ones already in     *)
+(* the ORIGINAL heap.  Since NEval_left_domain_mono means the heap only     *)
+(* ever GROWS, that defined-ness persists through everything evaluated      *)
+(* afterward -- so a LATER NL_Let's own freshness check (which needs        *)
+(* UNDEFINED) can never land on one of these positions.  This is exactly    *)
+(* NL_Select's own real call-site instance of the fact Sec.43's own          *)
+(* comment on BlkAlpha_compose_rename already anticipated needing --         *)
+(* proved here as a direct, three-line composition of machinery already     *)
+(* in this file (NEval_left_closed_preserved's own second conjunct,          *)
+(* nheap_rename_at, NEval_left_domain_mono), not as anything new about       *)
+(* BlkAlpha itself. *)
+(* ==================================================================== *)
+
+(* The scrutinee's own forced constructor arguments are already heap-       *)
+(* defined the moment forcing finishes -- NEval_left_closed_preserved's      *)
+(* second conjunct, specialized to e := BExpr (EVar z), v := BExpr (ECon c   *)
+(* zs) (so free_vars_b e = [z], vars_of_b v = zs exactly). *)
+Lemma NEval_left_forced_args_defined :
+  forall P F0 G0 z c zs G1, NEval_left P F0 G0 (BExpr (EVar z)) G1 (BExpr (ECon c zs)) ->
+  FunBodyWellScoped P -> ClosedHeap G0 -> G0 z <> None ->
+  forall w, In w zs -> G1 w <> None.
+Proof.
+  intros P F0 G0 z c zs G1 Hrec HScoped Hclosed Hz w Hw.
+  assert (Heclosed : forall w0, In w0 (free_vars_b (BExpr (EVar z))) -> G0 w0 <> None).
+  { intros w0 Hw0. simpl in Hw0. destruct Hw0 as [Hw0 | []]. subst w0. exact Hz. }
+  destruct (NEval_left_closed_preserved P F0 G0 (BExpr (EVar z)) G1 (BExpr (ECon c zs)) Hrec
+              HScoped Hclosed Heclosed) as [_ Hv].
+  exact (Hv w Hw).
+Qed.
+
+(* The real payoff: sigma1's own image of any such position stays          *)
+(* heap-defined through WHATEVER D2 evaluates afterward, no matter how      *)
+(* deep -- so it can never coincide with a position some LATER NL_Let        *)
+(* needs to find undefined.  This is the fact that discharges                *)
+(* BlkAlpha_compose_rename's own flagged-but-unresolved "zs/zs2 freshness"    *)
+(* obligation at NL_Select's real call site, purely operationally. *)
+Lemma NEval_left_forced_args_stay_defined :
+  forall P F0 G0 z c zs G1, NEval_left P F0 G0 (BExpr (EVar z)) G1 (BExpr (ECon c zs)) ->
+  FunBodyWellScoped P -> ClosedHeap G0 -> G0 z <> None ->
+  forall sigma tau, mutual_inverse sigma tau ->
+  forall Gam2, NHeapAlpha sigma tau G1 Gam2 ->
+  forall F2 e2 G2' v2, NEval_left P F2 Gam2 e2 G2' v2 ->
+  forall w, In w zs -> G2' (sigma w) <> None.
+Proof.
+  intros P F0 G0 z c zs G1 Hrec HScoped Hclosed Hz sigma tau Hmi Gam2 Halpha F2 e2 G2' v2 Heval2 w Hw.
+  assert (HG1w : G1 w <> None) by exact (NEval_left_forced_args_defined P F0 G0 z c zs G1 Hrec HScoped Hclosed Hz w Hw).
+  assert (HGam2sw : Gam2 (sigma w) <> None).
+  { rewrite (Halpha (sigma w)). rewrite (nheap_rename_at sigma tau Hmi G1 w).
+    intro Hc. apply HG1w. destruct (G1 w); [discriminate Hc | reflexivity]. }
+  exact (NEval_left_domain_mono P F2 Gam2 e2 G2' v2 Heval2 (sigma w) HGam2sw).
+Qed.
+
+Definition BrsUniqHeap (G : NHeap) : Prop :=
+  forall z b, G z = Some b -> BrsUniqB b.
+
+(* let_content x e0 is ALWAYS BExpr-shaped (its own match only ever
+   produces BExpr (EVar x) or BExpr e0), and BrsUniqB is trivially True at
+   any BExpr -- so every value NL_Let/NL_VarFree ever write into the heap
+   satisfies it unconditionally, no case-split on e0 needed. *)
+Lemma let_content_BrsUniq : forall x e0, BrsUniqB (let_content x e0).
+Proof. intros x e0. destruct e0; simpl; exact I. Qed.
+
+(* Mirrors NoBareChoiceB_in (curry.v): extract a branch's own BrsUniqB
+   from its parent BCase's. *)
+Lemma BrsUniqB_branch_in :
+  forall x brs c ys bd, In (c, ys, bd) brs -> BrsUniqB (BCase x brs) -> BrsUniqB bd.
+Proof.
+  intros x brs c ys bd Hin Hbu. simpl in Hbu. destruct Hbu as [_ Hrest].
+  induction brs as [| [[c0 ys0] bd0] brs' IHbrs].
+  - destruct Hin.
+  - destruct Hin as [Heq | Hin].
+    + injection Heq as Heq1 Heq2 Heq3; subst c0 ys0 bd0. exact (proj1 Hrest).
+    + apply IHbrs; [exact Hin | exact (proj2 Hrest)].
+Qed.
+
+(* NEval_left_closed_preserved's own exact companion for BrsUniqB, needed
+   by NL_Select/NL_Guess's own confluence case (Sec.40 of the process
+   notes): forcing a scrutinee (NL_Select/NL_Guess's own first premise)
+   produces a heap G1 whose OWN new content still needs BrsUniqB before
+   BrsUniqB_branch_in + BrsUniqB_rename can be applied to the matched
+   branch body.  Substantially SIMPLER than NEval_left_closed_preserved's
+   own proof: BrsUniqB carries no per-variable payload at all (it's a bare
+   structural fact about a Blk's own shape), so none of ClosedHeap's
+   free-var bookkeeping (zipsubst_in/zipsubst_notin/NEval_left_domain_mono)
+   is needed here -- only ProgBrsUniqWF (for NL_Fun's own body-unfolding)
+   plays a role FunBodyWellScoped played there. *)
+Theorem NEval_left_BrsUniqHeap_preserved :
+  forall P F G e G' v, NEval_left P F G e G' v ->
+  ProgBrsUniqWF P -> BrsUniqHeap G -> BrsUniqB e -> BrsUniqHeap G' /\ BrsUniqB v.
+Proof.
+  intros P F G e G' v H.
+  induction H as
+    [ F0 G0 z c args Hz
+    | F0 G0 z Hz
+    | F0 G0 z Hz
+    | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
+    | F0 G0
+    | F0 G0 c args
+    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
+    | F0 G0 G1 z e0 k v0 HzFresh Hrec IH
+    | F0 G0 x1 y1 G1 v0 Hrec IH
+    | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hrec2 IH2
+    ]; intros HProg HBrsUniq HeBrsUniq.
+  - (* VarCons *)
+    split; [exact HBrsUniq | exact I].
+  - (* VarSelf *)
+    split; [exact HBrsUniq | exact I].
+  - (* VarFree *)
+    split; [ | exact I].
+    intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w z) eqn:Heqw.
+    + injection Hwb as Hwb; subst b. exact I.
+    + exact (HBrsUniq w b Hwb).
+  - (* VarExp *)
+    assert (He0BrsUniq : BrsUniqB e0) by exact (HBrsUniq z e0 Hz).
+    destruct (IH HProg HBrsUniq He0BrsUniq) as [HBrsUniqG1 Hv0BrsUniq].
+    split; [ | exact Hv0BrsUniq].
+    intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w z) eqn:Heqw.
+    + injection Hwb as Hwb; subst b. exact Hv0BrsUniq.
+    + exact (HBrsUniqG1 w b Hwb).
+  - (* ValFree *)
+    split; [exact HBrsUniq | exact I].
+  - (* ValCon *)
+    split; [exact HBrsUniq | exact I].
+  - (* Fun *)
+    assert (HbodyBrsUniq : BrsUniqB (rename_b s body)) by exact (BrsUniqB_rename s body (HProg f ps body HPf)).
+    exact (IH HProg HBrsUniq HbodyBrsUniq).
+  - (* Let *)
+    assert (HkBrsUniq : BrsUniqB k) by exact HeBrsUniq.
+    assert (HnewBrsUniq : BrsUniqHeap (hupd G0 z (let_content z e0))).
+    { intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w z) eqn:Heqw.
+      - injection Hwb as Hwb; subst b. apply let_content_BrsUniq.
+      - exact (HBrsUniq w b Hwb). }
+    exact (IH HProg HnewBrsUniq HkBrsUniq).
+  - (* Or *)
+    apply IH; [exact HProg | exact HBrsUniq | exact I].
+  - (* Select *)
+    destruct (IH1 HProg HBrsUniq I) as [HBrsUniqG1 _].
+    assert (HbodyBrsUniq : BrsUniqB body) by exact (BrsUniqB_branch_in z brs c ys body HIn HeBrsUniq).
+    assert (Hrename : BrsUniqB (rename_b (zipsubst ys zs) body))
+      by exact (BrsUniqB_rename (zipsubst ys zs) body HbodyBrsUniq).
+    exact (IH2 HProg HBrsUniqG1 Hrename).
+  - (* Guess *)
+    destruct (IH1 HProg HBrsUniq I) as [HBrsUniqG1 _].
+    assert (Hbr1In : In (c1, ys1, body1) brs) by (apply (hd_error_in brs (c1, ys1, body1) Hhd)).
+    set (Hnew := hupd G1 z' (BExpr (ECon c1 ws))).
+    assert (HnewBrsUniq : BrsUniqHeap (hupd_list Hnew ws (map (fun w => BExpr (EVar w)) ws))).
+    { intros w b Hwb. destruct (in_dec Nat.eq_dec w ws) as [Hwws | Hwnws].
+      - rewrite (hupd_list_map_self ws Hnew w Hwws) in Hwb. injection Hwb as Hwb; subst b. exact I.
+      - rewrite (hupd_list_notin ws Hnew _ w Hwnws) in Hwb.
+        unfold Hnew in Hwb. unfold hupd in Hwb.
+        destruct (Nat.eqb w z') eqn:Heqw.
+        + injection Hwb as Hwb; subst b. exact I.
+        + exact (HBrsUniqG1 w b Hwb). }
+    assert (Hbody1BrsUniq : BrsUniqB body1) by exact (BrsUniqB_branch_in z brs c1 ys1 body1 Hbr1In HeBrsUniq).
+    assert (Hrename : BrsUniqB (rename_b (zipsubst ys1 ws) body1))
+      by exact (BrsUniqB_rename (zipsubst ys1 ws) body1 Hbody1BrsUniq).
+    exact (IH2 HProg HnewBrsUniq Hrename).
+Qed.
+
 (* One more invariant NL_Fun's own case exposed as genuinely NECESSARY (not
    just a proof-technique convenience): batch_extend's Hfix precondition
    needs sigma0 to ALREADY fix s(y)/s2(y) for the two independently-chosen
@@ -2752,7 +3153,7 @@ Proof.
       - remember (@nil (cname * list var * Blk)) as tgt eqn:Htg.
         destruct Hb as [ | ]; try discriminate Htg. constructor.
       - remember ((c, ys, bd) :: brs'') as tgt eqn:Htg.
-        destruct Hb as [ | c0 ys1 ys2 b1 b2 brsA brsB sigma1''' HF2 Hoff2 Hbk2 Hbrest ];
+        destruct Hb as [ | c0 ys1 ys2 b1 b2 brsA brsB sigma1''' HF2 Hoff2 Hcap1 Hbk2 Hbrest ];
           try discriminate Htg.
         injection Htg as Htgc Htgys Htgbd Htgrest. subst c0 ys1 b1 brsA.
         assert (HinHead : In (c, ys, bd) brs) by (apply Hsub; left; reflexivity).
@@ -2773,6 +3174,21 @@ Proof.
           apply (Hys ys ys2 HF2 (fun y Hy => Hy)).
         + intros w Hw. unfold sigma2'''. destruct (in_dec Nat.eq_dec w ys) as [Hin | _];
             [exfalso; exact (Hw Hin) | reflexivity].
+        + (* LOCAL-INJECTIVITY obligation (Sec.42): sigma2''' agrees with
+             sigma1''' pointwise on ys++free_vars_b bd (trivially on ys, by
+             construction; via Hoff2 + Hagree + free_vars_b_bcase_branch
+             off it), so the OLD witness's own local injectivity (Hcap1)
+             transports over unchanged -- changing the ambient sigma never
+             touches this branch's own local structure. *)
+          assert (Hkey : forall w, In w ys \/ In w (free_vars_b bd) -> sigma2''' w = sigma1''' w).
+          { intros w Hw. unfold sigma2'''. destruct (in_dec Nat.eq_dec w ys) as [Hin | Hnin].
+            - reflexivity.
+            - destruct Hw as [Hw | Hw]; [exfalso; exact (Hnin Hw) | ].
+              rewrite (Hoff2 w Hnin). symmetry. apply Hagree. apply (free_vars_b_bcase_branch x brs c ys bd HinHead).
+              apply remove_all_in_intro; [exact Hw | exact Hnin]. }
+          intros w1 w2 Hw1 Hw2 Heq.
+          rewrite (Hkey w1 Hw1), (Hkey w2 Hw2) in Heq.
+          exact (Hcap1 w1 w2 Hw1 Hw2 Heq).
         + assert (Hn : blk_size bd + 1 < n).
           { assert (Hlt : blk_size bd < blk_size (BCase x brs)) by exact (blk_size_in_bound x brs c ys bd HinHead).
             lia. }
@@ -2892,12 +3308,114 @@ Proof.
   f_equal. apply Expr0Alpha_det. exact He.
 Qed.
 
-Lemma BlkAlpha_refl : forall sigma b, BlkAlpha sigma b (rename_b sigma b).
+Lemma BlkAlpha_refl : forall sigma, injective sigma -> forall b, BlkAlpha sigma b (rename_b sigma b).
 Proof.
-  intros sigma b.
+  intros sigma Hinj b.
   assert (H := BlkAlpha_rename_scoped (S (blk_size b)) b (Nat.lt_succ_diag_r _)
-                 (fun w => w) sigma sigma (fun x y H => H) (fun w _ => eq_refl (sigma w))).
+                 (fun w => w) sigma sigma (fun x y H => H) Hinj (fun w _ => eq_refl (sigma w))).
   rewrite (rename_b_id b) in H. exact H.
+Qed.
+
+(* BrsAlpha's own lookup lemma: given a POSITION in brs1 (via nth_error, so
+   no assumption about duplicate constructor labels is needed -- unlike an
+   In-based lookup, which would be ambiguous whenever two branches share a
+   constructor), BrsAlpha sigma brs1 brs2 hands back the SAME-INDEX entry
+   in brs2, plus everything BrsA_cons packaged about it (its own local
+   sigma', the ys-pointwise correspondence, the off-ys agreement with the
+   ambient sigma, and BlkAlpha for the two bodies).  Completely general,
+   zero new hypotheses -- pure structural induction on the BrsAlpha
+   derivation, mirroring List.nth_error's own cons/S recursion. *)
+Lemma BrsAlpha_nth_error :
+  forall sigma brs1 brs2, BrsAlpha sigma brs1 brs2 ->
+  forall i c ys1 body1, nth_error brs1 i = Some (c, ys1, body1) ->
+  exists ys2 body2 sigma',
+    nth_error brs2 i = Some (c, ys2, body2) /\
+    Forall2 (fun y1 y2 => sigma' y1 = y2) ys1 ys2 /\
+    (forall w, ~ In w ys1 -> sigma' w = sigma w) /\
+    (forall w1 w2, (In w1 ys1 \/ In w1 (free_vars_b body1)) -> (In w2 ys1 \/ In w2 (free_vars_b body1)) ->
+       sigma' w1 = sigma' w2 -> w1 = w2) /\
+    BlkAlpha sigma' body1 body2.
+Proof.
+  intros sigma brs1 brs2 H.
+  (* NOTE: BrsAlpha is declared via `with` alongside BlkAlpha, so its own
+     parameter `sigma` is NOT treated as uniform by plain `induction` --
+     it comes back as a 9th, per-case-varying leading binder (sg below),
+     shifting every subsequent position by one versus what the bare
+     `Inductive`/`with` declaration's surface `forall` list suggests.
+     Confirmed by `Show`ing the raw goal rather than guessing (T15/T21's
+     own lesson, one level up: here it's an *inductive's own parameter*
+     silently becoming an extra index, not a constructor-argument order
+     mixup) -- do not re-guess this if it ever needs re-deriving. *)
+  induction H as [| sg c0 ys1a ys2a b1a b2a tbrs1 tbrs2 sg2 HForall2 Hoffset Hcap HblkA HrecBrs IH];
+    intros i c ys1 body1 Hi.
+  - destruct i; simpl in Hi; discriminate Hi.
+  - destruct i as [| i'].
+    + simpl in Hi. injection Hi as Hc Hys1 Hbody1. subst c0 ys1a b1a.
+      exists ys2a, b2a, sg2.
+      split; [reflexivity | split; [exact HForall2 | split; [exact Hoffset | split; [exact Hcap | exact HblkA]]]].
+    + simpl in Hi. destruct (IH i' c ys1 body1 Hi) as [ys2 [body2 [sigma'' [Hn2 [Hf [Hoff2 [Hc2 Hb2]]]]]]].
+      exists ys2, body2, sigma''.
+      split; [exact Hn2 | split; [exact Hf | split; [exact Hoff2 | split; [exact Hc2 | exact Hb2]]]].
+Qed.
+
+(* Content-based (In) version, wrapping the position-based lemma above via
+   In_nth_error/nth_error_In -- convenient when the caller only has an In
+   fact (as NL_Select/NL_Guess's own shape-inversion lemmas hand back),
+   not a concrete index. *)
+Lemma BrsAlpha_lookup :
+  forall sigma brs1 brs2, BrsAlpha sigma brs1 brs2 ->
+  forall c ys1 body1, In (c, ys1, body1) brs1 ->
+  exists ys2 body2 sigma',
+    In (c, ys2, body2) brs2 /\
+    Forall2 (fun y1 y2 => sigma' y1 = y2) ys1 ys2 /\
+    (forall w, ~ In w ys1 -> sigma' w = sigma w) /\
+    (forall w1 w2, (In w1 ys1 \/ In w1 (free_vars_b body1)) -> (In w2 ys1 \/ In w2 (free_vars_b body1)) ->
+       sigma' w1 = sigma' w2 -> w1 = w2) /\
+    BlkAlpha sigma' body1 body2.
+Proof.
+  intros sigma brs1 brs2 H c ys1 body1 Hin.
+  apply In_nth_error in Hin. destruct Hin as [i Hi].
+  destruct (BrsAlpha_nth_error sigma brs1 brs2 H i c ys1 body1 Hi) as [ys2 [body2 [sigma' [Hn2 Hrest]]]].
+  exists ys2, body2, sigma'. split; [exact (nth_error_In brs2 i Hn2) | exact Hrest].
+Qed.
+
+(* BrsAlpha always keeps the SAME constructor name c at each position on
+   BOTH sides (BrsA_cons's own conclusion: `BrsAlpha sigma ((c,ys1,b1)::
+   brs1) ((c,ys2,b2)::brs2)` -- one `c`, not two), so the two lists' own
+   label sequences are literally identical, not just pointwise-related.
+   This is what lets a NoDup fact about brs1's labels transfer directly to
+   brs2's, resolving the newly-found branch-uniqueness gap (BrsUniqB)
+   below. Same shifted-binder-order pitfall as BrsAlpha_nth_error. *)
+Lemma BrsAlpha_labels_eq :
+  forall sigma brs1 brs2, BrsAlpha sigma brs1 brs2 ->
+  map (fun p => match p with (c, _, _) => c end) brs1 = map (fun p => match p with (c, _, _) => c end) brs2.
+Proof.
+  intros sigma brs1 brs2 H.
+  induction H as [| sg c0 ys1a ys2a b1a b2a tbrs1 tbrs2 sg2 HForall2 Hoffset Hcap HblkA HrecBrs IH].
+  - reflexivity.
+  - simpl. f_equal. exact IH.
+Qed.
+
+(* If a branch list's own constructor labels are NoDup, two entries
+   sharing a label are the SAME entry -- the fact that closes the
+   NL_Select/NL_Guess branch-identification gap (BrsUniqB, added above)
+   once BrsAlpha_lookup's own found entry and D2's own In-witness both
+   land on constructor c. *)
+Lemma brs_label_unique :
+  forall (brs : list (cname * list var * Blk)) c ys1 bd1 ys2 bd2,
+  NoDup (map (fun p => match p with (c0, _, _) => c0 end) brs) ->
+  In (c, ys1, bd1) brs -> In (c, ys2, bd2) brs -> ys1 = ys2 /\ bd1 = bd2.
+Proof.
+  induction brs as [| [[c0 ys0] bd0] brs' IH]; intros c ys1 bd1 ys2 bd2 HND Hin1 Hin2.
+  - destruct Hin1.
+  - simpl in HND. inversion HND as [| ? ? Hnin HNDtail]; subst.
+    destruct Hin1 as [Heq1 | Hin1]; destruct Hin2 as [Heq2 | Hin2].
+    + injection Heq1 as Hc1 Hy1 Hb1. injection Heq2 as Hc2 Hy2 Hb2. subst. split; reflexivity.
+    + injection Heq1 as Hc1 Hy1 Hb1. subst c0 ys0 bd0.
+      exfalso. apply Hnin. apply (in_map (fun p => match p with (c1, _, _) => c1 end)) in Hin2. exact Hin2.
+    + injection Heq2 as Hc2 Hy2 Hb2. subst c0 ys0 bd0.
+      exfalso. apply Hnin. apply (in_map (fun p => match p with (c1, _, _) => c1 end)) in Hin1. exact Hin1.
+    + exact (IH c ys1 bd1 ys2 bd2 HNDtail Hin1 Hin2).
 Qed.
 
 (* mutual_inverse_extend, generalized to allow a = b (a genuine no-op in
@@ -2929,13 +3447,679 @@ Proof.
   - exact (mutual_inverse_extend sigma tau Hmi a b Hneq Hsa Hsb).
 Qed.
 
+(* ==================================================================== *)
+(* BlkAlpha_compose_rename (final form, THEOREM2_PROCESS_NOTES.md         *)
+(* Sec.43-47): the piece NL_Select's own comment flags as the one         *)
+(* remaining gap, now fully closed.  Generalizes BOTH                     *)
+(* BlkAlpha_rename_scoped (which pushes TWO renamings s/s2 through the   *)
+(* SAME body) and BlkAlpha_change_sigma_bound (which walks an EXISTING   *)
+(* BlkAlpha witness without touching its structure) at once: given       *)
+(* BlkAlpha rho body body2 (body/body2 possibly DIFFERENT terms, related *)
+(* via rho -- exactly BrsAlpha_lookup's own output), and two FURTHER      *)
+(* renamings theta1/theta2 to push through each side (zipsubst ys zs /    *)
+(* zipsubst ys2 zs2 at the real call site), concludes                     *)
+(* BlkAlpha sigma (rename_b theta1 body) (rename_b theta2 body2).         *)
+(*                                                                        *)
+(* theta1/theta2 are NOT required globally injective (zipsubst manifestly *)
+(* isn't -- it's the identity off ys) -- only LOCALLY, exempting a FIXED,  *)
+(* top-level pattern list `ysX` (Sec.45's hygiene fix, resolving Sec.44's  *)
+(* "full injectivity is unsound" finding: legitimate constructor-argument  *)
+(* sharing like `f x = C x x` must stay provable).  Discharging that        *)
+(* exemption needs FOUR further fixed pieces, all held constant across the *)
+(* whole recursion rather than re-derived per level (the move that avoids  *)
+(* Sec.44's original wall -- a nested binder's own witness has no relation  *)
+(* to an AMBIENT renaming's image, but never needs one here):               *)
+(*   - bv1/bv2 (Sec.46/47): FIXED supersets of body/body2's own              *)
+(*     bound_vars_b, monotonically threaded, letting "a position is bound    *)
+(*     SOMEWHERE (not just at the current level)" be decided uniformly at    *)
+(*     any depth -- this is what lets Hhyg1/Hhyg2 (ysX / its rho0-image       *)
+(*     never collide with ANY constructed binder, at ANY depth) close the     *)
+(*     obligation whenever at least one compared position is bound anywhere.  *)
+(*   - rho0/fv1/Hrhoinj0 (Sec.47): the FIXED top-level rho (never touched by   *)
+(*     nested overrides) and its own injectivity on ysX ∪ fv1 (exactly         *)
+(*     BrsAlpha_lookup's own Hcap1) -- closes the one case bv1/bv2 alone        *)
+(*     can't: BOTH compared positions genuinely free (never bound anywhere).    *)
+(*     The bundled Hagree (`In w fv1 /\ rho w = rho0 w` alongside the usual      *)
+(*     sigma fact, but ONLY required when w isn't bound anywhere -- an           *)
+(*     ancestor's own bound name can be free at a deeper level without           *)
+(*     ever needing this) is what lets a genuinely-free position's ambient       *)
+(*     rho be related back to rho0 via a chain of Hoff/Hoff2 agreements,         *)
+(*     never touching a constructed witness's own arbitrariness.                *)
+(*   - Hconsistent (Sec.47): "theta2 conflates two ysX images iff theta1         *)
+(*     conflates the corresponding ysX elements" -- Sec.44's own Finding 2a,     *)
+(*     free at the real call site from zs2 = map sigma zs plus sigma            *)
+(*     injective, needed only once the "both free, aliased" sub-case has        *)
+(*     pinned both positions down to literal ysX elements via Hrhoinj0.         *)
+(* Built and verified (`Print Assumptions`, zero axioms) as                     *)
+(* BlkAlpha_compose_rename2 in a scratch file before this transplant, per        *)
+(* this file's own established practice of validating a hard case before        *)
+(* committing it live.  See THEOREM2_PROCESS_NOTES.md Sec.42-47 for the full     *)
+(* history, Sec.47 especially for exactly how the design closes. *)
+(* ==================================================================== *)
+
+Lemma vars_of_e0_rename : forall rho e, vars_of_e0 (rename_e0 rho e) = map rho (vars_of_e0 e).
+Proof. intros rho e. destruct e as [x | | | x y | f args | c args]; reflexivity. Qed.
+
+(* Expr0Alpha's own composition lemma: mirrors Expr0Alpha_rename_scoped but
+   starts from an EXISTING Expr0Alpha rho e e2 (e2 possibly <> e) rather than
+   the same e on both sides. *)
+Lemma Expr0Alpha_compose_rename :
+  forall e rho e2, Expr0Alpha rho e e2 ->
+  forall theta1 theta2 sigma,
+  (forall w, In w (vars_of_e0 e) -> sigma (theta1 w) = theta2 (rho w)) ->
+  Expr0Alpha sigma (rename_e0 theta1 e) (rename_e0 theta2 e2).
+Proof.
+  intros e rho e2 Hea theta1 theta2 sigma Hagree.
+  assert (He2 : e2 = rename_e0 rho e) by (apply Expr0Alpha_det; exact Hea).
+  subst e2.
+  destruct e as [x | | | x y | f args | c args]; simpl in *.
+  - assert (Hx : sigma (theta1 x) = theta2 (rho x)) by (apply Hagree; left; reflexivity).
+    rewrite <- Hx. constructor.
+  - constructor.
+  - constructor.
+  - assert (Hx : sigma (theta1 x) = theta2 (rho x)) by (apply Hagree; left; reflexivity).
+    assert (Hy : sigma (theta1 y) = theta2 (rho y)) by (apply Hagree; right; left; reflexivity).
+    rewrite <- Hx, <- Hy. constructor.
+  - assert (Hmap : map theta2 (map rho args) = map sigma (map theta1 args)).
+    { rewrite map_map, map_map. apply map_ext_in. intros w Hw. symmetry. apply Hagree. exact Hw. }
+    rewrite Hmap. constructor.
+  - assert (Hmap : map theta2 (map rho args) = map sigma (map theta1 args)).
+    { rewrite map_map, map_map. apply map_ext_in. intros w Hw. symmetry. apply Hagree. exact Hw. }
+    rewrite Hmap. constructor.
+Qed.
+
+(* A branch's own pattern list AND its own body's vars are both part of the
+   whole BCase's vars_of_b -- the vars_of_b analogue of free_vars_b_bcase_
+   branch, needed here since (unlike BlkAlpha_rename_scoped) theta1/theta2's
+   injectivity is stated over vars_of_b (bound names too), not free_vars_b. *)
+Lemma vars_of_b_bcase_branch :
+  forall x brs c ys bd, In (c, ys, bd) brs ->
+  forall w, In w ys \/ In w (vars_of_b bd) -> In w (vars_of_b (BCase x brs)).
+Proof.
+  intros x brs c ys bd Hin w Hw.
+  simpl. right. induction brs as [| [[c' ys'] bd'] brs' IHbrs].
+  - destruct Hin.
+  - destruct Hin as [Heq | Hin].
+    + injection Heq as Hc Hys Hbd. subst c' ys' bd'.
+      apply in_or_app. destruct Hw as [Hw | Hw]; [left; exact Hw | right; apply in_or_app; left; exact Hw].
+    + apply in_or_app. right. apply in_or_app. right. apply IHbrs. exact Hin.
+Qed.
+
+(* The set of names INTRODUCED AS A BINDER anywhere in b -- the dual of
+   free_vars_b, and deliberately NOT the same as "vars_of_b minus
+   free_vars_b": x is included here even when x is ALSO free in e (e.g.
+   `let x = x + 1 in k`), since x is unambiguously a binder occurrence
+   there regardless of whether it happens to ALSO occur free. Needed for
+   BlkAlpha_compose_rename's own no-shadowing hypothesis, which must rule
+   OUT "this outer name is also reused as a binder somewhere inside" --
+   free_vars_b/vars_of_b alone can't state that distinction. *)
+Fixpoint bound_vars_b (b : Blk) : list var :=
+  match b with
+  | BLet x e k => x :: bound_vars_b k
+  | BCase x brs =>
+      fold_right (fun p acc => match p with (c, ps, bd) => ps ++ bound_vars_b bd ++ acc end) nil brs
+  | BExpr e => nil
+  end.
+
+Lemma bound_vars_b_bcase_branch :
+  forall x brs c ys bd, In (c, ys, bd) brs ->
+  forall w, In w ys \/ In w (bound_vars_b bd) -> In w (bound_vars_b (BCase x brs)).
+Proof.
+  intros x brs c ys bd Hin w Hw.
+  induction brs as [| [[c' ys'] bd'] brs' IHbrs].
+  - destruct Hin.
+  - destruct Hin as [Heq | Hin].
+    + injection Heq as Hc Hys Hbd. subst c' ys' bd'.
+      apply in_or_app. destruct Hw as [Hw | Hw]; [left; exact Hw | right; apply in_or_app; left; exact Hw].
+    + apply in_or_app. right. apply in_or_app. right. apply IHbrs. exact Hin.
+Qed.
+
+(* ==================================================================== *)
+(* Hygiene invariant (THEOREM2_PROCESS_NOTES.md Sec.45): the standard      *)
+(* Barendregt "no two binders anywhere in a term share a name" convention, *)
+(* stated directly over bound_vars_b just above (built in Sec.44 but left  *)
+(* unused there).  Exists to let BlkAlpha_compose_rename's own aliasing    *)
+(* exemption (legitimate constructor-argument SHARING, e.g. f x = C x x -- *)
+(* Sec.44's Finding 1: full injectivity of a zipsubst-shaped renaming is   *)
+(* unsound, not just strong) be stated as a FIXED, top-level fact -- the   *)
+(* branch's own pattern list ys is guaranteed disjoint from every binder   *)
+(* nested anywhere inside its own body -- rather than a fact about "rho    *)
+(* injective on ys" that would need re-deriving at every nested recursive  *)
+(* step (Sec.44's actual wall: a nested BLet's own second-side binder has  *)
+(* no established relationship to rho's image at all).  With NoShadowB in  *)
+(* hand, the needed disjointness is a STATIC fact about body's own shape   *)
+(* that transports through every subterm move for free (a strict sublist   *)
+(* of the parent's own bound_vars_b), so unlike ClosedHeap/BrsUniqHeap      *)
+(* (which track a HEAP that actually changes as evaluation runs), no       *)
+(* "preserved across NEval_left" theorem is needed here -- only a           *)
+(* "preserved under an injective renaming" fact (bound_vars_b_rename        *)
+(* below), for NL_Fun's own body-unfolding. *)
+Definition NoShadowB (b : Blk) : Prop := NoDup (bound_vars_b b).
+
+Lemma NoDup_app_disjoint :
+  forall (A : Type) (l1 l2 : list A), NoDup (l1 ++ l2) -> forall a, In a l1 -> ~ In a l2.
+Proof.
+  induction l1 as [| x l1' IH]; intros l2 HND a Ha.
+  - destruct Ha.
+  - simpl in HND. inversion HND as [| ? ? Hnotin HND']; subst.
+    destruct Ha as [Ha | Ha].
+    + subst x. intro Hc. apply Hnotin. apply in_or_app. right. exact Hc.
+    + intro Hc. exact (IH l2 HND' a Ha Hc).
+Qed.
+
+Lemma NoShadowB_let_k : forall x e k, NoShadowB (BLet x e k) -> NoShadowB k.
+Proof. intros x e k H. unfold NoShadowB in *. simpl in H. inversion H; subst; assumption. Qed.
+
+(* The BCase analogue: pulls out, for the branch actually selected by
+   NL_Select/NL_Guess's own In-witness, exactly the three facts
+   BlkAlpha_compose_rename's own hygiene hypothesis (and the theorem's own
+   recursive IH calls) need -- ys itself duplicate-free, bd's own
+   NoShadowB (for recursing further), and (the one this was built for) ys
+   disjoint from anything bd binds, at any depth. *)
+Lemma NoShadowB_bcase_branch :
+  forall x brs c ys bd, In (c, ys, bd) brs -> NoShadowB (BCase x brs) ->
+  NoDup ys /\ NoShadowB bd /\ (forall y, In y ys -> ~ In y (bound_vars_b bd)).
+Proof.
+  intros x brs c ys bd Hin HND.
+  unfold NoShadowB in HND.
+  revert Hin HND. induction brs as [| [[c' ys'] bd'] brs' IHbrs]; intros Hin HND.
+  - destruct Hin.
+  - simpl in HND.
+    destruct Hin as [Heq | Hin].
+    + injection Heq as Hc Hys Hbd. subst c' ys' bd'.
+      split; [exact (NoDup_app_remove_r _ _ HND) | ].
+      assert (Hrest : NoDup (bound_vars_b bd ++
+        fold_right (fun p acc => match p with (_,ps,bd0) => ps ++ bound_vars_b bd0 ++ acc end) nil brs'))
+        by exact (NoDup_app_remove_l _ _ HND).
+      split.
+      * unfold NoShadowB. exact (NoDup_app_remove_r _ _ Hrest).
+      * intros y Hy Hc. apply (NoDup_app_disjoint _ ys _ HND y Hy). apply in_or_app. left. exact Hc.
+    + apply IHbrs; [exact Hin | ].
+      unfold NoShadowB. simpl.
+      exact (NoDup_app_remove_l _ _ (NoDup_app_remove_l _ _ HND)).
+Qed.
+
+(* Renaming never touches WHICH positions are binders, only what names sit
+   there -- rename_b's own BLet/BCase cases rename every binder position
+   too (unlike, say, constructor labels) -- so bound_vars_b commutes with
+   rename_b exactly like vars_of_e0_rename does at the Expr0 level. Same
+   well-founded-on-blk_size shape as BrsUniqB_rename_bound, for the same
+   reason (Blk's auto-generated induction principle has no usable IH for
+   bodies nested inside brs). *)
+Lemma bound_vars_b_rename_bound :
+  forall n b, blk_size b < n -> forall s, bound_vars_b (rename_b s b) = map s (bound_vars_b b).
+Proof.
+  induction n as [n IHn] using (well_founded_induction lt_wf).
+  intros b Hsize s.
+  destruct b as [x e k | x brs | e].
+  - simpl in *.
+    assert (Hn : blk_size k + 1 < n) by lia.
+    assert (Hm : blk_size k < blk_size k + 1) by lia.
+    f_equal. exact (IHn (blk_size k + 1) Hn k Hm s).
+  - simpl in *.
+    induction brs as [| [[c ys] bd] brs' IHbrs].
+    + reflexivity.
+    + simpl in Hsize |- *.
+      assert (Hbd : blk_size bd + 1 < n) by lia.
+      assert (Hm : blk_size bd < blk_size bd + 1) by lia.
+      assert (Hrest : S (fold_right (fun p acc => blk_size (match p with (_,_,bd0) => bd0 end) + acc) 0 brs') < n)
+        by lia.
+      rewrite (IHn (blk_size bd + 1) Hbd bd Hm s).
+      rewrite map_app, map_app.
+      f_equal. f_equal.
+      apply IHbrs. exact Hrest.
+  - reflexivity.
+Qed.
+
+Lemma bound_vars_b_rename : forall s b, bound_vars_b (rename_b s b) = map s (bound_vars_b b).
+Proof. intros s b. exact (bound_vars_b_rename_bound (S (blk_size b)) b (Nat.lt_succ_diag_r _) s). Qed.
+
+Lemma NoShadowB_rename : forall s b, NoShadowB b -> injective s -> NoShadowB (rename_b s b).
+Proof.
+  intros s b H Hinj. unfold NoShadowB in *. rewrite bound_vars_b_rename.
+  apply NoDup_map_inj; [intros x y Heq; exact (Hinj x y Heq) | exact H].
+Qed.
+
+(* Program-level version, parallel to FunBodyWellScoped/ProgBrsUniqWF:
+   every function body's own parameters are duplicate-free and disjoint
+   from anything the body itself binds (NoDup (ps ++ bound_vars_b body)
+   packages both facts in one condition, mirroring how BrsA_cons's own
+   local-injectivity premise packaged capture+conflation in Sec.42). *)
+Definition ProgNoShadowWF (P : Prog) : Prop :=
+  forall f ps body, P f = Some (ps, body) -> NoDup (ps ++ bound_vars_b body).
+
+(* Sec.48: the piece BlkAlpha_compose_rename's own Hbt hypothesis needed
+   at NL_Select's real call site, found by hand-deriving why a first
+   attempt at a standalone "any bound name transports" lemma was actually
+   FALSE (`let x = x + 1 in ...` -- BA_Let uses the AMBIENT sigma, not a
+   local override, for the RHS, so that x is a genuinely different, OUTER
+   reference from this let's own binder, even though numerically the
+   same).  NoShadowB alone (bound-vs-bound) doesn't rule this out; this is
+   bound-vs-free, at the SAME, WHOLE-TERM level -- deliberately NOT the
+   same as excluding a branch's own legitimate reference to an OUTER
+   pattern var, since THAT reference is properly bound (not free) once
+   free_vars_b is computed over the WHOLE enclosing term, only appearing
+   free when a subterm is examined in isolation. *)
+Definition NoCaptureB (b : Blk) : Prop :=
+  forall y, In y (bound_vars_b b) -> ~ In y (free_vars_b b).
+
+Lemma NoCaptureB_let_k :
+  forall x e k, NoCaptureB (BLet x e k) -> NoShadowB (BLet x e k) ->
+  forall y, In y (bound_vars_b k) -> ~ In y (free_vars_b k).
+Proof.
+  intros x e k HNC HNS y Hyb Hyf.
+  destruct (Nat.eq_dec y x) as [Heq | Hneq].
+  - subst y. unfold NoShadowB in HNS. simpl in HNS.
+    inversion HNS as [| ? ? Hnotin HNS']; subst. exact (Hnotin Hyb).
+  - assert (Hyf' : In y (free_vars_b (BLet x e k)))
+      by (simpl; apply in_or_app; right; apply in_in_remove; [exact Hneq | exact Hyf]).
+    assert (Hyb' : In y (bound_vars_b (BLet x e k))) by (simpl; right; exact Hyb).
+    exact (HNC y Hyb' Hyf').
+Qed.
+
+Lemma NoCaptureB_bcase_branch :
+  forall x brs c ys bd, In (c, ys, bd) brs -> NoCaptureB (BCase x brs) -> NoShadowB (BCase x brs) ->
+  forall y, In y (bound_vars_b bd) -> ~ In y (free_vars_b bd).
+Proof.
+  intros x brs c ys bd HinHead HNC HNS y Hyb Hyf.
+  destruct (in_dec Nat.eq_dec y ys) as [Hyys | Hnys].
+  - destruct (NoShadowB_bcase_branch x brs c ys bd HinHead HNS) as [_ [_ Hdisj]].
+    exact (Hdisj y Hyys Hyb).
+  - assert (Hyf' : In y (free_vars_b (BCase x brs))).
+    { apply (free_vars_b_bcase_branch x brs c ys bd HinHead). apply remove_all_in_intro; [exact Hyf | exact Hnys]. }
+    assert (Hyb' : In y (bound_vars_b (BCase x brs))).
+    { apply (bound_vars_b_bcase_branch x brs c ys bd HinHead). right. exact Hyb. }
+    exact (HNC y Hyb' Hyf').
+Qed.
+
+(* NoCaptureB's own rename-preservation, mirroring NoShadowB_rename:
+   composing bound_vars_b_rename (an EQUALITY) with free_vars_b_rename_
+   subset (only a SUBSET direction, but that's all injectivity needs to
+   pull the contradiction back to b's own, unrenamed positions). *)
+Lemma NoCaptureB_rename : forall s b, NoCaptureB b -> injective s -> NoCaptureB (rename_b s b).
+Proof.
+  intros s b HNC Hinj y Hyb Hyf.
+  rewrite bound_vars_b_rename in Hyb. apply in_map_iff in Hyb. destruct Hyb as [w [Hsw Hwb]].
+  destruct (free_vars_b_rename_subset s b y Hyf) as [w' [Hw'f Hsw']].
+  assert (Hww' : w = w') by (apply Hinj; rewrite Hsw; symmetry; exact Hsw').
+  subst w'. exact (HNC w Hwb Hw'f).
+Qed.
+
+(* Program-level version, parallel to ProgNoShadowWF. *)
+Definition ProgNoCaptureWF (P : Prog) : Prop :=
+  forall f ps body, P f = Some (ps, body) -> NoCaptureB body.
+
+(* Heap-level versions, parallel to BrsUniqHeap: every value ever stored
+   in the heap is itself NoShadowB/NoCaptureB.  Trivial to maintain across
+   NL_Let/NL_VarFree/NL_Guess's own hupd writes, since every value they
+   write is BExpr-shaped (let_content_BrsUniq's own observation), and
+   bound_vars_b (BExpr _) = nil makes BOTH facts immediate there (no
+   analogue of let_content_BrsUniq needed at all). *)
+Definition NoShadowHeap (G : NHeap) : Prop :=
+  forall z b, G z = Some b -> NoShadowB b.
+
+Definition NoCaptureHeap (G : NHeap) : Prop :=
+  forall z b, G z = Some b -> NoCaptureB b.
+
+Lemma NoShadowB_bexpr : forall e, NoShadowB (BExpr e).
+Proof. intro e. unfold NoShadowB. simpl. constructor. Qed.
+
+Lemma NoCaptureB_bexpr : forall e, NoCaptureB (BExpr e).
+Proof. intros e y Hy. simpl in Hy. destruct Hy. Qed.
+
+Lemma let_content_NoShadow : forall x e0, NoShadowB (let_content x e0).
+Proof. intros x e0. destruct e0; apply NoShadowB_bexpr. Qed.
+
+Lemma let_content_NoCapture : forall x e0, NoCaptureB (let_content x e0).
+Proof. intros x e0. destruct e0; apply NoCaptureB_bexpr. Qed.
+
+(* Local (finite-domain) versions of ren_override2_map_in/_map_Forall2:
+   only ever needs s injective ON ys, not globally -- exactly what a
+   zipsubst-shaped theta (identity off ys) can actually offer. *)
+Lemma ren_override2_map_in_local :
+  forall (ys : list var) (s s2 sigma : ren),
+  (forall w1 w2, In w1 ys -> In w2 ys -> s w1 = s w2 -> w1 = w2) ->
+  forall w, In w ys -> ren_override2 (map s ys) (map s2 ys) sigma (s w) = s2 w.
+Proof.
+  induction ys as [| y ys' IH]; intros s s2 sigma Hinj w Hw.
+  - destruct Hw.
+  - simpl. destruct (Nat.eq_dec (s w) (s y)) as [Heq | Hneq].
+    + assert (Hwy : w = y) by (apply Hinj; [exact Hw | left; reflexivity | exact Heq]). subst w. reflexivity.
+    + destruct Hw as [Hw | Hw].
+      * subst w. exfalso. exact (Hneq eq_refl).
+      * apply IH; [ intros w1 w2 Hw1 Hw2 Heq'; apply Hinj; [right; exact Hw1 | right; exact Hw2 | exact Heq'] | exact Hw].
+Qed.
+
+(* Three small, standalone Forall2 facts, none specific to this file's own
+   relations -- generic list-library-style helpers Forall2_impl (stdlib)
+   doesn't quite give: Forall2_impl has no `In`-refinement on its premise,
+   and neither of the other two exist there at all. *)
+Lemma Forall2_impl_in_l :
+  forall (A B : Type) (R S : A -> B -> Prop) (l1 : list A) (l2 : list B),
+  Forall2 R l1 l2 -> (forall a b, In a l1 -> R a b -> S a b) -> Forall2 S l1 l2.
+Proof.
+  intros A B R S l1 l2 H. induction H as [| a b l1' l2' Hab Hrest IH]; intros Himp.
+  - constructor.
+  - constructor.
+    + apply Himp; [left; reflexivity | exact Hab].
+    + apply IH. intros a0 b0 Ha0 Hab0. apply Himp; [right; exact Ha0 | exact Hab0].
+Qed.
+
+Lemma Forall2_eq_map :
+  forall (A B : Type) (f : A -> B) (l1 : list A) (l2 : list B),
+  Forall2 (fun a b => f a = b) l1 l2 -> l2 = map f l1.
+Proof.
+  intros A B f l1 l2 H. induction H as [| a b l1' l2' Hab Hrest IH].
+  - reflexivity.
+  - simpl. f_equal; [exact (eq_sym Hab) | exact IH].
+Qed.
+
+Lemma Forall2_map_both :
+  forall (A B C D : Type) (f : A -> C) (g : B -> D) (R : A -> B -> Prop) (S : C -> D -> Prop)
+    (l1 : list A) (l2 : list B),
+  (forall a b, R a b -> S (f a) (g b)) -> Forall2 R l1 l2 -> Forall2 S (map f l1) (map g l2).
+Proof.
+  intros A B C D f g R S l1 l2 H HF. induction HF as [| a b l1' l2' Hab Hrest IH].
+  - constructor.
+  - simpl. constructor; [apply H; exact Hab | exact IH].
+Qed.
+
+Lemma BlkAlpha_compose_rename :
+  forall n body, blk_size body < n ->
+  forall rho body2, BlkAlpha rho body body2 ->
+  forall theta1 theta2 sigma ysX rho0 fv1 bv1 bv2,
+  (forall w, In w (bound_vars_b body) -> In w bv1) ->
+  (forall w, In w (bound_vars_b body2) -> In w bv2) ->
+  (forall w1 w2, In w1 (vars_of_b body) -> In w2 (vars_of_b body) -> theta1 w1 = theta1 w2 ->
+     w1 = w2 \/ (In w1 ysX /\ In w2 ysX)) ->
+  (forall w1 w2, (In w1 (vars_of_b body2) \/ In w1 (map rho (vars_of_b body))) ->
+                 (In w2 (vars_of_b body2) \/ In w2 (map rho (vars_of_b body))) ->
+                 theta2 w1 = theta2 w2 -> w1 = w2 \/ (In w1 (map rho0 ysX) /\ In w2 (map rho0 ysX))) ->
+  (forall y, In y ysX -> ~ In y bv1) ->
+  (forall y, In y (map rho0 ysX) -> ~ In y bv2) ->
+  (forall y, In y bv1 -> In y (free_vars_b body) -> In (rho y) bv2) ->
+  (forall w1 w2, (In w1 ysX \/ In w1 fv1) -> (In w2 ysX \/ In w2 fv1) -> rho0 w1 = rho0 w2 -> w1 = w2) ->
+  (forall y1' y2', In y1' ysX -> In y2' ysX -> theta2 (rho0 y1') = theta2 (rho0 y2') -> theta1 y1' = theta1 y2') ->
+  (forall w, In w (free_vars_b body) ->
+     sigma (theta1 w) = theta2 (rho w) /\ (~ In w bv1 -> In w fv1 /\ rho w = rho0 w)) ->
+  BlkAlpha sigma (rename_b theta1 body) (rename_b theta2 body2).
+Proof.
+  induction n as [n IHn] using (well_founded_induction lt_wf).
+  intros body Hsize rho body2 Hba theta1 theta2 sigma ysX rho0 fv1 bv1 bv2
+    Hbv1 Hbv2 Hinj1 Hinj2 Hhyg1 Hhyg2 Hbt Hrhoinj0 Hconsistent Hagree.
+  destruct body as [x e k | x brs | e].
+  - (* BLet *)
+    remember (BLet x e k) as target eqn:Ht.
+    destruct Hba as [ | x1 x2 e1 e2 k1 k2 rho'' He Hxeq Hoff Hbk | ]; try discriminate Ht.
+    injection Ht as Htx Hte Htk; subst x1 e1 k1.
+    simpl.
+    assert (HagreeS : forall w, In w (free_vars_b (BLet x e k)) -> sigma (theta1 w) = theta2 (rho w))
+      by (intros w Hw; exact (proj1 (Hagree w Hw))).
+    assert (HeA : Expr0Alpha sigma (rename_e0 theta1 e) (rename_e0 theta2 e2)).
+    { apply (Expr0Alpha_compose_rename e rho e2 He). intros w Hw. apply HagreeS. simpl. apply in_or_app. left. exact Hw. }
+    set (sigma3 := fun w => if Nat.eq_dec w (theta1 x) then theta2 x2 else sigma w).
+    apply (BA_Let sigma (theta1 x) (theta2 x2) (rename_e0 theta1 e) (rename_e0 theta2 e2)
+             (rename_b theta1 k) (rename_b theta2 k2) sigma3).
+    + exact HeA.
+    + unfold sigma3. destruct (Nat.eq_dec (theta1 x) (theta1 x)) as [_ | Hne]; [reflexivity | congruence].
+    + intros w Hne. unfold sigma3. destruct (Nat.eq_dec w (theta1 x)) as [Heq | Hneq]; [congruence | reflexivity].
+    + assert (Hn : blk_size k + 1 < n) by (simpl in Hsize; lia).
+      assert (Hm : blk_size k < blk_size k + 1) by lia.
+      apply (IHn (blk_size k + 1) Hn k Hm rho'' k2 Hbk theta1 theta2 sigma3 ysX rho0 fv1 bv1 bv2).
+      * intros w Hw. apply Hbv1. simpl. right. exact Hw.
+      * intros w Hw. apply Hbv2. simpl. right. exact Hw.
+      * intros w1 w2 Hw1 Hw2 Heq. apply Hinj1;
+          [ simpl; right; apply in_or_app; right; exact Hw1
+          | simpl; right; apply in_or_app; right; exact Hw2 | exact Heq].
+      * intros w1 w2 Hw1 Hw2 Heq.
+        assert (Hlift : forall w, (In w (vars_of_b k2) \/ In w (map rho'' (vars_of_b k))) ->
+                        (In w (vars_of_b (BLet x2 e2 k2)) \/ In w (map rho (vars_of_b (BLet x e k))))).
+        { intros w [Hw | Hw].
+          - left. simpl. right. apply in_or_app. right. exact Hw.
+          - apply in_map_iff in Hw. destruct Hw as [y0 [Hy0eq Hy0in]].
+            destruct (Nat.eq_dec y0 x) as [Heqy0 | Hney0].
+            + subst y0. left. rewrite Hxeq in Hy0eq. subst w. simpl. left. reflexivity.
+            + right. rewrite (Hoff y0 Hney0) in Hy0eq. apply in_map_iff. exists y0.
+              split; [exact Hy0eq | simpl; right; apply in_or_app; right; exact Hy0in]. }
+        apply Hinj2; [apply Hlift; exact Hw1 | apply Hlift; exact Hw2 | exact Heq].
+      * exact Hhyg1.
+      * exact Hhyg2.
+      * intros y Hyb1 Hyvb.
+        destruct (Nat.eq_dec y x) as [Heqyx | Hneqyx].
+        -- subst y. rewrite Hxeq. apply Hbv2. simpl. left. reflexivity.
+        -- rewrite (Hoff y Hneqyx). apply Hbt.
+           ++ exact Hyb1.
+           ++ simpl. apply in_or_app. right. apply in_in_remove; [exact Hneqyx | exact Hyvb].
+      * exact Hrhoinj0.
+      * exact Hconsistent.
+      * intros w Hw.
+        destruct (Nat.eq_dec (theta1 w) (theta1 x)) as [Heqx | Hneqx].
+        -- assert (Hwmem : In w (vars_of_b (BLet x e k))).
+           { simpl. right. apply in_or_app. right. apply free_vars_b_subset_vars_of_b. exact Hw. }
+           assert (Hxmem : In x (vars_of_b (BLet x e k))) by (simpl; left; reflexivity).
+           assert (Hwx : w = x).
+           { destruct (Hinj1 w x Hwmem Hxmem Heqx) as [Heqw | [_ Hxin]]; [exact Heqw | exfalso].
+             apply (Hhyg1 x Hxin). apply Hbv1. simpl. left. reflexivity. }
+           subst w. unfold sigma3. destruct (Nat.eq_dec (theta1 x) (theta1 x)) as [_ | Hc]; [ | congruence].
+           split.
+           ++ rewrite Hxeq. reflexivity.
+           ++ intros Hnb. exfalso. apply Hnb. apply Hbv1. simpl. left. reflexivity.
+        -- assert (Hwneqx : w <> x) by (intro Hc; subst w; exact (Hneqx eq_refl)).
+           unfold sigma3. destruct (Nat.eq_dec (theta1 w) (theta1 x)) as [Hc | _]; [congruence | ].
+           rewrite (Hoff w Hwneqx).
+           assert (Hw' : In w (free_vars_b (BLet x e k))).
+           { simpl. apply in_or_app. right. apply in_in_remove; [exact Hwneqx | exact Hw]. }
+           destruct (Hagree w Hw') as [Hs Hrest].
+           split; [exact Hs | exact Hrest].
+  - (* BCase *)
+    remember (BCase x brs) as target eqn:Ht.
+    destruct Hba as [ | | x1' brs1' brs2' Hbrs ]; try discriminate Ht.
+    injection Ht as Htx Htbrs; subst x1' brs1'.
+    simpl.
+    assert (HagreeS : forall w, In w (free_vars_b (BCase x brs)) -> sigma (theta1 w) = theta2 (rho w))
+      by (intros w Hw; exact (proj1 (Hagree w Hw))).
+    assert (Hxeq : sigma (theta1 x) = theta2 (rho x)) by (apply HagreeS; left; reflexivity).
+    rewrite <- Hxeq.
+    constructor.
+    assert (Hbrs' : forall brs', (forall c ys bd, In (c, ys, bd) brs' -> In (c, ys, bd) brs) ->
+      forall brsO, (forall c ys2 b2, In (c, ys2, b2) brsO -> In (c, ys2, b2) brs2') ->
+      BrsAlpha rho brs' brsO ->
+      BrsAlpha sigma
+        (map (fun p => match p with (c, ps, bd) => (c, map theta1 ps, rename_b theta1 bd) end) brs')
+        (map (fun p => match p with (c, ps, bd) => (c, map theta2 ps, rename_b theta2 bd) end) brsO)).
+    { induction brs' as [| [[c ys] bd] brs'' IHbrs]; intros Hsub brsO Hsub2 Hb.
+      - remember (@nil (cname * list var * Blk)) as tgt eqn:Htg.
+        destruct Hb as [ | ]; try discriminate Htg. constructor.
+      - remember ((c, ys, bd) :: brs'') as tgt eqn:Htg.
+        destruct Hb as [ | c0 ys1 ys2 b1 b2 brsA brsB rho''' HF2 Hoff2 Hcap1 Hbk2 Hbrest ];
+          try discriminate Htg.
+        injection Htg as Htgc Htgys Htgbd Htgrest. subst c0 ys1 b1 brsA.
+        assert (HinHead : In (c, ys, bd) brs) by (apply Hsub; left; reflexivity).
+        assert (HinHead2 : In (c, ys2, b2) brs2') by (apply Hsub2; left; reflexivity).
+        assert (Hys2eq : ys2 = map rho''' ys) by (apply Forall2_eq_map; exact HF2).
+        assert (Hysdisj : forall y, In y ys -> ~ In y ysX).
+        { intros y Hy Hc. apply (Hhyg1 y Hc). apply Hbv1. apply (bound_vars_b_bcase_branch x brs c ys bd HinHead). left. exact Hy. }
+        set (sigma3 := ren_override2 (map theta1 ys) (map theta2 ys2) sigma).
+        assert (Hlocinj1a : forall w1 w2, (In w1 ys \/ In w1 (free_vars_b bd)) ->
+                  (In w2 ys \/ In w2 (free_vars_b bd)) -> (In w1 ys \/ In w2 ys) ->
+                  theta1 w1 = theta1 w2 -> w1 = w2).
+        { intros w1 w2 Hw1 Hw2 Hb12 Heq.
+          assert (Hmem1 : In w1 (vars_of_b (BCase x brs))).
+          { apply (vars_of_b_bcase_branch x brs c ys bd HinHead).
+            destruct Hw1 as [Hw1|Hw1]; [left; exact Hw1 | right; apply free_vars_b_subset_vars_of_b; exact Hw1]. }
+          assert (Hmem2 : In w2 (vars_of_b (BCase x brs))).
+          { apply (vars_of_b_bcase_branch x brs c ys bd HinHead).
+            destruct Hw2 as [Hw2|Hw2]; [left; exact Hw2 | right; apply free_vars_b_subset_vars_of_b; exact Hw2]. }
+          destruct (Hinj1 w1 w2 Hmem1 Hmem2 Heq) as [Heqw | [Hin1 Hin2]]; [exact Heqw | exfalso].
+          destruct Hb12 as [Hb1 | Hb2].
+          - exact (Hysdisj w1 Hb1 Hin1).
+          - exact (Hysdisj w2 Hb2 Hin2). }
+        assert (Hlocinj1ys : forall w1 w2, In w1 ys -> In w2 ys -> theta1 w1 = theta1 w2 -> w1 = w2)
+          by (intros w1 w2 Hw1 Hw2; apply Hlocinj1a; [left; exact Hw1 | left; exact Hw2 | left; exact Hw1]).
+        assert (Hstep : forall y0, In y0 ys -> sigma3 (theta1 y0) = theta2 (rho''' y0)).
+        { intros y0 Hy0. unfold sigma3. rewrite Hys2eq, map_map.
+          exact (ren_override2_map_in_local ys theta1 (fun w => theta2 (rho''' w)) sigma Hlocinj1ys y0 Hy0). }
+        assert (Hkey : forall y0, In y0 ys \/ In y0 (free_vars_b bd) -> sigma3 (theta1 y0) = theta2 (rho''' y0)).
+        { intros y0 [Hy0 | Hy0].
+          - exact (Hstep y0 Hy0).
+          - destruct (in_dec Nat.eq_dec y0 ys) as [Hyin | Hynin].
+            + exact (Hstep y0 Hyin).
+            + assert (Hnotin : ~ In (theta1 y0) (map theta1 ys)).
+              { intro Hc. apply in_map_iff in Hc. destruct Hc as [y' [Hsy' Hiny']].
+                apply Hynin. assert (Hy0y' : y0 = y') by (apply Hlocinj1a; [right; exact Hy0 | left; exact Hiny' | right; exact Hiny' | exact (eq_sym Hsy')]).
+                subst y'. exact Hiny'. }
+              unfold sigma3. rewrite (ren_override2_notin (map theta1 ys) (map theta2 ys2) sigma (theta1 y0) Hnotin).
+              rewrite (Hoff2 y0 Hynin).
+              apply HagreeS. apply (free_vars_b_bcase_branch x brs c ys bd HinHead).
+              apply remove_all_in_intro; [exact Hy0 | exact Hynin]. }
+        assert (Hboundimg : forall y, (In y ys \/ In y (free_vars_b bd)) -> In y bv1 -> In (rho''' y) bv2).
+        { intros y Hy Hyb1.
+          destruct (in_dec Nat.eq_dec y ys) as [Hyin | Hynin].
+          - apply Hbv2. apply (bound_vars_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). left.
+            rewrite Hys2eq. apply in_map_iff. exists y. split; [reflexivity | exact Hyin].
+          - rewrite (Hoff2 y Hynin). apply Hbt.
+            + exact Hyb1.
+            + assert (Hyfree : In y (free_vars_b bd)) by (destruct Hy as [Hy|Hy]; [exfalso; exact (Hynin Hy) | exact Hy]).
+              exact (free_vars_b_bcase_branch x brs c ys bd HinHead y (remove_all_in_intro ys (free_vars_b bd) y Hyfree Hynin)). }
+        apply (BrsA_cons sigma c (map theta1 ys) (map theta2 ys2) (rename_b theta1 bd) (rename_b theta2 b2)
+                 (map (fun p => match p with (c0, ps, bd0) => (c0, map theta1 ps, rename_b theta1 bd0) end) brs'')
+                 (map (fun p => match p with (c0, ps, bd0) => (c0, map theta2 ps, rename_b theta2 bd0) end) brsB)
+                 sigma3).
+        + apply (Forall2_map_both var var var var theta1 theta2
+                   (fun y1 y2 => sigma3 (theta1 y1) = theta2 y2) (fun a b => sigma3 a = b) ys ys2
+                   (fun a b H => H)).
+          apply (Forall2_impl_in_l var var (fun y1 y2 => rho''' y1 = y2) (fun y1 y2 => sigma3 (theta1 y1) = theta2 y2)
+                   ys ys2 HF2).
+          intros y1 y2 Hy1 Heq. rewrite <- Heq. exact (Hstep y1 Hy1).
+        + intros w Hw. apply ren_override2_notin. exact Hw.
+        + (* LOCAL-INJECTIVITY obligation *)
+          intros w1 w2 Hw1 Hw2 Heq.
+          assert (Hw1' : exists y1, (In y1 ys \/ In y1 (free_vars_b bd)) /\ theta1 y1 = w1).
+          { destruct Hw1 as [Hw1 | Hw1].
+            - apply in_map_iff in Hw1. destruct Hw1 as [y1 [Hy1eq Hy1in]]. exists y1. split; [left; exact Hy1in | exact Hy1eq].
+            - destruct (free_vars_b_rename_subset theta1 bd w1 Hw1) as [y1 [Hy1 Hty1]].
+              exists y1. split; [right; exact Hy1 | exact Hty1]. }
+          assert (Hw2' : exists y2, (In y2 ys \/ In y2 (free_vars_b bd)) /\ theta1 y2 = w2).
+          { destruct Hw2 as [Hw2 | Hw2].
+            - apply in_map_iff in Hw2. destruct Hw2 as [y2 [Hy2eq Hy2in]]. exists y2. split; [left; exact Hy2in | exact Hy2eq].
+            - destruct (free_vars_b_rename_subset theta1 bd w2 Hw2) as [y2 [Hy2 Hty2]].
+              exists y2. split; [right; exact Hy2 | exact Hty2]. }
+          destruct Hw1' as [y1 [Hy1 Hty1]]. destruct Hw2' as [y2 [Hy2 Hty2]].
+          subst w1 w2.
+          rewrite (Hkey y1 Hy1), (Hkey y2 Hy2) in Heq.
+          assert (Hrhoy1 : In (rho''' y1) (vars_of_b (BCase (rho x) brs2')) \/ In (rho''' y1) (map rho (vars_of_b (BCase x brs)))).
+          { destruct Hy1 as [Hy1 | Hy1].
+            - left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). left.
+              rewrite Hys2eq. apply in_map_iff. exists y1. split; [reflexivity | exact Hy1].
+            - destruct (in_dec Nat.eq_dec y1 ys) as [Hyin | Hynin].
+              + left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). left.
+                rewrite Hys2eq. apply in_map_iff. exists y1. split; [reflexivity | exact Hyin].
+              + right. rewrite (Hoff2 y1 Hynin). apply in_map_iff. exists y1.
+                split; [reflexivity | apply (vars_of_b_bcase_branch x brs c ys bd HinHead); right;
+                        apply free_vars_b_subset_vars_of_b; exact Hy1]. }
+          assert (Hrhoy2 : In (rho''' y2) (vars_of_b (BCase (rho x) brs2')) \/ In (rho''' y2) (map rho (vars_of_b (BCase x brs)))).
+          { destruct Hy2 as [Hy2 | Hy2].
+            - left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). left.
+              rewrite Hys2eq. apply in_map_iff. exists y2. split; [reflexivity | exact Hy2].
+            - destruct (in_dec Nat.eq_dec y2 ys) as [Hyin | Hynin].
+              + left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). left.
+                rewrite Hys2eq. apply in_map_iff. exists y2. split; [reflexivity | exact Hyin].
+              + right. rewrite (Hoff2 y2 Hynin). apply in_map_iff. exists y2.
+                split; [reflexivity | apply (vars_of_b_bcase_branch x brs c ys bd HinHead); right;
+                        apply free_vars_b_subset_vars_of_b; exact Hy2]. }
+          destruct (Hinj2 (rho''' y1) (rho''' y2) Hrhoy1 Hrhoy2 Heq) as [Heqrr | [Hexp1 Hexp2]].
+          * assert (Hy12' : y1 = y2) by (apply Hcap1; [exact Hy1 | exact Hy2 | exact Heqrr]).
+            f_equal. exact Hy12'.
+          * destruct (in_dec Nat.eq_dec y1 bv1) as [Hy1b | Hy1nb].
+            -- exfalso. exact (Hhyg2 (rho''' y1) Hexp1 (Hboundimg y1 Hy1 Hy1b)).
+            -- destruct (in_dec Nat.eq_dec y2 bv1) as [Hy2b | Hy2nb].
+               ++ exfalso. exact (Hhyg2 (rho''' y2) Hexp2 (Hboundimg y2 Hy2 Hy2b)).
+               ++ assert (Hy1notys : ~ In y1 ys).
+                  { intro Hc. apply Hy1nb. apply Hbv1. apply (bound_vars_b_bcase_branch x brs c ys bd HinHead). left. exact Hc. }
+                  assert (Hy2notys : ~ In y2 ys).
+                  { intro Hc. apply Hy2nb. apply Hbv1. apply (bound_vars_b_bcase_branch x brs c ys bd HinHead). left. exact Hc. }
+                  assert (Hrr1 : rho''' y1 = rho y1) by (apply Hoff2; exact Hy1notys).
+                  assert (Hrr2 : rho''' y2 = rho y2) by (apply Hoff2; exact Hy2notys).
+                  rewrite Hrr1 in Hexp1. rewrite Hrr2 in Hexp2.
+                  assert (Hy1free : In y1 (free_vars_b bd)) by (destruct Hy1 as [Hy1|Hy1]; [exfalso; exact (Hy1notys Hy1) | exact Hy1]).
+                  assert (Hy2free : In y2 (free_vars_b bd)) by (destruct Hy2 as [Hy2|Hy2]; [exfalso; exact (Hy2notys Hy2) | exact Hy2]).
+                  assert (Hy1fvbody : In y1 (free_vars_b (BCase x brs)))
+                    by (exact (free_vars_b_bcase_branch x brs c ys bd HinHead y1
+                                 (remove_all_in_intro ys (free_vars_b bd) y1 Hy1free Hy1notys))).
+                  assert (Hy2fvbody : In y2 (free_vars_b (BCase x brs)))
+                    by (exact (free_vars_b_bcase_branch x brs c ys bd HinHead y2
+                                 (remove_all_in_intro ys (free_vars_b bd) y2 Hy2free Hy2notys))).
+                  destruct (Hagree y1 Hy1fvbody) as [_ Hrest1]. destruct (Hrest1 Hy1nb) as [Hy1fv1 Hy1r0].
+                  destruct (Hagree y2 Hy2fvbody) as [_ Hrest2]. destruct (Hrest2 Hy2nb) as [Hy2fv1 Hy2r0].
+                  rewrite Hy1r0 in Hexp1. rewrite Hy2r0 in Hexp2.
+                  apply in_map_iff in Hexp1. destruct Hexp1 as [y0a [Hy0aeq Hy0ain]].
+                  apply in_map_iff in Hexp2. destruct Hexp2 as [y0b [Hy0beq Hy0bin]].
+                  assert (Hy1eq0a : y1 = y0a) by (apply Hrhoinj0; [right; exact Hy1fv1 | left; exact Hy0ain | symmetry; exact Hy0aeq]).
+                  assert (Hy2eq0b : y2 = y0b) by (apply Hrhoinj0; [right; exact Hy2fv1 | left; exact Hy0bin | symmetry; exact Hy0beq]).
+                  assert (Hgoal : theta1 y0a = theta1 y0b).
+                  { apply Hconsistent; [exact Hy0ain | exact Hy0bin | ].
+                    rewrite Hy0aeq, Hy0beq. rewrite Hrr1, Hrr2, Hy1r0, Hy2r0 in Heq. exact Heq. }
+                  rewrite Hy1eq0a, Hy2eq0b. exact Hgoal.
+        + assert (Hn : blk_size bd + 1 < n).
+          { assert (Hlt : blk_size bd < blk_size (BCase x brs)) by exact (blk_size_in_bound x brs c ys bd HinHead).
+            lia. }
+          assert (Hm : blk_size bd < blk_size bd + 1) by lia.
+          apply (IHn (blk_size bd + 1) Hn bd Hm rho''' b2 Hbk2 theta1 theta2 sigma3 ysX rho0 fv1 bv1 bv2).
+          * intros w Hw. apply Hbv1. apply (bound_vars_b_bcase_branch x brs c ys bd HinHead). right. exact Hw.
+          * intros w Hw. apply Hbv2. apply (bound_vars_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). right. exact Hw.
+          * intros w1 w2 Hw1 Hw2 Heq. apply Hinj1;
+              [ apply (vars_of_b_bcase_branch x brs c ys bd HinHead); right; exact Hw1
+              | apply (vars_of_b_bcase_branch x brs c ys bd HinHead); right; exact Hw2 | exact Heq].
+          * intros w1 w2 Hw1 Hw2 Heq.
+            assert (Hdom2 : forall w, (In w (vars_of_b b2) \/ In w (map rho''' (vars_of_b bd))) ->
+                            (In w (vars_of_b (BCase (rho x) brs2')) \/ In w (map rho (vars_of_b (BCase x brs))))).
+            { intros w [Hw | Hw].
+              - left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). right. exact Hw.
+              - apply in_map_iff in Hw. destruct Hw as [w0 [Hw0eq Hw0in]].
+                destruct (in_dec Nat.eq_dec w0 ys) as [Hyin | Hynin].
+                + left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). left.
+                  subst w. rewrite Hys2eq. apply in_map_iff. exists w0. split; [reflexivity | exact Hyin].
+                + right. subst w. rewrite (Hoff2 w0 Hynin). apply in_map_iff. exists w0.
+                  split; [reflexivity | apply (vars_of_b_bcase_branch x brs c ys bd HinHead); right; exact Hw0in]. }
+            apply Hinj2; [apply Hdom2; exact Hw1 | apply Hdom2; exact Hw2 | exact Heq].
+          * exact Hhyg1.
+          * exact Hhyg2.
+          * intros y Hy Hyb1. apply Hboundimg; [right; exact Hyb1 | exact Hy].
+          * exact Hrhoinj0.
+          * exact Hconsistent.
+          * intros w Hw.
+            rewrite (Hkey w (or_intror Hw)). split.
+            -- reflexivity.
+            -- intros Hnb.
+               destruct (in_dec Nat.eq_dec w ys) as [Hwin | Hwnin].
+               ++ exfalso. apply Hnb. apply Hbv1. apply (bound_vars_b_bcase_branch x brs c ys bd HinHead). left. exact Hwin.
+               ++ assert (Hw' : In w (free_vars_b (BCase x brs))).
+                  { apply (free_vars_b_bcase_branch x brs c ys bd HinHead).
+                    apply remove_all_in_intro; [exact Hw | exact Hwnin]. }
+                  destruct (Hagree w Hw') as [_ Hrest]. destruct (Hrest Hnb) as [Hwfv1 Hwr0].
+                  split; [exact Hwfv1 | rewrite (Hoff2 w Hwnin); exact Hwr0].
+        + apply (IHbrs (fun c0 ys0 bd0 Hin0 => Hsub c0 ys0 bd0 (or_intror Hin0)) brsB
+                   (fun c0 ys0 bd0 Hin0 => Hsub2 c0 ys0 bd0 (or_intror Hin0)) Hbrest). }
+    apply (Hbrs' brs (fun c ys bd Hin => Hin) brs2' (fun c ys2 b2 Hin => Hin) Hbrs).
+  - (* BExpr *)
+    remember (BExpr e) as target eqn:Ht.
+    destruct Hba as [e1' e2' He | | ]; try discriminate Ht.
+    injection Ht as Hte; subst e1'.
+    constructor.
+    apply (Expr0Alpha_compose_rename e rho e2' He). intros w Hw.
+    exact (proj1 (Hagree w Hw)).
+Qed.
+
 Theorem NEval_left_confluence :
   forall P F1 Gam1 e1 Gam1' v1, NEval_left P F1 Gam1 e1 Gam1' v1 ->
   forall sigma0 tau0, mutual_inverse sigma0 tau0 ->
   forall F2, F2 = map sigma0 F1 ->
   forall Gam2 e2, BlkAlpha sigma0 e1 e2 -> NHeapAlpha sigma0 tau0 Gam1 Gam2 ->
   (forall w, In w F1 -> Gam1 w <> None) -> (forall w, In w F2 -> Gam2 w <> None) ->
-  FunBodyWellScoped P -> ClosedHeap Gam1 -> (forall w, In w (free_vars_b e1) -> Gam1 w <> None) ->
+  FunBodyWellScoped P -> ProgBrsUniqWF P -> ProgNoShadowWF P -> ProgNoCaptureWF P ->
+  ClosedHeap Gam1 -> BrsUniqHeap Gam1 -> NoShadowHeap Gam1 -> NoCaptureHeap Gam1 ->
+  (forall w, In w (free_vars_b e1) -> Gam1 w <> None) -> BrsUniqB e1 ->
+  NoShadowB e1 -> NoShadowB e2 -> NoCaptureB e1 ->
   forall Gam2' v2, NEval_left P F2 Gam2 e2 Gam2' v2 ->
   exists sigma tau, mutual_inverse sigma tau /\
     (forall w, Gam1 w <> None -> sigma w = sigma0 w) /\
@@ -2956,7 +4140,9 @@ Proof.
     | F0 G0 x G1 x' c1 ys1 body1 brs G2 v ws Hrec1 IH1 Hhd Hlenws HND Hfresh2 Hrec2 IH2 ]
                                                                           (* NL_Guess *)
     ; intros sigma0 tau0 Hmi0 F2 HF2eq Gam2 e2 He2 Halpha0
-      HFdom1 HFdom2 HScoped Hclosed1 He1closed Gam2' v2 H2.
+      HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
+      Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1
+      He1closed He1BrsUniq He1NoShadow He2NoShadow He1NoCapture Gam2' v2 H2.
   - (* NL_VarCons *)
     destruct Hmi0 as [Hst0 Hts0].
     assert (Hgamx : Gam2 (sigma0 x) = Some (BExpr (ECon c0 (map sigma0 args0)))).
@@ -3046,10 +4232,17 @@ Proof.
       { intros w Hw. destruct Hw as [Hw | Hw]; [subst w; rewrite Hgamx; discriminate | exact (HFdom2 w Hw)]. }
       assert (He0closed : forall w, In w (free_vars_b e) -> G0 w <> None).
       { intros w Hw. apply (Hclosed1 x e Hgx0). apply free_vars_b_subset_vars_of_b. exact Hw. }
+      assert (He0BrsUniq : BrsUniqB e) by exact (HBrsUniqHeap1 x e Hgx0).
+      assert (He0NoShadow : NoShadowB e) by exact (HNoShadowHeap1 x e Hgx0).
+      assert (He0NoCapture : NoCaptureB e) by exact (HNoCaptureHeap1 x e Hgx0).
+      assert (Hinj0 : injective sigma0) by exact (mutual_inverse_injective_l sigma0 tau0 (conj Hst0 Hts0)).
+      assert (He0NoShadow2 : NoShadowB (rename_b sigma0 e)) by exact (NoShadowB_rename sigma0 e He0NoShadow Hinj0).
       destruct (IH sigma0 tau0 (conj Hst0 Hts0) (sigma0 x :: map sigma0 F0) eq_refl Gam2
-                  (rename_b sigma0 e) (BlkAlpha_refl sigma0 e) Halpha0
+                  (rename_b sigma0 e) (BlkAlpha_refl sigma0 Hinj0 e) Halpha0
                   HFdom1' HFdom2'
-                  HScoped Hclosed1 He0closed G1' v2 Hrec2)
+                  HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
+                  Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1
+                  He0closed He0BrsUniq He0NoShadow He0NoShadow2 He0NoCapture G1' v2 Hrec2)
         as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
       exists sigma, tau. split; [exact Hmisig | ].
       split; [exact Hext | ].
@@ -3123,7 +4316,7 @@ Proof.
     assert (Hagree : forall w, In w (free_vars_b body) -> sigma0 (s w) = s2 w).
     { intros w Hw. symmetry. apply Hparam. apply (HScoped f ps body HPf w Hw). }
     assert (HBA : BlkAlpha sigma0 (rename_b s body) (rename_b s2 body))
-      by exact (BlkAlpha_rename_scoped (S (blk_size body)) body (Nat.lt_succ_diag_r _) s s2 sigma0 Hinj Hagree).
+      by exact (BlkAlpha_rename_scoped (S (blk_size body)) body (Nat.lt_succ_diag_r _) s s2 sigma0 Hinj Hinj2 Hagree).
     assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b s body)) -> G0 w <> None).
     { intros w Hw. destruct (free_vars_b_rename_subset s body w Hw) as [y [Hy Hsy]].
       assert (Hyps : In y ps) by (apply (HScoped f ps body HPf); exact Hy).
@@ -3135,8 +4328,18 @@ Proof.
       assert (Hsya : s y = a) by exact (Hmatch i y a Hi Ha).
       assert (HGa : G0 a <> None) by (apply He1closed; simpl; exact (nth_error_In args i Ha)).
       rewrite <- Hsy, Hsya. exact HGa. }
+    assert (HbodyBrsUniq : BrsUniqB (rename_b s body)) by exact (BrsUniqB_rename s body (HProgBrsUniq f ps body HPf)).
+    assert (HbodyNS : NoShadowB body) by exact (NoDup_app_remove_l ps (bound_vars_b body) (HProgNoShadow f ps body HPf)).
+    assert (HbodyNoShadow : NoShadowB (rename_b s body))
+      by exact (NoShadowB_rename s body HbodyNS Hinj).
+    assert (HbodyNoShadow2 : NoShadowB (rename_b s2 body))
+      by exact (NoShadowB_rename s2 body HbodyNS Hinj2).
+    assert (HbodyNoCapture : NoCaptureB (rename_b s body))
+      by exact (NoCaptureB_rename s body (HProgNoCapture f ps body HPf) Hinj).
     destruct (IH sigma0 tau0 Hmi0 (map sigma0 F0) eq_refl Gam2 (rename_b s2 body) HBA Halpha0
-                HFdom1 HFdom2 HScoped Hclosed1 Hbodyclosed Gam2' v2 Hrec2)
+                HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
+                Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1
+                Hbodyclosed HbodyBrsUniq HbodyNoShadow HbodyNoShadow2 HbodyNoCapture Gam2' v2 Hrec2)
       as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
     exists sigma, tau. split; [exact Hmisig | ].
     split; [exact Hext | ].
@@ -3210,6 +4413,22 @@ Proof.
         + subst y. unfold hupd. rewrite Nat.eqb_refl. discriminate.
         + apply hupd_preserves_some. apply Heclosed. exact Hy.
       - apply hupd_preserves_some. apply (Hclosed1 w b Hwb y Hy). }
+    assert (HkBrsUniq : BrsUniqB k) by exact He1BrsUniq.
+    assert (HkNoShadow : NoShadowB k) by exact (NoShadowB_let_k x e k He1NoShadow).
+    assert (Hk2NoShadow : NoShadowB k2n) by exact (NoShadowB_let_k x2n (rename_e0 sigma0 e) k2n He2NoShadow).
+    assert (HkNoCapture : NoCaptureB k) by exact (NoCaptureB_let_k x e k He1NoCapture He1NoShadow).
+    assert (HnewBrsUniqHeap : BrsUniqHeap (hupd G0 x (let_content x e))).
+    { intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w x) eqn:Heqw.
+      - injection Hwb as Hwb; subst b. apply let_content_BrsUniq.
+      - exact (HBrsUniqHeap1 w b Hwb). }
+    assert (HnewNoShadowHeap : NoShadowHeap (hupd G0 x (let_content x e))).
+    { intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w x) eqn:Heqw.
+      - injection Hwb as Hwb; subst b. apply let_content_NoShadow.
+      - exact (HNoShadowHeap1 w b Hwb). }
+    assert (HnewNoCaptureHeap : NoCaptureHeap (hupd G0 x (let_content x e))).
+    { intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w x) eqn:Heqw.
+      - injection Hwb as Hwb; subst b. apply let_content_NoCapture.
+      - exact (HNoCaptureHeap1 w b Hwb). }
     assert (Hxnotinf0 : ~ In x F0) by (intro Hin; exact (HFdom1 x Hin Hxfresh)).
     assert (Htx2notinf0 : ~ In (tau0 x2n) F0) by (intro Hin; exact (HFdom1 (tau0 x2n) Hin HG0tx2n)).
     assert (HF2eq'' : F2 = map sigma0'' F0).
@@ -3220,7 +4439,9 @@ Proof.
     destruct (IH sigma0'' tau0'' Hmi'' F2 HF2eq'' (hupd Gam2 x2n (let_content x2n (rename_e0 sigma0 e)))
                 k2n Hbk'' Hpt
                 HFdom1' HFdom2'
-                HScoped HnewClosed Hkclosed Gam2' v2 Hrec2)
+                HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
+                HnewClosed HnewBrsUniqHeap HnewNoShadowHeap HnewNoCaptureHeap
+                Hkclosed HkBrsUniq HkNoShadow Hk2NoShadow HkNoCapture Gam2' v2 Hrec2)
       as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
     exists sigma, tau. split; [exact Hmisig | ].
     split.
@@ -3252,28 +4473,83 @@ Proof.
     assert (HBAx : BlkAlpha sigma0 (BExpr (EVar x)) (BExpr (EVar (sigma0 x))))
       by (constructor; apply Expr0Alpha_intro).
     destruct (IH sigma0 tau0 Hmi0 F1a HF2eq G1a (BExpr (EVar (sigma0 x))) HBAx Halpha0
-                HFdom1 HFdom2 HScoped Hclosed1 Hxclosed G1b v1 HrecD)
+                HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
+                Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1
+                Hxclosed I (NoShadowB_bexpr (EVar x)) (NoShadowB_bexpr (EVar (sigma0 x)))
+                (NoCaptureB_bexpr (EVar x)) G1b v1 HrecD)
       as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
     exists sigma, tau. split; [exact Hmisig | ].
     split; [exact Hext | ].
     split; [exact Halpha | exact Heqv].
-  - (* NL_Select: BCase's shape-inversion (NEval_left_bcase_shape) is a
-       TWO-way disjunction shared with NL_Guess, so ruling out D2
-       independently picking Guess needs IH1 applied first (on the
-       scrutinee-forcing sub-derivation) to pin D2's own scrutinee result
-       as provably ECon-shaped too; then the matching branch in brs2 has to
-       be related back to (c0,ys,body) via Hbrs (BrsAlpha), which needs its
-       own lookup lemma (given In (c,ys,bd) brs1 and BrsAlpha sigma brs1
-       brs2, find the corresponding (c,ys2,bd2) in brs2) -- not yet built.
-       A proper two-step argument, matching G_CaseChoice/G_CaseFun's own
-       intricacy in curry_test_leftmost.v.  NOT YET ATTEMPTED under the new
-       (BlkAlpha-based) statement; the mechanism is understood (see this
-       session's own discussion), just not written. *)
+  - (* NL_Select: substantial progress this session (Sec.40-42 of the
+       process notes); one precisely-scoped piece remains, deliberately
+       not attempted here.
+       DONE: IH1 applied first on Hrec1 rules out the Guess disjunct of
+       NEval_left_bcase_shape cleanly (forcing sigma0 x in Gam2 must come
+       back ECon-shaped, contradicting Guess's EVar-shaped result via
+       discriminate). For the surviving Select disjunct, BrsAlpha_lookup +
+       BrsAlpha_labels_eq + brs_label_unique (plus the whole BrsUniqB/
+       BrsUniqHeap/ProgBrsUniqWF apparatus and NEval_left_BrsUniqHeap_
+       preserved backing them) together pin D2's own In-witness branch
+       down to the LITERAL SAME entry BrsAlpha relates to D1's chosen
+       branch -- the "two different branches could share a constructor"
+       ambiguity is genuinely closed.
+       ALSO DONE: BlkAlpha's own BA_Case/BrsA_cons gained a "local
+       injectivity" premise (Sec.42) -- CONFIRMED necessary, not just
+       convenient, via NEval_left_confluence_stmt_is_false (a fully
+       machine-checked, zero-axiom disproof, now in failed_attempts.v)
+       against the OLD, unconstrained definition. It closes not one but
+       TWO distinct soundness bugs (capture: an outer free reference
+       landing inside ys2; conflation: two distinct pattern names
+       collapsing to the same target) with a single clean condition. All
+       9 previously-Qed'd cases + the self-confluence corollary re-
+       verified against the fix. zipsubst_compose_in/zipsubst_compose_out
+       (near zipsubst_in) are the resulting per-position facts, built and
+       Qed'd, giving exactly the commutation NL_Select's own zipsubst
+       step needs AT THE TOP LEVEL of the matched branch body.
+       Sec.43: BlkAlpha_compose_rename is NOW BUILT AND QED'D (zero admits,
+       zero axioms -- `Print Assumptions` confirms "Closed under the global
+       context"), lifting that top-level fact through body's own POSSIBLY-
+       NESTED structure exactly as planned. It generalizes BOTH
+       BlkAlpha_rename_scoped (two renamings pushed through the SAME body)
+       and BlkAlpha_change_sigma_bound (walking an EXISTING BlkAlpha witness
+       without touching its structure): given BlkAlpha rho body body2 (from
+       BrsAlpha_lookup) plus theta1/theta2 (zipsubst ys zs / zipsubst ys2
+       zs2 at this call site), concludes BlkAlpha sigma (rename_b theta1
+       body) (rename_b theta2 body2) -- with theta1/theta2 required injective
+       only LOCALLY (on vars_of_b body / a domain built from vars_of_b body2
+       and map rho (vars_of_b body), never globally -- zipsubst manifestly
+       isn't), and with NO separate "BlkAlpha preserves free variables"
+       lemma needed (every membership fact the proof needs is derived
+       directly from HF2/Hoff2/HinHead2 in hand at each level, not assumed).
+       STATUS AS OF THEOREM2_PROCESS_NOTES.md Sec.43-48: BlkAlpha_compose_
+       rename is now FULLY BUILT AND QED'D (zero admits, zero axioms),
+       handling the aliasing case (Sec.45's ysX exemption), the "at least
+       one side bound somewhere" case (Sec.47's bv1/bv2), the "both
+       genuinely free" case (Sec.47's rho0/Hrhoinj0/Hconsistent), and its
+       own Hbt hypothesis is separately dischargeable via the NEW
+       NoCaptureB invariant (Sec.48) -- all NINE new hypotheses that
+       required (NoShadowB e1/e2, NoCaptureB e1, ProgNoShadowWF/
+       ProgNoCaptureWF P, NoShadowHeap/NoCaptureHeap Gam1) are ALREADY
+       THREADED through this theorem's own statement and all 11 cases
+       (this session's own mechanical-but-real pass, mirroring Sec.40's
+       own BrsUniqB/ClosedHeap precedent). REMAINING (still admit): this
+       case's own PROOF BODY -- wiring BrsAlpha_lookup (for rho/ysX),
+       zipsubst_compose_in/zipsubst_compose_out (for Hagree),
+       NEval_left_forced_args_stay_defined (Sec.46, for the zs-freshness
+       half of Hinj2/Hconsistent), and finally BlkAlpha_compose_rename
+       itself -- has NOT yet been attempted; every piece it needs now
+       exists, Qed'd. See THEOREM2_PROCESS_NOTES.md Sec.42-48 for the
+       full history. *)
     admit.
-  - (* NL_Guess: needs batch_extend restricted to JUST ws (no pa merging
-       needed under the new design, unlike gap 7's own old blocker), plus
-       the same BrsAlpha-lookup machinery NL_Select needs to identify
-       brs2's own first branch. NOT YET ATTEMPTED under the new statement. *)
+  - (* NL_Guess: same BrsAlpha-lookup/BrsUniqB machinery as NL_Select
+       resolves its own branch-identification step (against hd_error brs =
+       Some (c1,ys1,body1), trivial since hd_error picks a unique
+       element); needs the SAME BlkAlpha_compose_rename NL_Select is
+       waiting on (now fully built and Qed'd, see above), plus its own
+       batch-splice for ws (restricted to just ws, no pa merging, per gap
+       7's resolution) -- NOT YET ATTEMPTED, pending NL_Select's own case
+       being finished first. *)
     admit.
 Admitted.
 
@@ -3288,20 +4564,39 @@ Admitted.
 Corollary NEval_left_self_confluence :
   forall P F Gam e Gam1 v1, NEval_left P F Gam e Gam1 v1 ->
   (forall w, In w F -> Gam w <> None) ->
-  FunBodyWellScoped P -> ClosedHeap Gam -> (forall w, In w (free_vars_b e) -> Gam w <> None) ->
+  FunBodyWellScoped P -> ProgBrsUniqWF P -> ProgNoShadowWF P -> ProgNoCaptureWF P ->
+  ClosedHeap Gam -> BrsUniqHeap Gam -> NoShadowHeap Gam -> NoCaptureHeap Gam ->
+  (forall w, In w (free_vars_b e) -> Gam w <> None) -> BrsUniqB e ->
+  NoShadowB e -> NoCaptureB e ->
   forall Gam2 v2, NEval_left P F Gam e Gam2 v2 ->
   exists sigma tau, mutual_inverse sigma tau /\ NHeapAlpha sigma tau Gam1 Gam2 /\ v2 = rename_b sigma v1.
 Proof.
-  intros P F Gam e Gam1 v1 H1 HFdom HScoped Hclosed Heclosed Gam2 v2 H2.
+  intros P F Gam e Gam1 v1 H1 HFdom HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
+    Hclosed HBrsUniqHeap HNoShadowHeap HNoCaptureHeap Heclosed HeBrsUniq HeNoShadow HeNoCapture Gam2 v2 H2.
   assert (HBAid : BlkAlpha (fun w => w) e e).
-  { assert (H := BlkAlpha_refl (fun w => w) e). rewrite (rename_b_id e) in H. exact H. }
+  { assert (H := BlkAlpha_refl (fun w => w) (fun x y H => H) e). rewrite (rename_b_id e) in H. exact H. }
   destruct (NEval_left_confluence P F Gam e Gam1 v1 H1
               (fun w => w) (fun w => w) mutual_inverse_id
               F (eq_sym (map_id F)) Gam e HBAid
               (NHeapAlpha_refl Gam)
               HFdom HFdom
-              HScoped Hclosed Heclosed
+              HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
+              Hclosed HBrsUniqHeap HNoShadowHeap HNoCaptureHeap
+              Heclosed HeBrsUniq HeNoShadow HeNoShadow HeNoCapture
               Gam2 v2 H2)
     as [sigma [tau [Hmi [_ [Halpha Heq]]]]].
   exists sigma, tau. split; [exact Hmi | split; [exact Halpha | exact Heq]].
 Qed.
+
+(* CONFIRMED, MACHINE-CHECKED (Sec.41-42): this gap was a genuine
+   inconsistency of NEval_left_confluence's statement as it stood before
+   the capture-avoidance premise above was added to BrsA_cons -- not just
+   an unproven proof obligation. The disproof (derives False from the
+   OLD, unconstrained BlkAlpha's own version of the theorem statement,
+   using a fully concrete instance; `Print Assumptions` on it reports
+   "Closed under the global context", zero axioms) has been relocated to
+   failed_attempts.v Sec.6, since it necessarily uses the PRE-fix BlkAlpha
+   shape (frozen there under new names, BlkAlphaOld/BrsAlphaOld) rather
+   than the live one above. See THEOREM2_PROCESS_NOTES.md Sec.40-42 for
+   the full writeup. *)
+

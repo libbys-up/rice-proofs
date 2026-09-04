@@ -2932,6 +2932,689 @@ precondition, but not yet attempted).
 
 ---
 
+## 40. Next session: built `BrsAlpha_lookup`, started `NL_Select`, found (and partly fixed) a genuinely
+new required hypothesis — unique branch-constructor labels — then hit a second, deeper gap in `BlkAlpha`
+itself
+
+**Built `BrsAlpha_lookup`** (via a position-based `BrsAlpha_nth_error` helper, so it needs no assumption
+about duplicate constructor labels — an `In`-based lookup would have been ambiguous exactly where the
+next finding bites). Cost two misdiagnosed `injection`/`induction` errors before landing on the real
+cause: `BrsAlpha` is declared via `with` alongside `BlkAlpha`, so plain `induction` does **not** treat its
+own `sigma` parameter as uniform — it comes back as a 9th, per-case-varying leading binder, silently
+shifting every subsequent name in an `as [...]` pattern by one versus what the surface `Inductive`
+declaration's `forall` list suggests. Only found by `Show`ing the raw goal instead of re-guessing the
+order a third time — worth remembering if this file's `induction`-on-`BrsAlpha` pattern ever needs
+re-deriving (T15/T21 are the same *lesson*, one level up: here it's an inductive's own parameter turning
+into a hidden index, not a constructor-argument-order mixup).
+
+**Used it to start `NL_Select`, and found the real blocker was sharper than the placeholder comment
+said.** `IH1` cleanly rules out the `NL_Guess` disjunct of `NEval_left_bcase_shape` (forcing `sigma0 x` in
+`Gam2` must come back `ECon`-shaped, since `IH1` transports `Hrec1`'s `ECon` result forward, contradicting
+`Guess`'s `EVar`-shaped result — closed by `discriminate`). For the surviving `Select` disjunct,
+`NEval_left_bcase_shape` on `H2` hands back *some* branch `(c', ys', body')` in `brs2` matching the forced
+constructor; separately, `BrsAlpha_lookup` hands back the branch that's *actually* the `BrsAlpha`-image of
+D1's own chosen branch. **Nothing forced these to be the same entry** if `brs2` has two branches sharing a
+constructor with different bodies — not a missing tactic, a missing hypothesis: the theorem (and the
+underlying semantics generally) implicitly assumes case branches are well-formed, same as real
+pattern-match compilation, but nothing said so anywhere in the Rocq encoding.
+
+**Fixed it, mirroring how `FunBodyWellScoped`/`ClosedHeap` were added for the analogous NL_Fun-era gaps.**
+Added `BrsUniqB` — a `NoBareChoiceB`-shaped recursive predicate over `Blk` requiring `NoDup` on each
+`BCase`'s own constructor-label list, recursing through `BLet`'s continuation and every branch's own body
+— plus `BrsUniqHeap` (heap-content analogue, mirroring `ClosedHeap`) and `ProgBrsUniqWF` (program-level
+analogue, mirroring `FunBodyWellScoped`). Backed by a full `NEval_left_BrsUniqHeap_preserved` theorem,
+mirroring `NEval_left_closed_preserved`'s own 11-case structure but substantially *simpler*: `BrsUniqB`
+carries no per-variable payload at all (it's a bare structural fact about a `Blk`'s own shape), so none of
+`ClosedHeap`'s free-var bookkeeping (`zipsubst_in`/`zipsubst_notin`/`NEval_left_domain_mono`) was needed —
+only `ProgBrsUniqWF`, for `NL_Fun`'s own body-unfolding, plays the role `FunBodyWellScoped` played there.
+Two more small lemmas close the actual ambiguity: `BrsAlpha_labels_eq` (`BrsAlpha` always keeps the *same*
+constructor name at each position on both lists, since `BrsA_cons`'s own conclusion uses one `c` for both
+sides — so a `NoDup` fact about `brs1`'s labels transfers to `brs2`'s `verbatim`, not just up to some
+correspondence) and `brs_label_unique` (two same-label entries in a `NoDup`-labeled list are the same
+entry). All three new hypotheses (`ProgBrsUniqWF P`, `BrsUniqHeap Gam1`, `BrsUniqB e1`) threaded through
+the theorem's statement and all 9 already-`Qed`'d cases' own recursive `IH` calls (mechanical but
+necessary — every case needed at least a pass-through, `Fun`/`Let`/`VarExp` needed a real derivation), plus
+the `NEval_left_self_confluence` corollary. File re-verified compiling clean throughout with zero
+unplanned admits after every edit.
+
+**Then `NL_Select` reached a second, deeper gap this session did *not* fix.** With the branch identified
+as the *literal same entry*, closing the case needs a `BlkAlpha` relating `rename_b (zipsubst ys zs) body`
+(D1's substituted branch) to `rename_b (zipsubst ys2 zs') body2` (D2's) — composing the branch's own
+`BlkAlpha sigma' body body2` (from `BrsAlpha_lookup`) with the two *separate* `zipsubst` renamings layered
+on top. Tracing what this composition actually needs: for `w` free in `body` outside `ys`, `sigma0 w`
+(via the theorem's own "extends" fact) must **not** collide with `ys2` — otherwise `zipsubst ys2 zs'`
+would wrongly intercept a genuinely-outer reference on D2's side. Nothing currently guarantees that.
+This is *not* the same shape as gap 8's fix (`NL_Let`'s own `x2`): `x2`'s freshness came for free from
+D2's own **operational** premise (`NL_Let` itself requires `G x = None`), but `ys`/`ys2` never touch a
+heap at all — `zipsubst` is a plain pre-evaluation substitution, so there is no operational freshness fact
+to reach for here. This looks like a genuine gap in `BlkAlpha`'s own definition: `BA_Case`/`BrsA_cons`
+currently let `ys2` be *any* names at all, with zero disjointness from anything — not something a smarter
+tactic at the `NL_Select` call site can patch around, since it's a fact about the *given*, already-fixed
+`e2`/`brs2`, not something the proof constructs. Deliberately **not fixed yet**: touching `BlkAlpha`'s own
+definition risks needing to redo pieces of all 9 already-`Qed`'d cases, which build on its current
+(unconstrained) shape — flagged for discussion rather than decided unilaterally.
+
+**Status:** `alpha_renaming_wip.v` compiles clean end to end, still exactly **2 admits** (`NL_Select`,
+`NL_Guess`) — but `NL_Select`'s own admit is now genuinely closer, with the branch-uniqueness gap fully
+resolved and the remaining blocker sharpened to one precise, well-understood question about `BlkAlpha`'s
+own definition. **Next step:** decide how to add a freshness/disjointness guarantee for a `BCase`
+branch's own bound pattern names (most likely: strengthen `BA_Case`/`BrsA_cons` itself, or add a
+program-wide "bound names are drawn from a globally-fresh pool" invariant analogous to `FunBodyWellScoped`)
+before finishing `NL_Select`; `NL_Guess` needs the identical fix plus its own already-scoped batch-splice
+work on top.
+
+## 41. Same session, continued: the user asked for a counterexample before committing to changing
+`BlkAlpha` — built one, and it's real
+
+**The question.** Before agreeing to touch `BlkAlpha` (load-bearing for all 9 already-`Qed`'d cases), the
+user asked the right question: is §40's capture gap an actual inconsistency of `NEval_left_confluence`'s
+*statement*, or just a proof-technique shortfall that a cleverer tactic might route around? The honest
+answer requires a concrete counterexample, not more paper reasoning — this file has already been burned
+before by "obviously right" hand-arguments that didn't survive contact with `Show` (§40 itself, T15/T19-T21
+throughout the glossary).
+
+**Built one, fully machine-checked.** `NEval_left_confluence_stmt_is_false` (end of `alpha_renaming_wip.v`)
+takes the theorem's own statement as a hypothesis and derives `False` from it, using a fully concrete
+instance — `sigma0 := tau0 := id`; `e1 := BCase 0 [(0, [2], BExpr (EVar 1))]`, forcing `x=0` (stored as
+`Con 0 [3]`) to select the branch, substituting its pattern var `2` (unused in the body) for `3`, then
+forcing the body's own free var `1` (stored as nullary `Con 100`) — giving `v1 = Con 100 []`. `e2 := BCase
+0 [(0, [1], BExpr (EVar 1))]` is a **perfectly valid `BlkAlpha` id-witness** for `e1` under the current,
+unconstrained `BA_Case`/`BrsA_cons` (only the pattern-var renaming `2↦1` and off-`ys` agreement are
+required, both satisfied), but branch2's own pattern var (`1`) happens to equal exactly the free variable
+its body alpha-corresponds to. Running `e2` on the *same* heap: forcing `x=0` selects the branch again,
+but now substituting *its* pattern var `1` for `3` captures the body's own `EVar 1` — rewriting it to `EVar
+3` before evaluation, so D2 forces position `3` (stored as nullary `Con 200`) instead of position `1`.
+`v2 = Con 200 []`, which cannot equal `rename_b sigma v1` (`= Con 100 []` for every `sigma`, since `v1` has
+no free variables) for *any* `sigma` — the conclusion is unsatisfiable even though every hypothesis
+(`mutual_inverse`, `NHeapAlpha`, `ClosedHeap`, `BrsUniqHeap`, `BrsUniqB e1`, `ProgBrsUniqWF`,
+`FunBodyWellScoped`, `e1`'s own free-var closedness) holds outright for this instance.
+
+**`Print Assumptions NEval_left_confluence_stmt_is_false.` reports "Closed under the global context"** —
+zero axioms, nothing `Admitted` anywhere in its dependency chain. This is as rigorous as it gets: the
+theorem's statement, exactly as currently written, can **never** be proven, independent of proof technique.
+§40's diagnosis was correct, and `BlkAlpha`'s own definition (or the theorem's hypothesis list) genuinely
+needs to change before `NL_Select`/`NL_Guess` can close.
+
+**Process note, since this cost several failed `coqc` attempts before `Qed`:** building a *disproof* this
+way (assume the target theorem's statement, derive `False` from a concrete instance) hits the same
+tactic-precision issues as any other proof in this file — got tripped up by an un-beta-reduced local
+`sigma'` closure blocking `destruct (Nat.eqb w 2) eqn:E` from finding its target (fixed with a `simpl`
+first, same lesson as T5/T19), a `rewrite`-based `Expr0Alpha_intro` application fighting itself when the
+`replace` target used the wrong (identity, not the local override) function, `reflexivity` misused on a
+`<>` goal instead of `discriminate`, `in_app_or`/`in_remove` reached for out of habit when `free_vars_b`'s
+own `BCase` case (`x :: fold_right ...`, no top-level `++`) didn't have that shape at all, and `(fun w H =>
+H)` for two now-vacuous `In w nil -> ...` premises needing `False_rect _ H` instead (since `In w nil`
+reduces to `False`, not to the goal type itself). None of these were conceptual — each was caught
+immediately by the next `coqc` error and fixed in one step once actually looked at.
+
+**Status:** `alpha_renaming_wip.v` still compiles clean, still exactly 2 admits (`NL_Select`, `NL_Guess`),
+plus one new, fully-`Qed`'d, zero-axiom disproof documenting exactly why they can't close under the
+current `BlkAlpha`. **Next step:** design the `BlkAlpha` fix (most likely a freshness/disjointness side
+condition on `BA_Case`/`BrsA_cons`'s own `ys2`, or an equivalent program-wide fresh-bound-names invariant)
+and re-verify it doesn't disturb any of the 9 already-`Qed`'d cases before resuming `NL_Select`.
+
+## 42. Same session, continued: designed and built the `BlkAlpha` fix, re-verified all 9 cases, found it
+closes TWO bugs at once, then hit a third, different (not a `BlkAlpha` defect) subtlety finishing `NL_Select`
+
+**The fix.** `BrsA_cons` gained one new premise: `sigma'` must be injective on `ys1 ++ free_vars_b b1`
+(everything this branch actually names — its own pattern vars, plus `b1`'s own free vars). Tracing through
+exactly what breaks without it found this single condition closes not one but **two** distinct soundness
+bugs:
+1. **Capture** (§41's counterexample): `w` free in `b1` outside `ys1`, with `sigma w` landing in `ys2` —
+   follows directly from the new premise + `Forall2`: if `sigma w` were `ys2`'s `i`-th entry, then
+   `sigma w = sigma' w = sigma' ys1[i]`, forcing `w = ys1[i]` by injectivity — contradicting `w` outside
+   `ys1`.
+2. **Conflation**, found only while finishing `NL_Select` with the narrower, capture-only premise this
+   session started with: two *distinct* pattern names `y ≠ y'` in `ys1` mapping to the *same* `sigma' y =
+   sigma' y'`. Nothing in the capture-only premise ruled this out, and it breaks `zipsubst` directly — if
+   `ys2` has this identification too (forced by `Forall2`), `zipsubst ys2 zs2` can only ever resolve to
+   *one* of the two intended target positions, silently losing the other. Caught by actually trying to
+   prove the `zipsubst`-commutation fact `NL_Select` needs (see below) and hitting an unprovable step, not
+   by more paper reasoning — confirms verifying against the actual downstream use, not just the
+   counterexample that motivated the first cut, is what surfaced the second bug.
+
+**Blast radius: exactly two construction sites**, found by grepping for `BrsA_cons`/`BA_Case` applications
+rather than assuming every `BlkAlpha`-touching lemma needed rework: `BlkAlpha_rename_scoped` (needed a new
+`injective s2` hypothesis — available at both real call sites, `BlkAlpha_refl` with `s2 := sigma0` via
+`mutual_inverse_injective_l`, and `NL_Fun` with `s2` via `Hinj2`, already extracted from
+`NEval_left_fun_shape` but previously unused) and `BlkAlpha_change_sigma_bound` (needed no new hypothesis
+at all — the old witness's own local-injectivity fact transports unchanged across an ambient-`sigma`
+swap, since the swap only touches positions the local override already shields). Everything else (`BlkAlpha
+_refl`'s callers, all 9 already-`Qed`'d `NL_*` cases) just needed the *new argument* threaded through, not
+new reasoning — `BlkAlpha_refl` picked up its own `injective sigma` hypothesis as a consequence.
+
+**Verifying the fix actually works, not just compiles.** Re-attempting `NEval_left_confluence_stmt_is_false`
+(§41's disproof) under the live, fixed `BlkAlpha` fails exactly where it should — the `HBA` construction's
+own `apply (BrsA_cons ...)` now demands the new injectivity obligation, which is genuinely false for that
+instance (`sigma(1)=1 ∈ ys2=[1]`), so the bad witness is no longer constructible. Relocated the disproof to
+`failed_attempts.v` (Sec.6) with a frozen, locally-renamed copy of the *old* `BlkAlpha`/`BrsAlpha`
+(`BlkAlphaOld`/`BrsAlphaOld`) so it keeps compiling independently of the live (now-fixed) definitions —
+`Print Assumptions` on it there still reports "Closed under the global context," confirming the relocation
+didn't change what it proves.
+
+**Built the per-position fact `NL_Select` actually needs.** `zipsubst_compose_in`/`zipsubst_compose_out`
+(near `zipsubst_in`, both fully `Qed`'d) give `sigma (zipsubst ys zs w) = zipsubst ys2 zs2 (sigma' w)` for
+`w` in `ys` (via the new local-injectivity premise, restricted to `ys`) and for `w` free in the branch body
+outside `ys` (via the capture half plus a new small generic helper, `Forall2_in_r`: `In` on a `Forall2`'s
+second list traces back to a related first-list element — standard, wasn't in this codebase under this
+name yet).
+
+**Then a THIRD subtlety, this time genuinely not a `BlkAlpha` defect.** Lifting the per-position fact
+above into a full `BlkAlpha` relating the two *substituted* branch bodies (`rename_b (zipsubst ys zs)
+body` vs `rename_b (zipsubst ys2 zs2) body2`) needs a new composition lemma mirroring
+`BlkAlpha_rename_scoped`'s own well-founded recursion into `body`'s structure — and at a NESTED binder
+inside `body` (say a `BLet z e k` buried inside the matched branch), the same "does the renaming conflate
+two distinct names" question resurfaces, this time asking: can `zipsubst ys zs` (a value-substitution, not
+a bijection — `zs` are literal stored heap values with no injectivity guarantee, unlike `NL_Fun`'s own `s`,
+which the semantics itself requires injective) send some field value `z ∈ zs` to the *same* name as some
+other bound variable already inside `body`? Nothing in the semantics rules this out — `ECon`'s own
+argument list carries no such guarantee, and `NL_Select` doesn't add one. This is a genuinely different
+kind of question from Sec.42's fix (a scoping/freshness question about substituted-in *values*, in the same
+family as `NL_Fun`'s own `Hfresh` or `NL_Guess`'s own `HND`/freshness premises, not a repeat of the
+capture/conflation bug in `BlkAlpha`'s own definition) — flagged in `NL_Select`'s own comment, deliberately
+not resolved this session.
+
+**Status:** `alpha_renaming_wip.v` compiles clean end to end, still exactly **2 admits** (`NL_Select`,
+`NL_Guess`) — but the `BlkAlpha` question the user asked about is now closed: confirmed genuine via a
+machine-checked disproof, fixed with a single premise that resolves two distinct bugs, and the fix is
+re-verified against all 9 previously-`Qed`'d cases plus the self-confluence corollary. **Next step:** decide
+how to state/discharge the new "substituted heap values don't collide with body-internal bound names"
+scoping fact (likely a fresh hypothesis in the `Hfresh`/`ClosedHeap` family), then build
+`BlkAlpha_compose_rename` to finish `NL_Select`; `NL_Guess` needs the identical piece plus its own
+already-scoped batch-splice work.
+
+---
+
+## 43. Next session: `BlkAlpha_compose_rename` built and Qed'd (zero admits, zero axioms) — the
+mechanical half of the gap is closed; the freshness question is isolated but still open
+
+**The lemma.** Generalizes two existing well-founded-recursion lemmas at once: `BlkAlpha_rename_scoped`
+(pushes two renamings `s`/`s2` through the *same* body) and `BlkAlpha_change_sigma_bound` (walks an
+*existing* `BlkAlpha` witness without touching its structure). Given `BlkAlpha rho body body2` (exactly
+`BrsAlpha_lookup`'s own output — `body`/`body2` possibly different terms, related via `rho`) plus two
+*further* renamings `theta1`/`theta2` (`zipsubst ys zs` / `zipsubst ys2 zs2` at the real call site), it
+concludes `BlkAlpha sigma (rename_b theta1 body) (rename_b theta2 body2)`.
+
+**The key design choice: local, not global, injectivity.** `BlkAlpha_rename_scoped`'s `Hinj`/`Hinj2` were
+*global* (`injective s`, unrestricted domain) — fine there, since `s`/`s2` were genuine bijection-shaped
+renamings. `zipsubst ys zs` manifestly is **not** globally injective (it's the identity off `ys`), so
+`BlkAlpha_compose_rename` instead requires `theta1` injective only on `vars_of_b body` (everywhere
+`rename_b` actually touches — bound names too, not just `free_vars_b`, unlike `BlkAlpha_rename_scoped`,
+since nested binders here don't get a free per-level choice of `theta1`/`theta2` the way they get a free
+per-level choice of the *ambient sigma*), and `theta2` injective on a deliberately widened domain:
+`vars_of_b body2 \/ map rho (vars_of_b body)`. The first disjunct covers positions arising from `body2`'s
+own structure (a nested branch's `ys2`); the second covers positions reached via the ambient `rho`'s
+offset behavior (any name off the local `ys`, at any depth). Working through the proof (particularly the
+`BCase` case's own recursive step and its `BrsA_cons` local-injectivity obligation) showed this exact
+two-part domain is *sufficient* to close every sub-goal using only facts already in hand at each level
+(`HF2`, `Hoff2`, `HinHead`/`HinHead2`, `Forall2_eq_map`) — with **no separate "`BlkAlpha` preserves
+free-variable-ness" transport lemma needed**. That's a real relief: such a lemma would likely be *false*
+for an arbitrary `BlkAlpha` witness satisfying only the bare inductive definition (nothing in `BA_Let`
+forces its own local override injective), so avoiding the need for it sidesteps a dead end rather than
+papering over one.
+
+**New standalone helpers built alongside it** (all fully `Qed`'d, none specific to this file's own
+relations): `vars_of_e0_rename` (computational: `vars_of_e0 (rename_e0 rho e) = map rho (vars_of_e0 e)`),
+`Expr0Alpha_compose_rename` (the `Expr0`-level analogue, composing an existing `Expr0Alpha rho e e2`
+with two further renamings), `vars_of_b_bcase_branch` (the `vars_of_b` analogue of the already-existing
+`free_vars_b_bcase_branch`, needed because injectivity here is stated over *all* of `vars_of_b`, not just
+`free_vars_b`), `ren_override2_map_in_local` (a local-injectivity version of the existing
+`ren_override2_map_in`, needing `s` injective only on `ys`, not globally — exactly what a zipsubst-shaped
+`theta` can actually offer), and three small generic `Forall2` facts stdlib's own `Forall2_impl` doesn't
+quite give (`Forall2_impl_in_l`, with an `In`-refinement on the premise; `Forall2_eq_map`; `Forall2_map_both`).
+
+**Verification.** `coqc alpha_renaming_wip.v` compiles with zero errors; `Print Assumptions
+BlkAlpha_compose_rename` reports "Closed under the global context" (checked directly, then the check line
+removed again — not left in the file). `alpha_renaming_wip.v` still has exactly its same **2 admits**
+(`NL_Select`, `NL_Guess`) — this session added a fully-`Qed`'d building block, not yet wired into either.
+
+**What's still open, precisely.** `BlkAlpha_compose_rename` is a general lemma with `Hinj1`/`Hinj2` as
+*explicit hypotheses* — building it did not require (and does not resolve) the question of how to
+*discharge* those hypotheses at `NL_Select`'s own call site. That reduces, as §42 already anticipated, to
+exactly: "no `zs`/`zs2` value collides with any *other* name (bound or free, at any depth) inside the
+matched branch body" — a genuine freshness fact about the *dynamic* heap values `zs`, in the same family
+as `Hfresh`/`HND` elsewhere in this file, not a repeat of §42's `BlkAlpha` bug (already fixed, and
+confirmed by this session's proof to not be what's blocking things now). **Next step:** decide how to
+state and obtain that freshness fact — most likely a new hypothesis on `NEval_left_confluence` itself
+(mirroring `FunBodyWellScoped`/`ClosedHeap`/`BrsUniqHeap`'s own precedent), then actually wire
+`BrsAlpha_lookup` + `zipsubst_compose_in`/`zipsubst_compose_out` + `BlkAlpha_compose_rename` together into
+`NL_Select`'s tactic script (currently still a bare `admit`); `NL_Guess` needs the identical piece plus its
+own already-scoped batch-splice work for `ws`.
+
+---
+
+## 44. Same session, continued: dug into the freshness fact and found §43's `Hinj1`/`Hinj2` are actually
+too strong — chasing the fix hits a genuine, unresolved recursive-injectivity gap, not just more casework
+
+**The starting question.** §43 left "no `zs` value collides with any other name inside `body`" as the
+freshness fact to discharge `BlkAlpha_compose_rename`'s `Hinj1`/`Hinj2`. This session traced through
+exactly *why* each is needed, one invocation at a time, rather than assuming the blanket statement was
+right.
+
+**Finding 1: full injectivity is unsound, not just strong — it rejects legitimate sharing.** `theta1 =
+zipsubst ys zs` conflating two *distinct* elements of `ys` (`ys[i] ≠ ys[j]` with `zs[i] = zs[j]`) is
+**not** a bug to exclude — it's ordinary graph-semantics aliasing (`f x = C x x` is a normal program,
+matching a runtime value with two fields sharing one heap cell; nothing anywhere in this codebase's
+`ClosedHeap`/`BrsUniqHeap`/`GEval`'s own `ECon` rule requires argument lists to be duplicate-free, and
+requiring it would be wrong). Worse: with full injectivity, `Hinj2` becomes **unsatisfiable** whenever
+sharing is present (`zs2 = map sigma zs` inherits the same duplicate, so `theta2` necessarily conflates
+the two corresponding — genuinely distinct — names in `ys2` too) — meaning `BlkAlpha_compose_rename`, as
+built in §43, could never actually be invoked for a branch matching an aliased constructor at all.
+
+**Finding 2: the correct weakening needs a "consistency" fact, not just an exemption.** Tracing every
+`Hinj1`/`Hinj2` invocation in the §43 proof found the sharing case bites in exactly **one** spot: the
+`BrsA_cons` local-injectivity obligation in the `BCase` recursion, comparing two positions that both trace
+back to the branch's own pattern list `ys`, through the nested local override `rho'''`. Everywhere else,
+at least one compared position is *provably* not a pattern-list element (a `Let`'s own fresh bound name, a
+different nested branch's own pattern list — disjoint from `ys` under the standard no-shadowing
+convention), so injectivity genuinely holds there and only needs the freshness fact (`zs`/`zs2` vs. every
+*other* name in `body`/`body2`) to be provable, exactly as §43 anticipated. The one hard spot needs: (a) a
+biconditional `Hcons` — "`theta1` conflates two `ys` elements iff `theta2` conflates the two corresponding
+`ys2` elements" (genuinely true given `zs2 = map sigma zs` plus injective `sigma`, no new hypothesis
+needed for *this* half) — and (b) recovering "these two positions came from `ys`" from "their images landed
+in `theta2`'s exempted set", which needs **`rho` injective on `ys ∪ free_vars_b body`** (call it
+`Hrhoinj`) — exactly `BrsAlpha_lookup`'s own `Hcap1`, already available for free at the outermost call.
+
+**Finding 3 (the actual wall): `Hrhoinj` doesn't survive being threaded through the recursion.**
+`Hrhoinj` is a hypothesis of the *general* lemma, so it must be re-proved fresh at *every* recursive call,
+not just the outermost one. At `BLet`'s own recursive step (proving it for the nested local override
+`rho''`, restricted to the continuation `k`), the second-side binder `x2` is an *arbitrary* witness pulled
+from whatever built the incoming `BlkAlpha` derivation — with **no established relationship to `rho`'s
+image** over anything. Nothing in scope lets you rule out `x2` coinciding with `rho`'s image of some free
+name in `k`. This is not "more of the same casework" — it's a missing piece of infrastructure (freshness
+of every constructed local-override witness relative to the ambient `rho`'s image) that doesn't currently
+exist anywhere in this file and would need its own design work, most likely tied to how `x2`-style fresh
+choices get constructed at real call sites (`splice_sigma` and friends), not something derivable from
+`BlkAlpha`'s bare inductive definition.
+
+**Decision (with the user): stop and record, rather than push through or narrow the approach yet.**
+`BlkAlpha_compose_rename` is left exactly as §43 built it (full injectivity, still `Qed`'d, zero admits,
+zero axioms) — not risking an in-progress rewrite. One small, standalone, harmless addition survives from
+this session's exploration: `bound_vars_b` (a new fixpoint, the dual of `free_vars_b` — the set of names
+introduced as a *binder* anywhere in a `Blk`, deliberately **not** the same as `vars_of_b` minus
+`free_vars_b`, since a name bound by a `Let` that's *also* free in that same `Let`'s own right-hand side —
+e.g. `let x = x + 1 in ...` — must still count as bound there) plus `bound_vars_b_bcase_branch` (the
+`bound_vars_b` analogue of `vars_of_b_bcase_branch`/`free_vars_b_bcase_branch`). Both fully `Qed`'d,
+unused so far, but likely-needed groundwork: a genuine "no shadowing of the branch's own pattern names by
+a nested binder" hypothesis (needed regardless of how the `Hrhoinj` gap gets resolved) is naturally stated
+against `bound_vars_b`, not `vars_of_b`/`free_vars_b` (working this out mid-session is what surfaced the
+distinction from `vars_of_b \ free_vars_b` in the first place).
+
+**Status:** `alpha_renaming_wip.v` compiles clean, unchanged admit count (2: `NL_Select`, `NL_Guess`).
+**Next step, next session:** resolve the `Hrhoinj` recursive-injectivity gap. Two candidate directions,
+neither attempted yet: (a) stop trying to state `BlkAlpha_compose_rename` for fully arbitrary
+`theta1`/`theta2`/`rho`, and instead build a narrower version specialized to the real
+`zipsubst`/`mutual_inverse`-shaped instantiation directly, where the needed facts about fresh witnesses may
+already be derivable from `splice_sigma`'s own construction; or (b) design and thread through the missing
+"freshly-constructed local-override witnesses never collide with the ambient renaming's image" fact as its
+own explicit hypothesis, mirroring how `Hfresh` plays this role for `NL_Fun`.
+
+## 45. Next session: built and `Qed`'d a hygiene invariant (`NoShadowB`) as directed by the user; designing
+its use inside `BlkAlpha_compose_rename` found it resolves §44's aliasing gap cleanly but exposed a second,
+entangled freshness question underneath it
+
+**The direction, chosen with the user.** Presented with §44's three candidate directions, the user picked
+option (a)-adjacent: build the Barendregt no-shadowing invariant and see how far it goes, rather than
+specialize `BlkAlpha_compose_rename` to the concrete call site or touch `BlkAlpha`'s definition a third
+time.
+
+**Built and `Qed`'d, zero admits.** `NoShadowB b := NoDup (bound_vars_b b)` (using §44's own, previously
+unused `bound_vars_b`), plus: `NoDup_app_disjoint` (a small standalone list fact `NoDup (l1++l2) -> In a l1
+-> ~In a l2`, not previously in this file under any name); `NoShadowB_let_k`/`NoShadowB_bcase_branch`
+(pulling a branch's own `NoDup ys`, its body's own `NoShadowB`, and — the fact this was built for — `ys`
+disjoint from anything the body binds at ANY depth, out of the parent's single `NoShadowB` fact, via
+`NoDup_app_remove_l`/`_r` on `bound_vars_b`'s own concatenation structure); `bound_vars_b_rename` (the
+`bound_vars_b` analogue of §43's `vars_of_e0_rename`, same well-founded-on-`blk_size` shape as
+`BrsUniqB_rename_bound` since `Blk`'s auto-generated induction principle has no usable IH for branch
+bodies); `NoShadowB_rename` (preserved under an injective renaming, composing the above with the
+already-existing `NoDup_map_inj`); `ProgNoShadowWF` (program-level lift, mirroring
+`FunBodyWellScoped`/`ProgBrsUniqWF`'s own precedent: `NoDup (ps ++ bound_vars_b body)` packages both
+"parameters duplicate-free" and "parameters disjoint from the body's own binders" in one condition, the
+same style `BrsA_cons`'s own local-injectivity premise already uses). `coqc` confirms zero errors after
+this addition, independent of everything below.
+
+**Working out `NoShadowB`'s actual USE inside `BlkAlpha_compose_rename` (not yet applied to the file — this
+was design/validation work, done by hand-tracing the proof obligations, not yet committed as an edit).**
+The plan: add an explicit `ys0` parameter (the outer branch's own, FIXED pattern list — fixed because
+`theta1`/`theta2`/`sigma` themselves never change across the lemma's own recursive `IHn` calls, confirmed by
+rereading Sec.43's proof: only `rho`/`sigma`'s *local overrides* change per level, never `theta1`/`theta2`),
+weaken `Hinj1`/`Hinj2`'s conclusions from `w1 = w2` to `w1 = w2 \/ (In w1 ys0 /\ In w2 ys0)`, and add two
+hygiene hypotheses (`Hhyg1 : forall y, In y ys0 -> ~ In y (bound_vars_b body)`, and its D2-side mirror
+`Hhyg2` using `map rho ys0`/`bound_vars_b body2`).
+
+**Where this lands cleanly.** Tracing every existing `Hinj1`/`Hinj2` call site in Sec.43's proof found each
+one splits into: (a) *domain-restriction* uses (threading the hypothesis down to a recursive `IHn` call) —
+these need **no change at all**, since the weakened conclusion has the exact same shape the recursive
+call's own hypothesis expects, so `apply Hinj1`/`apply Hinj2` unify straight through; or (b)
+*equality-deriving* uses (actually decomposing an application to get `w1 = w2`) — every one of these
+already has **at least one side that is a bound name at the relevant level** (`BLet`'s own `x` vs. an
+arbitrary free `w`; `BrsA_cons`'s own local-injectivity obligation comparing two positions both traceable
+into `ys`/`ys'` at *some* nesting level) — and for those, the exemption disjunct is directly refutable:
+whichever side is bound is, by `NoShadowB_bcase_branch`/`NoShadowB_let_k`, provably **not** in `ys0` (D1
+side) or `map rho ys0` (D2 side, since that side's bound name sits in `bound_vars_b body2`, and `Hhyg2` says
+`map rho ys0` avoids exactly that) — so the exemption branch contradicts itself immediately, leaving the
+original, unconditional `w1 = w2` argument completely intact underneath. This is exactly why the fix
+targets a **fixed, top-level** `ys0` rather than re-deriving "`rho` injective on `ys`" recursively (§44's
+own wall): the exemption's *impossibility* proof only ever needs a static fact about `bound_vars_b`, never
+a fact about what `rho`/its local overrides happen to do.
+
+**Where it does NOT yet land cleanly — a second, previously-unnoticed gap.** The one case that resists this
+treatment is `BrsA_cons`'s own local-injectivity obligation when **both** compared positions are genuinely
+free (in `free_vars_b bd`, in neither branch's own pattern list) — nothing there is bound, so the
+hygiene-based impossibility argument has no foothold, and this sub-case needs an entirely different route:
+composing the branch's own `Hagree`-style fact at both positions and cancelling gives an equation of the
+shape `sigma (theta1 y1) = sigma (theta1 y2)`, needing **`sigma` injective on that pair** to finish. Tracing
+whether *that* threads through the recursion hits a **direct re-run of §44's own wall, one level down**: at
+`BLet`'s own step, deciding whether a free-at-this-level position might actually be the *enclosing* binder's
+own name (referenced again deeper in) requires knowing the constructed second-side witness (`x2`) doesn't
+collide with the ambient renaming's image elsewhere — the exact "freshness of constructed local-override
+witnesses" gap §44 already named and left unresolved, just now cornered into a narrower spot (only the
+genuinely-free/genuinely-free pairing, not the `ys`-vs-`ys` aliasing case, which the hygiene fix *does*
+fully resolve). Tried and confirmed NOT to route around this: (a) widening `Hagree`'s own domain from
+`free_vars_b body` to `vars_of_b body` looked promising at first (bound-name instances of this fact DO come
+for free from `BA_Let`/`BrsA_cons`'s own definitional binder-pairing, e.g. `Hxeq`, no injectivity needed)
+but the free-free case still bottoms out needing `sigma`-injectivity on a domain that itself must survive
+`BLet`'s own local override, i.e. the same wall; (b) reformulating the needed fact as "`rho` injective on
+`ys0 ∪ free_vars_b body`, relative to a FIXED top-level `rho`" (mirroring how `ys0` itself is held fixed)
+looked like a closer analogue of `BrsAlpha_lookup`'s own `Hcap1`, and unlike `Hagree` it does NOT need
+special handling for bound names (a bound name is never in `free_vars_b body`, by definition, so this
+fact's domain skips them entirely) — but re-deriving it at `BLet`'s own step for a newly-free `x` (a name
+free at the child level precisely because it references the just-introduced, arbitrary `x2`) hits the
+identical wall from the opposite direction: nothing rules out `x2` coinciding with the fixed-top `rho`'s
+image of some unrelated name.
+
+**Status:** `alpha_renaming_wip.v` compiles clean, still exactly 2 admits (`NL_Select`, `NL_Guess`) —
+`BlkAlpha_compose_rename` itself was deliberately left as §43 built it (full injectivity, still `Qed`'d),
+not risking an in-progress rewrite of a lemma nothing else in the file yet calls. This session's concrete,
+committed addition is the `NoShadowB` infrastructure above (real, `Qed`'d, and confirmed to fully resolve
+the `ys`-vs-`ys` aliasing half of §44's problem) plus a validated (by hand, not yet Rocq-checked as an
+edit) design showing exactly where a second, harder question sits underneath: the "freshness of
+constructed local-override witnesses relative to the ambient renaming's image" gap §44 first named is now
+confirmed to be the genuine remaining blocker, narrowed to exactly the free-free sub-case, and demonstrably
+NOT dissolved by the hygiene invariant alone — it needs its own, separate resolution (§44's option (b)) no
+matter which domain the surrounding argument is phrased over. **Next step, flagged for discussion rather
+than decided unilaterally:** design that missing freshness fact directly (most likely tied to how `x2`/`ys2`
+-style fresh witnesses actually get constructed at real call sites — `splice_sigma`, `BlkAlpha_refl`,
+`NL_Fun`'s own `Hfresh` — rather than something derivable from `BlkAlpha`'s bare inductive definition), since
+that now looks like the one piece both `BlkAlpha_compose_rename`'s general form and any narrower,
+call-site-specific version would equally need.
+
+## 46. Same session, continued: the user's own correction to a §45 counterexample redirects the whole
+approach — the "freshness" gap dissolves operationally, not via any `BlkAlpha` change, and two new lemmas
+close it
+
+**The correction.** §45 ended by proposing to strengthen `BA_Let`/`BrsA_cons` so a constructed local-override
+witness (`x2`) can't collide with the ambient renaming's image — and, to justify it, offered a standalone
+`BlkAlpha` witness relating `let 1 = Con0 in EVar 2` to `let 2 = Con0 in EVar 2`. The user caught the actual
+problem immediately: those two terms aren't alpha-equivalent at all — `EVar 2` is a free reference in the
+first and refers to the let's own bound variable in the second — so the "counterexample" was really just
+exposing that `BA_Let`'s definition is too permissive in the abstract, not evidence that anything about the
+*confluence theorem* needs fixing.
+
+**Chasing why this matters reframed the whole approach.** `BLet` only ever evaluates via `NL_Let`, whose own
+`Hxfresh` premise (`G x = None`) has to hold before the rule can fire *at all*. In the counterexample, `Gam2`
+already had something stored at position `2` — so `NL_Let` simply can't apply to `e2` under that heap; there
+is no `D2` derivation to hand the confluence theorem, and the "bad" instance is vacuous. That matches
+exactly what `NL_Let`'s own (already-`Qed`'d) case already relies on ("x2's freshness came for free from
+D2's own operational premise" — recorded back in the notes covering that case). The real lesson: a purely
+syntactic, pre-evaluation `BlkAlpha` fact can never see this kind of protection; only interleaving with the
+actual operational derivation can.
+
+**Tried twice to build a machine-checked disproof of a sharper variant — both attempts failed instructively.**
+Rather than trust that reframing on its own (this file has been burned by hand-arguments before), built two
+successive attempts at a Sec.41-style disproof, aiming at the specific scenario `BlkAlpha_compose_rename`'s
+own "both genuinely free" sub-case was stuck on: a nested `BLet`'s freshly-chosen bound name made to collide
+with a *substituted* scrutinee value, not a heap-occupied one.
+- **Attempt 1** (colliding value drawn from a *pre-existing* heap position): failed to even get off the
+  ground. Making the two scrutinee arguments "line up" under `sigma0` forces `sigma0` to relate the
+  colliding positions directly, and `NHeapAlpha`'s own global correspondence then forces the *other* side's
+  heap to already have something at exactly the position the nested `Let` needs empty — so `Hxfresh` can
+  never hold there in the first place.
+- **Attempt 2** (colliding value drawn from a position created *mid-evaluation*, inside the scrutinee's own
+  forcing, so it isn't in the original heap `sigma0`'s "extends" clause pins down): also failed, for a
+  deeper reason — `IH1`'s own conclusion (applied to the scrutinee-forcing sub-derivation) gives
+  `NHeapAlpha sigma1 tau1 G1 Gam2'` *unconditionally*, for the whole *updated* heap, not just an "extends"
+  restriction to positions already present at the start. So even a position born partway through forcing
+  the scrutinee has its image forced to be heap-defined on the other side too.
+
+**The general fact underneath both failures, proved directly.** Combining `ClosedHeap` (whatever ends up in
+a forced constructor's own argument list must already be heap-defined — nothing referenced by a stored value
+can be dangling), `NHeapAlpha`'s full correspondence (not just its "extends" half), and
+`NEval_left_domain_mono` (already in this file — the heap only ever grows, never loses entries) gives: once
+a position lands in the scrutinee's forced arguments, its image on the *other* side stays heap-defined
+through *everything* evaluated afterward, at any depth. Since `NL_Let`'s own freshness check needs its bound
+name *undefined* at the moment it fires, this makes it impossible — not by convention, not by a new
+invariant, but as a direct consequence of machinery already `Qed`'d in this file.
+
+**Built and `Qed`'d, zero admits, zero axioms (`Print Assumptions` checked and removed again).**
+`NEval_left_forced_args_defined` — a three-line corollary of `NEval_left_closed_preserved`'s own second
+conjunct (specialized to `e := BExpr (EVar z)`, `v := BExpr (ECon c zs)`, so `free_vars_b e = [z]` and
+`vars_of_b v = zs` exactly) — gives the scrutinee's own forced arguments are heap-defined the instant forcing
+finishes. `NEval_left_forced_args_stay_defined` composes that with `nheap_rename_at` (crossing to the other
+side via `NHeapAlpha`) and `NEval_left_domain_mono` (propagating forward through *any* later evaluation `e2`
+on that side) to give the actual payoff: for every `w` in the scrutinee's forced `zs`, `sigma`'s image of `w`
+stays heap-defined through whatever the other side evaluates afterward — exactly the fact needed to
+discharge, at `NL_Select`'s real call site, the "no zs/zs2 value collides with any other name inside the
+matched branch body" obligation Sec.43's own comment on `BlkAlpha_compose_rename` flagged as separate and
+unresolved. Both lemmas placed directly after `NEval_left_closed_preserved` in `alpha_renaming_wip.v`.
+
+**Status:** `alpha_renaming_wip.v` compiles clean, still exactly 2 admits (`NL_Select`, `NL_Guess`) — this
+session's committed addition is the two lemmas above (real, `Qed`'d, verified zero-axiom), closing the
+*freshness* half of what `BlkAlpha_compose_rename` needed, operationally rather than via any `BlkAlpha`
+change (so the "third touch to `BlkAlpha`'s definition" §45 was steering toward is no longer needed at all).
+The *aliasing* half (§45's `NoShadowB`-based weakening of `Hinj1`/`Hinj2`) is still designed but not yet
+applied to the live `BlkAlpha_compose_rename`. **Next step:** decide whether to (a) finish wiring the §45
+hygiene design plus these two new freshness lemmas into an actual rebuild of `BlkAlpha_compose_rename`, or
+(b) skip the standalone lemma entirely and structure `NL_Select`'s own case to call `IH2` directly against
+the branch body's evaluation the way `NL_Fun`/`NL_Let` already do, letting each nested level's own freshness
+come from these two lemmas as it's reached rather than proving one large fact up front — §46's own findings
+(that a syntax-only, pre-evaluation composition lemma structurally can't see the protection that's actually
+doing the work) lean toward (b), but this hasn't been tried yet.
+
+## 47. Same session, continued: went with option (a) after all — re-derived the "both free" sub-case by
+hand, found the real wall was narrower than §44 thought, and fully rebuilt `BlkAlpha_compose_rename`
+(zero admits, zero axioms)
+
+**Re-deriving the "both free" gap.** Picking back up on §45's stuck point (the `BrsA_cons` local-injectivity
+obligation when neither compared position is a pattern name, at any level), traced it through by hand one
+more time rather than assuming §44's diagnosis of the wall was the final word. Two things §44 hadn't
+separated: (1) `rho`'s own nested overrides (`rho''`/`rho'''`) DO stay consistent with a fixed top-level
+`rho0` for a position that's free at the current level, via straightforward `Hoff`/`Hoff2` chaining — no
+constructed witness's arbitrariness ever enters that chain, since a genuinely free position is by
+definition never one of the witnesses. (2) The place a constructed witness's arbitrariness *does* bite
+(`Hagree`'s own bundled fact, or `Hrhoinj0`'s domain) is exactly bounded by whether the position is bound
+*anywhere* in the whole term, not just at the current level — and *that* question doesn't need chasing an
+arbitrary witness's relationship to anything: a constructed binder (`x2` from `BA_Let`, or an element of
+`ys2` from `BrsA_cons`) is by construction always a member of `bound_vars_b` of whatever body contains it,
+transitively, regardless of what value it happens to be. So a FIXED, monotonically-threaded superset of
+`bound_vars_b body`/`body2` (call them `bv1`/`bv2`, distinct from `ysX`'s own hygiene check) lets "at least
+one compared position is bound somewhere" be decided uniformly at any depth, closing that half without ever
+touching a witness's own arbitrariness — and the remaining half (both positions genuinely free, potentially
+aliased through the top branch's own pattern list) is exactly where the `rho0`/`Hrhoinj0`/`Hconsistent`
+chain from §45's design applies cleanly, since genuinely-free positions never touch a constructed witness at
+all.
+
+**The full final design, all fixed/threaded relative to the top invocation, none needing recursive
+re-derivation against an arbitrary witness:**
+- `ysX` (renamed from §45's `ys0` to avoid a real shadowing collision with an existing local binder of that
+  name elsewhere in the proof) — the exemption set, and `Hinj1`/`Hinj2` weakened exactly as §45 designed.
+- `bv1`/`bv2` — fixed supersets of `body`/`body2`'s own `bound_vars_b`, threaded via plain monotonicity
+  (`bound_vars_b k ⊆ bound_vars_b (BLet x e k) ⊆ bv1`, and symmetrically for a `BCase` branch's own body).
+  `Hhyg1`/`Hhyg2` restated against these (not the per-level `bound_vars_b`, which would miss an ancestor's
+  own binder once recursion has moved past it — the bug an earlier draft of this design hit and had to
+  correct before it worked).
+- `rho0`/`fv1`/`Hrhoinj0` — the fixed top-level `rho` and its own injectivity on `ysX ∪ fv1` (exactly
+  `BrsAlpha_lookup`'s own `Hcap1`), used only for genuinely-free positions.
+- `Hconsistent` — `theta2` conflates two `rho0`-images of `ysX` elements iff `theta1` conflates the
+  elements themselves; §44's own Finding 2a, free at the real call site.
+- `Hagree`, widened to a bundle: the usual `sigma (theta1 w) = theta2 (rho w)` unconditionally, plus (only
+  when `w` isn't bound anywhere) `In w fv1 /\ rho w = rho0 w` — threaded the same way the original `Hagree`
+  already was, with the new half simply vacuous whenever `w` happens to be an ancestor's own bound name
+  referenced freely at a deeper level (its premise `~ In w bv1` is false there, so nothing needs proving).
+
+**Built and verified in a scratch file first** (`BlkAlpha_compose_rename2`, mirroring this file's own
+practice of validating a hard case in isolation before committing it live), debugged against `coqc` through
+a sequence of concrete, small mismatches (a `free_vars_b_bcase_branch` premise that's actually
+`remove_all ys (free_vars_b bd)`, not `free_vars_b bd`, missed twice; `Hbt`'s own domain accidentally stated
+over `vars_of_b` instead of `free_vars_b`; two omitted `Hhyg1'`/`Hhyg2'` obligations in a recursive `IHn`
+call; one argument-order swap) — none of them conceptual, each caught immediately by the next `coqc` error,
+consistent with this file's whole history of tactic-precision issues being distinct from genuine gaps.
+`Print Assumptions` confirmed "Closed under the global context" before transplanting into the live file
+under the original name (`BlkAlpha_compose_rename`), replacing the Sec.43 full-injectivity version — nothing
+else in the file called it yet, so the replacement needed no other call-site updates.
+
+**Status:** `alpha_renaming_wip.v` compiles clean, still exactly 2 admits (`NL_Select`, `NL_Guess`) —
+`BlkAlpha_compose_rename` itself is now **fully closed**: zero admits, zero axioms, handling the aliasing
+case (§45), the freshness case (§46, not directly used inside this lemma but validating why the design is
+sound), and this session's own "both free" case, all as one coherent lemma. **Next step:** actually wire this
+finished lemma into `NL_Select`'s own proof (still a bare `admit`) — via `BrsAlpha_lookup` for `rho`/`ysX`
+(`Hcap1` gives `Hrhoinj0` directly), `zipsubst_compose_in`/`zipsubst_compose_out` for the top-level `Hagree`
+fact, `NEval_left_forced_args_stay_defined` (§46) for whatever freshness `Hhyg2`/`Hconsistent` still need at
+the real call site, and `NoShadowB`/`ProgNoShadowWF` (§45) threaded onto the confluence theorem itself to
+supply `bv1`/`bv2`/`Hhyg1`/`Hhyg2` — then the identical piece for `NL_Guess`, which needs nothing new beyond
+its own already-scoped batch-splice work for `ws`.
+
+## 48. Same session, continued: `Hbt` turned out to need a genuinely new hygiene fact — found by trying to
+prove a first attempt at it and discovering it was actually FALSE, then landing on a much simpler fix than
+the false attempt's own recursive shape suggested
+
+**The false start.** Tried to discharge `BlkAlpha_compose_rename`'s own `Hbt` hypothesis (needed at
+`NL_Select`'s real call site) via a general, standalone, recursively-proved lemma: "any name bound
+somewhere in a term has its `rho`-image bound somewhere in the alpha-related term too." Attempting to prove
+it surfaced a genuine counterexample to the STATEMENT itself, not a proof-technique gap: `let x = x + 1 in
+...`. `BA_Let`'s own definition uses the *ambient* `sigma` (not a local override) for the RHS's own
+`Expr0Alpha` — so the `x` referenced there is, by the formalization's own semantics, a different, *outer*
+`x`, distinct from this same `let`'s own binder, even though they're numerically identical. That position is
+simultaneously "bound" (trivially, it's this `let`'s own head) and "free" (via the RHS reference) — and
+nothing forces the *outer* `x`'s own image to be bound anywhere at all. `NoShadowB` (bound-vs-bound
+distinctness) doesn't touch this; it's a bound-vs-free question.
+
+**The fix, once framed correctly, turned out to be much simpler than the false start's own recursive shape
+suggested.** The key realization: `Hbt`, as `BlkAlpha_compose_rename`'s own already-`Qed`'d proof actually
+*uses* it, is only ever supplied ONCE, at the very top invocation — every deeper level's own version is
+already *derived*, inside that already-finished proof, via `Hoff`/`Hoff2`-chaining from that single
+top-level fact. So the standalone lemma needed at the real call site never has to be recursive or general
+at all: it only has to hold for `body` (D1's own selected branch) directly, using `body`'s own,
+directly-computed `bound_vars_b`/`free_vars_b` — not some inductively-threaded version.
+
+That single-level fact — call it `NoCaptureB b := forall y, In y (bound_vars_b b) -> ~ In y (free_vars_b
+b)` — is a NEW, standalone hygiene invariant, distinct from `NoShadowB`, and deliberately does NOT exclude
+a branch legitimately referencing an outer pattern var: that reference is *properly bound* (not free) once
+`free_vars_b` is computed over the WHOLE enclosing term (`e1`), and only reads as free when the branch's own
+body is examined in isolation — exactly the distinction that makes `Hbt`'s exemption set (`ysX`, handled
+separately via `Hrhoinj0`) safe while the `let x = x + 1` pattern isn't. Built two small transport lemmas
+(`NoCaptureB_let_k`, `NoCaptureB_bcase_branch`, mirroring `NoShadowB_bcase_branch`'s own shape closely,
+using it directly for one of the two sub-cases each needs) giving `NoCaptureB` of a `BLet`'s continuation or
+a `BCase` branch's own body from `NoCaptureB` + `NoShadowB` of the *containing* term — meaning `NoCaptureB
+body` (exactly what `Hbt` needs at the real call site) follows in one step from `NoCaptureB e1` +
+`NoShadowB e1`, both `Qed`'d, zero admits. With `NoCaptureB body` in hand, `Hbt`'s own two premises (`In y
+bv1`, `In y (free_vars_b body)`, with `bv1 := bound_vars_b body` at the top) are directly contradictory, so
+`Hbt` discharges by `exfalso` alone — no recursion, no rho reasoning, nothing about `body2` needed at all.
+
+**Status:** `alpha_renaming_wip.v` compiles clean, still exactly 2 admits (`NL_Select`, `NL_Guess`). Added
+`NoCaptureB` alongside `NoShadowB`/`ProgNoShadowWF`, both new lemmas `Qed`'d zero-admit. **Next step:**
+`NL_Select` itself still needs `NoShadowB e1`, `NoShadowB e2`, and `NoCaptureB e1` threaded onto
+`NEval_left_confluence` as new hypotheses (mechanical pass-through for the 9 already-`Qed`'d cases, real
+derivation for `NL_Fun`'s body-unfolding via program-level `ProgNoShadowWF`/an analogous `ProgNoCaptureWF`,
+and `NL_Let`'s own recursion) before the lemma built across §43-§48 can actually be invoked.
+
+## 49. Same session, continued: threaded all seven new hygiene hypotheses through `NEval_left_confluence`'s
+full 11-case induction — mechanical, but real, work touching every already-`Qed`'d case, done in one pass
+
+**The threading.** Added `ProgNoShadowWF P`, `ProgNoCaptureWF P`, `NoShadowHeap Gam1`, `NoCaptureHeap Gam1`,
+`NoShadowB e1`, `NoShadowB e2`, `NoCaptureB e1` to `NEval_left_confluence`'s own statement (mirroring exactly
+how `FunBodyWellScoped`/`ProgBrsUniqWF`/`ClosedHeap`/`BrsUniqHeap`/`BrsUniqB e1` were added in earlier
+sessions — same style, same precedent), then went through all 11 cases. Built two small heap-level
+invariants first (`NoShadowHeap`/`NoCaptureHeap`, mirroring `BrsUniqHeap`, giving every heap-stored value its
+own `NoShadowB`/`NoCaptureB`) plus `NoCaptureB_rename` (mirroring `NoShadowB_rename`, composing the already-
+existing `bound_vars_b_rename` equality with `free_vars_b_rename_subset`'s subset direction — sufficient
+since injectivity is what turns a subset argument into the needed contradiction) — both `Qed`'d, zero
+axioms, before touching the theorem's own cases.
+
+**Where real (not just mechanical) derivation was needed, matching exactly where `BrsUniqB`/`ClosedHeap`
+needed it before:**
+- `NL_VarExp` (unfolds `G0 x`'s own stored expression `e`): `NoShadowB e`/`NoCaptureB e` come from the new
+  `NoShadowHeap`/`NoCaptureHeap Gam1` hypotheses directly (mirroring how `He0BrsUniq` already came from
+  `HBrsUniqHeap1`); the D2-side fact (`NoShadowB (rename_b sigma0 e)`) comes from `NoShadowB_rename`.
+- `NL_Fun` (unfolds the called function's own body): both sides' facts come from `NoShadowB_rename`/
+  `NoCaptureB_rename` applied to `ProgNoShadowWF`/`ProgNoCaptureWF`'s own output for that function, using
+  `Hinj`/`Hinj2` (the two sides' own argument-matching injectivity, already extracted, already used by
+  `BrsUniqB_rename` right beside it) — `ProgNoShadowWF` hands back `NoDup (ps ++ bound_vars_b body)`, one
+  `NoDup_app_remove_l` away from the `NoShadowB body` actually needed.
+- `NL_Let` (recurses into the continuation `k`, and updates the heap via `hupd`): `NoShadowB k`/`NoCaptureB
+  k` come from `NoShadowB_let_k`/`NoCaptureB_let_k` applied to `e1`'s own (already-`Qed`'d, §48) hygiene
+  facts, mirroring exactly how `HkBrsUniq` already reduces to `He1BrsUniq` for free; the D2-side fact needed
+  the same extraction applied to `e2` (after `destruct He2`'s own unification retargets `He2NoShadow` onto
+  the destructured `BLet x2n e2n k2n` shape automatically, the same way `body2` got unified for free inside
+  `BlkAlpha_compose_rename` itself). The updated heap's own `NoShadowHeap`/`NoCaptureHeap` facts are
+  immediate — every value `NL_Let`/`NL_VarFree` ever write is `let_content`-shaped, hence `BExpr`-shaped,
+  hence trivially satisfies both (`bound_vars_b (BExpr _) = nil` makes `NoShadowB` a bare `NoDup nil` and
+  `NoCaptureB` vacuous) — no analogue of `let_content_BrsUniq` needed at all.
+- `NL_Or` (the `EChoice` case): both new `BExpr`-shaped facts are the same `NoShadowB_bexpr`/`NoCaptureB_
+  bexpr` triviality already used for `He1BrsUniq` there (passed as bare `I`).
+- The other 7 cases (`VarCons`/`VarSelf`/`VarFree`/`ValFree`/`ValCon`, plus the two still-`admit`'d
+  `Select`/`Guess`) needed only mechanical pass-through — no new reasoning.
+- `NEval_left_self_confluence` (the self-confluence corollary right after the theorem) needed the identical
+  seven hypotheses added to its own statement and threaded into its call to the main theorem, since `e1` and
+  `e2` coincide there (`NoShadowB e` supplied for both slots at once).
+
+**Status:** `alpha_renaming_wip.v` compiles clean, zero errors, still exactly 2 admits (`NL_Select`,
+`NL_Guess`) — this session's own §43-§49 work has now built and threaded *everything* `BlkAlpha_compose_
+rename` needs; nothing new remains to design. **Next step (turned out to be optimistic, see §50):**
+`NL_Select`'s own admit looked like a pure wiring task — build the case's actual proof body: `BrsAlpha_
+lookup` for `rho`/`ysX` (`Hcap1` gives `Hrhoinj0` directly), `zipsubst_compose_in`/`zipsubst_compose_out`
+for the top-level `Hagree` fact, `NEval_left_forced_args_stay_defined` for the freshness half `Hinj2`/
+`Hconsistent` need, `Hbt` now trivial via `NoCaptureB`, and finally `BlkAlpha_compose_rename` itself to
+close the case.
+
+## 50. Same session, continued: hand-tracing the actual wiring found one more genuine gap — `Hinj1` needs a
+freshness fact that isn't covered by anything built so far, and isn't just a mechanical detail
+
+**The wiring plan itself checked out.** Worked out, by hand, the full structure for `NL_Select`'s proof
+body: destructure `He2` to get `e2 = BCase (sigma0 x) brs2`; apply `NEval_left_bcase_shape` to `H2` to get
+D2's own two-way case split; apply `IH1` to `Hrec1` (the scrutinee's own confluence) uniformly across both
+branches, closing the Guess branch by `discriminate` (an `ECon`-shaped result can't equal an `EVar`-shaped
+one) exactly as the case's own long-standing comment already described; then, in the surviving Select
+branch, use `BrsAlpha_lookup` + `BrsAlpha_labels_eq` + `brs_label_unique` to pin D2's own `NEval_left_bcase_
+shape` witness down to the *literal same* branch entry `BrsAlpha_lookup` itself finds (this part really was
+exactly what the existing comment already claimed was done). All of that traces through cleanly using
+pieces already `Qed`'d.
+
+**Where it stopped: `Hinj1`, one of `BlkAlpha_compose_rename`'s own nine hypotheses, needs `theta1 :=
+zipsubst ys zs` to be injective except within `ys` — and checking that concretely at the real instantiation
+surfaced a case none of this session's earlier freshness work actually covers.** Splitting `theta1 w1 =
+theta1 w2` (for `w1, w2 ∈ vars_of_b body`) three ways: both in `ys` (exempted, fine), both outside `ys`
+(identity, `w1 = w2` directly, fine), and the mixed case — one of `w1`/`w2` in `ys` (so its image is some
+`zs`-value), the other a name **bound** somewhere inside `body` but not in `ys`. That mixed case needs `zs`'s
+own values to never coincide with *any* syntactic bound name anywhere in `body` — including inside branches
+`body`'s own evaluation never actually takes, since `BlkAlpha_compose_rename`'s recursion walks every branch
+of every nested `BCase`, not just the one path `Hrec2` follows.
+
+`NEval_left_forced_args_stay_defined` (§46) doesn't reach this: it protects a *specific*, operationally-
+reached binder — the moment some nested `NL_Let` in the path `Hrec2` actually takes tries to bind a name
+equal to a `zs`-value, its own `Hxfresh` (needing *undefined*) fails, because `zs`'s image stays *defined*.
+That's a real fact about the execution path Hrec2 follows, but `Hinj1` is a purely syntactic premise, needed
+*before* any of `body`'s own evaluation is examined, and it has to hold for every syntactic bound name in
+`body` — including ones in branches that are never executed at all, which have no `NL_Let` step ever firing
+to make their freshness an operational fact in the first place.
+
+**This looks like the same kind of gap Sec.44's own notes anticipated but didn't yet need** — "a program-
+wide 'bound names are drawn from a globally-fresh pool' invariant" — genuinely new design work, not a
+mechanical detail to patch in passing. Checked whether anything already threaded (`NoShadowB e1`, `NoCaptureB
+e1`, `He1closed`) covers it: `NoShadowB`/`NoCaptureB` are about bound-vs-bound and bound-vs-free *within*
+`body` itself, not about `body`'s bound names versus `zs` (external, dynamic heap values); `He1closed` only
+covers `e1`'s own *free* variables, never its bound ones.
+
+**Status:** `alpha_renaming_wip.v` unchanged since §49 (this section's work was all hand-tracing, not yet
+committed to the file) — still compiles clean, still exactly 2 admits. **Next step, flagged for discussion
+rather than decided unilaterally, matching how every other genuine fork this session hit was handled:**
+design that freshness invariant (most likely a new hypothesis on the confluence theorem itself, giving every
+constructor argument value drawn from the heap immunity from colliding with any bound name anywhere in the
+term being matched against it, with its own preservation argument through the induction) before finishing
+`NL_Select`'s proof body.
+
+---
+
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
 
 This part catalogs, with real examples, every distinct tactic/pattern used repeatedly across

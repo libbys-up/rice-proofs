@@ -214,3 +214,178 @@ Qed.
 (* HeapCorr (formerly HeapCorr3) uniformly, both as hypothesis and          *)
 (* conclusion, rather than HeapCorr2 with a downgrade at the end.            *)
 (* ======================================================================= *)
+
+(* ======================================================================= *)
+(* 6. BlkAlpha's FIRST design (Sec.40-42 of THEOREM2_PROCESS_NOTES.md,      *)
+(* alpha_renaming_wip.v) -- unconstrained branch-pattern names, killed by a *)
+(* concrete, machine-checked counterexample.                                *)
+(*                                                                          *)
+(* alpha_renaming_wip.v's BlkAlpha/BrsAlpha originally let a BCase branch's *)
+(* own target-side pattern names (ys2) be ANY names at all, with no         *)
+(* disjointness from anything -- BrsA_cons only required the pattern-var    *)
+(* renaming itself (Forall2) and off-ys agreement with the ambient sigma.   *)
+(* This is UNSOUND: it lets ys2 collide with what the ambient renaming does *)
+(* to a name free OUTSIDE the branch, so a later substitution into ys2      *)
+(* (e.g. NL_Select's own zipsubst) can capture a reference that was         *)
+(* supposed to stay free.  Confirmed, not just suspected: the lemma below   *)
+(* derives False from NEval_left_confluence's OWN STATEMENT (frozen here    *)
+(* exactly as it read before the Sec.42 fix, using the locally-defined      *)
+(* BlkAlphaOld/BrsAlphaOld below rather than the live BlkAlpha, which has   *)
+(* since been strengthened with a capture-avoidance premise precisely to    *)
+(* rule this out) taken as a hypothesis, using a fully concrete instance.   *)
+(* `Print Assumptions` on it reports "Closed under the global context" --   *)
+(* zero axioms.  So this was a genuine inconsistency of the statement as    *)
+(* originally written, not a proof-technique shortfall.                    *)
+(*                                                                          *)
+(* THE CONCRETE COUNTEREXAMPLE: sigma0 := tau0 := id.  e1 := BCase 0        *)
+(* [(0, [2], BExpr (EVar 1))] -- forcing x=0 (stored as Con 0 [3]) selects  *)
+(* the one branch, substitutes its pattern var 2 (unused in the body) for   *)
+(* 3, then forces the body's own free var 1 (stored as nullary Con 100),    *)
+(* giving v1 = Con 100 []. e2 := BCase 0 [(0, [1], BExpr (EVar 1))] -- a    *)
+(* PERFECTLY VALID BlkAlphaOld id-witness for e1 (BrsA_consOld only         *)
+(* requires the pattern-var renaming 2|->1 and offset-agreement elsewhere,  *)
+(* both of which hold here with sigma' := 2|->1, id elsewhere) -- but       *)
+(* branch2's OWN pattern var (1) happens to equal exactly the free variable *)
+(* (1) its body was alpha-corresponding to.  Running e2 on the SAME heap:   *)
+(* forcing x=0 again selects the branch, but substituting ITS pattern var 1 *)
+(* for 3 now captures the body's own EVar 1 -- rewriting it to EVar 3       *)
+(* BEFORE evaluation, so D2 forces position 3 (stored as nullary Con 200)   *)
+(* instead of position 1.  v2 = Con 200 [], which cannot equal rename_b     *)
+(* sigma v1 (= Con 100 [] for every sigma, since v1 has no free variables)  *)
+(* for ANY sigma -- the theorem's own conclusion is unsatisfiable for this  *)
+(* instance, even though every hypothesis (mutual_inverse, NHeapAlpha,      *)
+(* ClosedHeap, BrsUniqHeap, BrsUniqB e1, ProgBrsUniqWF, FunBodyWellScoped,   *)
+(* the free-var-closedness of e1) holds outright.                          *)
+(*                                                                          *)
+(* THE FIX (now live in alpha_renaming_wip.v): BrsA_cons gained a fourth    *)
+(* premise, `forall w, In w (free_vars_b b1) -> ~In w ys1 -> ~In (sigma w)  *)
+(* ys2`, ruling out exactly this collision.  Reproving this file's own     *)
+(* HBA below under the REAL (fixed) BlkAlpha genuinely fails at that new    *)
+(* obligation (as it must, since the fact it demands is false for this      *)
+(* instance) -- confirming the fix actually blocks the bad witness, not     *)
+(* just relocates the gap.                                                  *)
+(* ======================================================================= *)
+
+Require Import curry_test_leftmost.
+Require Import alpha_renaming_wip.
+
+(* Exact copy of BlkAlpha/BrsAlpha as they stood before the Sec.42 fix --
+   renamed so this file compiles independently of whatever the live
+   BlkAlpha (alpha_renaming_wip.v) has since become. *)
+Inductive BlkAlphaOld (sigma : ren) : Blk -> Blk -> Prop :=
+| BA_ExprOld : forall e1 e2, Expr0Alpha sigma e1 e2 -> BlkAlphaOld sigma (BExpr e1) (BExpr e2)
+| BA_LetOld : forall x1 x2 e1 e2 k1 k2 sigma',
+    Expr0Alpha sigma e1 e2 ->
+    sigma' x1 = x2 ->
+    (forall w, w <> x1 -> sigma' w = sigma w) ->
+    BlkAlphaOld sigma' k1 k2 ->
+    BlkAlphaOld sigma (BLet x1 e1 k1) (BLet x2 e2 k2)
+| BA_CaseOld : forall x brs1 brs2,
+    BrsAlphaOld sigma brs1 brs2 ->
+    BlkAlphaOld sigma (BCase x brs1) (BCase (sigma x) brs2)
+with BrsAlphaOld (sigma : ren) : list (cname * list var * Blk) -> list (cname * list var * Blk) -> Prop :=
+| BrsA_nilOld : BrsAlphaOld sigma nil nil
+| BrsA_consOld : forall c ys1 ys2 b1 b2 brs1 brs2 sigma',
+    Forall2 (fun y1 y2 => sigma' y1 = y2) ys1 ys2 ->
+    (forall w, ~ In w ys1 -> sigma' w = sigma w) ->
+    BlkAlphaOld sigma' b1 b2 ->
+    BrsAlphaOld sigma brs1 brs2 ->
+    BrsAlphaOld sigma ((c, ys1, b1) :: brs1) ((c, ys2, b2) :: brs2).
+
+Lemma Expr0Alpha_intro_old : forall sigma e, Expr0Alpha sigma e (rename_e0 sigma e).
+Proof. exact Expr0Alpha_intro. Qed.
+
+Lemma NEval_left_confluence_stmt_is_false :
+  (forall P F1 Gam1 e1 Gam1' v1, NEval_left P F1 Gam1 e1 Gam1' v1 ->
+   forall sigma0 tau0, mutual_inverse sigma0 tau0 ->
+   forall F2, F2 = map sigma0 F1 ->
+   forall Gam2 e2, BlkAlphaOld sigma0 e1 e2 -> NHeapAlpha sigma0 tau0 Gam1 Gam2 ->
+   (forall w, In w F1 -> Gam1 w <> None) -> (forall w, In w F2 -> Gam2 w <> None) ->
+   FunBodyWellScoped P -> ProgBrsUniqWF P ->
+   ClosedHeap Gam1 -> BrsUniqHeap Gam1 ->
+   (forall w, In w (free_vars_b e1) -> Gam1 w <> None) -> BrsUniqB e1 ->
+   forall Gam2' v2, NEval_left P F2 Gam2 e2 Gam2' v2 ->
+   exists sigma tau, mutual_inverse sigma tau /\
+     (forall w, Gam1 w <> None -> sigma w = sigma0 w) /\
+     NHeapAlpha sigma tau Gam1' Gam2' /\ v2 = rename_b sigma v1)
+  -> False.
+Proof.
+  intro Hthm.
+  pose (Gam1 := fun n : nat =>
+    if Nat.eqb n 0 then Some (BExpr (ECon 0 (3 :: nil)))
+    else if Nat.eqb n 1 then Some (BExpr (ECon 100 nil))
+    else if Nat.eqb n 3 then Some (BExpr (ECon 200 nil))
+    else None).
+  pose (brs1 := (0, (2 :: nil), BExpr (EVar 1)) :: nil).
+  pose (e1 := BCase 0 brs1).
+  pose (brs2 := (0, (1 :: nil), BExpr (EVar 1)) :: nil).
+  pose (e2 := BCase 0 brs2).
+  pose (P0 := fun _ : fname => @None (list var * Blk)).
+  assert (H1 : NEval_left P0 nil Gam1 e1 Gam1 (BExpr (ECon 100 nil))).
+  { unfold e1, brs1.
+    eapply NL_Select.
+    - apply NL_VarCons. reflexivity.
+    - left. reflexivity.
+    - reflexivity.
+    - simpl. apply NL_VarCons. reflexivity.
+  }
+  assert (H2 : NEval_left P0 nil Gam1 e2 Gam1 (BExpr (ECon 200 nil))).
+  { unfold e2, brs2.
+    eapply NL_Select.
+    - apply NL_VarCons. reflexivity.
+    - left. reflexivity.
+    - reflexivity.
+    - simpl. apply NL_VarCons. reflexivity.
+  }
+  assert (HBA : BlkAlphaOld (fun w => w) e1 e2).
+  { unfold e1, e2, brs1, brs2.
+    replace 0 with ((fun w:nat => w) 0) at 2 by reflexivity.
+    apply BA_CaseOld.
+    apply (BrsA_consOld (fun w:nat => w) 0 (2::nil) (1::nil) (BExpr (EVar 1)) (BExpr (EVar 1)) nil nil
+             (fun w => if Nat.eqb w 2 then 1 else w)).
+    - constructor; [reflexivity | constructor].
+    - intros w Hw. simpl. destruct (Nat.eqb w 2) eqn:E; [ | reflexivity].
+      apply Nat.eqb_eq in E. subst w. exfalso. apply Hw. left. reflexivity.
+    - apply BA_ExprOld. apply Expr0Alpha_intro_old.
+    - apply BrsA_nilOld.
+  }
+  assert (HScoped : FunBodyWellScoped P0) by (intros f ps body Hf; discriminate Hf).
+  assert (HProgBrsUniq : ProgBrsUniqWF P0) by (intros f ps body Hf; discriminate Hf).
+  assert (HClosed : ClosedHeap Gam1).
+  { intros z b Hzb w Hw. unfold Gam1 in Hzb.
+    destruct (Nat.eqb z 0) eqn:E0.
+    - injection Hzb as Hzb; subst b. simpl in Hw. destruct Hw as [Hw | []]. subst w. unfold Gam1. discriminate.
+    - destruct (Nat.eqb z 1) eqn:E1.
+      + injection Hzb as Hzb; subst b. simpl in Hw. destruct Hw.
+      + destruct (Nat.eqb z 3) eqn:E3.
+        * injection Hzb as Hzb; subst b. simpl in Hw. destruct Hw.
+        * discriminate Hzb.
+  }
+  assert (HBrsUniqHeap : BrsUniqHeap Gam1).
+  { intros z b Hzb. unfold Gam1 in Hzb.
+    destruct (Nat.eqb z 0); [injection Hzb as Hzb; subst b; exact I | ].
+    destruct (Nat.eqb z 1); [injection Hzb as Hzb; subst b; exact I | ].
+    destruct (Nat.eqb z 3); [injection Hzb as Hzb; subst b; exact I | discriminate Hzb].
+  }
+  assert (Heclosed1 : forall w, In w (free_vars_b e1) -> Gam1 w <> None).
+  { unfold e1, brs1. simpl. intros w Hw.
+    destruct Hw as [Hw | [Hw | []]]; subst w; unfold Gam1; discriminate.
+  }
+  assert (He1BrsUniq : BrsUniqB e1).
+  { unfold e1, brs1. simpl.
+    split; [ | split; [exact I | exact I]].
+    constructor; [intro H; destruct H | constructor]. }
+  destruct (Hthm P0 nil Gam1 e1 Gam1 (BExpr (ECon 100 nil)) H1
+              (fun w => w) (fun w => w) mutual_inverse_id
+              nil (eq_sym (map_id nil)) Gam1 e2 HBA (NHeapAlpha_refl Gam1)
+              (fun w H => False_rect _ H) (fun w H => False_rect _ H)
+              HScoped HProgBrsUniq HClosed HBrsUniqHeap Heclosed1 He1BrsUniq
+              Gam1 (BExpr (ECon 200 nil)) H2)
+    as [sigma [tau [Hmi [Hext [Halpha Heq]]]]].
+  simpl in Heq.
+  discriminate Heq.
+Qed.
+
+(* Print Assumptions NEval_left_confluence_stmt_is_false. reports "Closed
+   under the global context" -- zero axioms, fully verified. *)
+Print Assumptions NEval_left_confluence_stmt_is_false.
