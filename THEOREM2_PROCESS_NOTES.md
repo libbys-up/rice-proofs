@@ -3761,6 +3761,55 @@ G1`, then the same `zipsubst_in`-plus-contrapositive argument already proven ins
 Select case), and finally `BlkAlpha_compose_rename` itself to close the case — genuinely the first time
 every single piece it needs has existed, Qed'd, before starting; `NL_Guess` mirrors it afterward.
 
+## 53. Same session, continued: started writing `NL_Select`'s actual proof body, found `Hinj1` — even with
+`GlobalFreshHeap` in hand — fails for a SECOND, structurally different collision (a substituted constructor
+field vs. an unrelated already-live free variable, not a bound one); confirmed both halves with a
+machine-checked disproof + companion derivation before doing anything about it
+
+**The new collision, found by hand-tracing `Hinj1`'s literal requirement.** `Hinj1` quantifies over ALL of
+`vars_of_b body` (not just its bound names), requiring: for `w1, w2 ∈ vars_of_b body` with `zipsubst ys zs w1
+= zipsubst ys zs w2`, either `w1 = w2` or both are pattern variables (`ysX = ys`). `GlobalFreshHeap` protects
+the "both bound-vs-pattern" collision (§50-52's own motivating case). It does NOT protect this one: take a
+branch `case x of C w1 -> let dummy = w2 in w1`, where `w2` is an ordinary, already-live FREE variable of the
+branch (nothing to do with the match), and suppose forcing `x` yields `Con C [w2]` — i.e. the constructor's
+OWN field happens to literally be `w2`, the SAME already-existing variable the branch also references
+directly. Nothing rules this out: a forced constructor's fields are just whatever pre-existing bindings the
+program put there, with no reason to avoid every OTHER free variable the matched branch happens to also
+mention (this is ordinary sharing, exactly the kind of aliasing this graph-reduction semantics exists to
+support). After substitution (`theta1 := zipsubst [w1] [w2]`), BOTH the pattern-var occurrence (now `w2`) AND
+the pre-existing free occurrence of `w2` read as the bare name `w2` — `theta1` sends two DISTINCT names to
+the same value, `w2` is not a pattern variable, and `w1 ≠ w2` — neither `Hinj1` disjunct is available.
+
+**Confirmed with a machine-checked disproof before designing anything** (user's explicit direction, mirroring
+this project's own established practice — `NEval_left_confluence_stmt_is_false`'s precedent) — TWO separate
+checks, both in `failed_attempts.v` §7, both `Print Assumptions`-clean (zero axioms):
+1. `Hinj1_fails_concretely`: a fully concrete instance (`ys := [1]`, `zs := [2]`, `body := let 3 = 2 in 1`,
+   so `vars_of_b body = [3;2;1]`) where `zipsubst [1] [2]` sends both `1` and `2` to `2`, with neither
+   disjunct available — a bare five-line computation, no `NEval_left`/`GEval` machinery needed at all.
+2. **The crucial companion check, to determine severity**: does `NEval_left_confluence`'s own CONCLUSION
+   still hold in a full, concrete instance of exactly this scenario, or is the theorem itself now suspect?
+   Built two complete, literal `NEval_left` derivations (`Hinj1_D1_ex`/`Hinj1_D2_ex`) from the identical heap
+   — `D1` over a branch with pattern var `1`, `D2` over the alpha-variant with pattern var `4` (`sigma0 :=
+   id`, the branch's own local override sending `1 ↦ 4`) — and both reach the literal SAME final value
+   (`BExpr (ECon 5 [])`), alpha-related by plain `id`. **This settles the question**: `NEval_left_confluence`
+   itself is NOT threatened by this scenario — this is a proof-TECHNIQUE gap in `BlkAlpha_compose_rename`'s
+   current design (its `Hinj1` hypothesis is strictly stronger than the theorem actually needs), not a
+   soundness bug in the theorem's statement, unlike §41/45's own disproof (which WAS a genuine inconsistency
+   of the statement as it then stood).
+
+**Status:** `failed_attempts.v` gains four new lemmas (§7), all `Print Assumptions`-clean; `alpha_renaming_wip.v`
+and `curry_test_leftmost.v` both unchanged, still compiling clean, still exactly 2 admits. **Next step,
+flagged for discussion rather than decided unilaterally, matching how every other genuine fork this session
+hit was handled:** design a fix. Two directions sketched but not yet attempted: (a) widen `BlkAlpha_compose_
+rename`'s own exemption structure — e.g. a third `Hinj1` disjunct covering "both `theta1`-images already
+agree with what `Hagree`/`Hconsistent` independently pin down," letting the "collides with an already-
+consistent free variable" case through soundly; or (b) a different overall proof strategy for `NL_Select`
+that doesn't route through `BlkAlpha_compose_rename`'s current shape at all. (a) keeps the substantial
+existing investment in that lemma but requires re-deriving its own internal induction against a weaker
+hypothesis (real risk of hitting the same kind of "at least one side bound somewhere" case-split work §44-47
+already went through once); (b) risks discarding a large, fully-`Qed`'d piece of machinery for an unknown
+replacement. Neither has been attempted.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary

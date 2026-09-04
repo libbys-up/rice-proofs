@@ -389,3 +389,99 @@ Qed.
 (* Print Assumptions NEval_left_confluence_stmt_is_false. reports "Closed
    under the global context" -- zero axioms, fully verified. *)
 Print Assumptions NEval_left_confluence_stmt_is_false.
+
+(* ======================================================================= *)
+(* 7. BlkAlpha_compose_rename's own Hinj1 hypothesis, checked directly      *)
+(* against the natural NL_Select instantiation (THEOREM2_PROCESS_NOTES.md   *)
+(* Sec.53) -- FAILS for a concrete, semantically-harmless instance. NOT a    *)
+(* disproof of NEval_left_confluence itself (see the companion derivation    *)
+(* below, which shows confluence's own conclusion DOES hold for this exact   *)
+(* scenario) -- this is a proof-technique gap in BlkAlpha_compose_rename's   *)
+(* current design (its Hinj1 is stricter than the theorem actually needs),   *)
+(* found while trying to wire that lemma into NL_Select's own proof body.    *)
+(*                                                                           *)
+(* THE SCENARIO: a branch `case x of C w1 -> let dummy = w2 in w1` (pattern  *)
+(* var w1, some UNRELATED already-live free variable w2, both distinct       *)
+(* names). Forcing x yields `Con C [w2]` -- i.e. the constructor's OWN field  *)
+(* happens to be exactly the SAME variable w2 already referenced elsewhere   *)
+(* in the branch (ordinary sharing, not a bug: nothing requires a forced      *)
+(* constructor's fields to avoid every free variable the matched branch      *)
+(* happens to also mention). After substitution (theta1 := zipsubst [w1]     *)
+(* [w2]), BOTH w1 (the pattern var, now w2) and w2 (already free, unchanged,   *)
+(* identity) read as the bare name w2 -- theta1 sends two DISTINCT names to   *)
+(* the SAME value, with neither Hinj1 disjunct (w1=w2, or both in ysX=[w1])   *)
+(* available, since w2 is not a pattern variable at all. GlobalFreshHeap      *)
+(* (Sec.50-52) does not reach this: w2 is an ordinary FREE variable, not a    *)
+(* name bound anywhere -- a structurally different collision from the        *)
+(* "let 7 = ... in ..." bound-name case that motivated GlobalFreshHeap. *)
+Definition Pdummy : Prog := fun _ => None.
+
+Definition Hinj1_body_ex : Blk := BLet 3 (EVar 2) (BExpr (EVar 1)).
+
+Lemma Hinj1_vars_of_b_body_ex : vars_of_b Hinj1_body_ex = [3; 2; 1].
+Proof. reflexivity. Qed.
+
+Lemma Hinj1_fails_concretely :
+  ~ (forall w1 w2, In w1 (vars_of_b Hinj1_body_ex) -> In w2 (vars_of_b Hinj1_body_ex) ->
+       zipsubst [1] [2] w1 = zipsubst [1] [2] w2 ->
+       w1 = w2 \/ (In w1 [1] /\ In w2 [1])).
+Proof.
+  intro H.
+  assert (Hin1 : In 1 (vars_of_b Hinj1_body_ex)) by (rewrite Hinj1_vars_of_b_body_ex; right; right; left; reflexivity).
+  assert (Hin2 : In 2 (vars_of_b Hinj1_body_ex)) by (rewrite Hinj1_vars_of_b_body_ex; right; left; reflexivity).
+  assert (Heq : zipsubst [1] [2] 1 = zipsubst [1] [2] 2) by reflexivity.
+  destruct (H 1 2 Hin1 Hin2 Heq) as [Hc | [_ Hc2]].
+  - discriminate Hc.
+  - simpl in Hc2. destruct Hc2 as [Hc2 | Hc2]; [discriminate Hc2 | destruct Hc2].
+Qed.
+
+Print Assumptions Hinj1_fails_concretely.
+
+(* THE COMPANION CHECK: confluence's own conclusion still holds for this exact
+   scenario -- D1 (pattern var 1) and D2 (pattern var 4, an alpha-variant via
+   sigma0 := id, the branch's own local override sending 1 |-> 4) built from
+   the SAME heap both reach the literal SAME final value, alpha-related by
+   plain id.  Confirms this is a BlkAlpha_compose_rename design gap, not a
+   falsity of NEval_left_confluence. *)
+Definition Hinj1_body2_ex : Blk := BLet 3 (EVar 2) (BExpr (EVar 4)).
+
+Definition Hinj1_e1_ex : Blk := BCase 10 [(0, [1], Hinj1_body_ex)].
+Definition Hinj1_e2_ex : Blk := BCase 10 [(0, [4], Hinj1_body2_ex)].
+
+Definition Hinj1_G0_ex : NHeap :=
+  fun w => if Nat.eqb w 10 then Some (BExpr (ECon 0 [2]))
+           else if Nat.eqb w 2 then Some (BExpr (ECon 5 []))
+           else None.
+
+Definition Hinj1_Gam1'_ex : NHeap := hupd Hinj1_G0_ex 3 (BExpr (EVar 2)).
+
+Lemma Hinj1_D1_ex : NEval_left Pdummy nil Hinj1_G0_ex Hinj1_e1_ex Hinj1_Gam1'_ex (BExpr (ECon 5 [])).
+Proof.
+  unfold Hinj1_e1_ex.
+  eapply NL_Select.
+  - apply NL_VarCons. reflexivity.
+  - left. reflexivity.
+  - reflexivity.
+  - simpl. unfold Hinj1_body_ex. simpl.
+    eapply NL_Let.
+    + reflexivity.
+    + intro Hc. destruct Hc as [f [ps [body [Hc _]]]]. discriminate Hc.
+    + apply NL_VarCons. reflexivity.
+Qed.
+
+Lemma Hinj1_D2_ex : NEval_left Pdummy nil Hinj1_G0_ex Hinj1_e2_ex Hinj1_Gam1'_ex (BExpr (ECon 5 [])).
+Proof.
+  unfold Hinj1_e2_ex.
+  eapply NL_Select.
+  - apply NL_VarCons. reflexivity.
+  - left. reflexivity.
+  - reflexivity.
+  - simpl. unfold Hinj1_body2_ex. simpl.
+    eapply NL_Let.
+    + reflexivity.
+    + intro Hc. destruct Hc as [f [ps [body [Hc _]]]]. discriminate Hc.
+    + apply NL_VarCons. reflexivity.
+Qed.
+
+Print Assumptions Hinj1_D1_ex.
+Print Assumptions Hinj1_D2_ex.
