@@ -4588,6 +4588,7 @@ Lemma NEval_left_fun_shape :
     P f = Some (ps, body) /\ length ps = length args /\ injective s /\
     (forall i x a, nth_error ps i = Some x -> nth_error args i = Some a -> s x = a) /\
     (forall y, ~ In y ps -> Gam (s y) = None) /\
+    (forall y, ~ In y ps -> ~ ProgBoundName P (s y)) /\
     NEval_left P F Gam (rename_b s body) G' v.
 Proof.
   intros P F Gam f args G' v H.
@@ -4864,7 +4865,7 @@ Proof.
     + rewrite Hb in Hcase3; discriminate Hcase3.
     + rewrite Hb in Hz. injection Hz as Hz. subst e1.
       destruct (NEval_left_fun_shape P (x0::F) Gam f0 args0 G1' (BExpr (EVar x')) Hrec2)
-        as [ps [body [s [HPf [Hlen [Hinj [Hmatch [Hfresh2 Hrec3]]]]]]]].
+        as [ps [body [s [HPf [Hlen [Hinj [Hmatch [Hfresh2 [Hnbfresh2 Hrec3]]]]]]]]].
       destruct (rename_b s body) as [z e0 k | z brs2 | e0] eqn:Hbodyshape.
       * (* rename_b s body = BLet z e0 k: NL_Let picks z fresh w.r.t. Gam (via
            s); G_Fun's own s' picks fresh w.r.t. G0 instead -- s and s' can

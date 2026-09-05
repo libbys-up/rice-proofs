@@ -3810,6 +3810,48 @@ hypothesis (real risk of hitting the same kind of "at least one side bound somew
 already went through once); (b) risks discarding a large, fully-`Qed`'d piece of machinery for an unknown
 replacement. Neither has been attempted.
 
+## 54. Same session, continued: chose (b) — widen `ysX` at the call site instead of touching `BlkAlpha_
+compose_rename` itself — traced through what it needs (a D2-side mirror of `GlobalFreshHeap`), built it,
+zero regressions; `NL_Select`'s actual proof body still not started
+
+**The choice.** Widening `ysX` (the set `BlkAlpha_compose_rename`'s existing exemption already covers) to
+also include "free variables of `body` that happen to already equal some value in `zs`" achieves the same
+soundness fix as a third `Hinj1` disjunct, but needs **zero changes to `BlkAlpha_compose_rename` itself** —
+only to how `NL_Select` instantiates it. User's explicit direction, given the size/risk of reopening that
+lemma's own induction.
+
+**What it actually needs, traced through by hand.** For `y ∈ zs` that's ALSO free in `body` to be safely
+added to `ysX`, the existing hypotheses `Hhyg2`/`Hconsistent` need a D2-side mirror of `GlobalFreshHeap`:
+`sigma0`'s image of such a `y` must avoid `body2`'s own bound names, exactly mirroring why `GlobalFreshHeap
+Gam1` was needed for `zs` against `body`'s bound names in the first place — except now for `Gam2`. Nothing
+currently ties `Gam2` to `ProgBoundName` at all (it's related to `Gam1` only via the alpha-relation, which an
+arbitrary `sigma0`/`tau0` has no reason to respect). This needed `GlobalFreshHeap P Gam2`/`NoCaptureProgHeap
+P Gam2` as two genuinely new hypotheses on `NEval_left_confluence` (`ClosedHeap Gam2` — needed to even invoke
+`NEval_left_globalfresh_preserved` on the D2 side — turned out to be free: unlike `GlobalFreshHeap`, `Closed
+Heap` is a purely structural fact insensitive to *which* renaming relates two heaps, so `ClosedHeap_NHeapAlpha
+_transport`, a small new lemma, gets it from `ClosedHeap Gam1` alone, no new hypothesis needed).
+
+**Built, in order:** `vars_of_b_rename` (mirrors `bound_vars_b_rename`, needed for the transport lemma's own
+proof); `ClosedHeap_NHeapAlpha_transport` (`ClosedHeap Gam1 -> NHeapAlpha sigma tau Gam1 Gam2 -> ClosedHeap
+Gam2`) — both `Qed`'d, zero axioms, first attempt. Added `GlobalFreshHeap P Gam2`/`NoCaptureProgHeap P Gam2`/
+`NoCaptureProgB P e2` to `NEval_left_confluence`'s statement and threaded them through all 11 cases exactly
+mirroring the Gam1-side work (§52) — `NEval_left_fun_shape`/`NEval_left_blet_shape` (the D2-side shape-
+inversion lemmas) needed their own conclusions widened with the new `~ProgBoundName` fact first, each with
+one downstream call site to fix. One instructive surprise: `NEval_left_fun_shape`'s own `destruct H as [...]`
+pattern had ALREADY been missing its `Hnb` binder since §51's mechanical sweep, with no compile error —
+Coq's plain `destruct ... as` (unlike `induction ... as`) silently auto-names any hypothesis a pattern list
+under-specifies rather than erroring, so the omitted fact was present in context under a generated name the
+whole time, just never threaded into the lemma's own OUTPUT; adding the new conjunct to the statement and
+leaving the proof's own `repeat split; assumption` untouched picked it up for free.
+
+**Status:** `alpha_renaming_wip.v` compiles clean, still exactly 2 admits (`NL_Select`, `NL_Guess`) —
+unchanged, zero regressions. `curry_test_leftmost.v` unchanged. **Not yet done:** `NL_Select`'s actual proof
+body itself — this section was entirely preparatory (getting `GlobalFreshHeap`/`ClosedHeap` available for
+BOTH sides, which the widened-`ysX` plan needs before it can be attempted at the real call site). **Next
+step:** construct the widened `ysX` at `NL_Select`, verify `Hhyg1`/`Hhyg2`/`Hrhoinj0`/`Hconsistent` against it
+(traced by hand in §53/54's own discussion to go through, not yet checked against `coqc`), then the full
+`BrsAlpha_lookup`/`zipsubst_compose_in`/`zipsubst_compose_out`/`BlkAlpha_compose_rename` wiring as before.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
