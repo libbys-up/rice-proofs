@@ -1926,10 +1926,9 @@ Proof. intros sigma x e. destruct e; reflexivity. Qed.
 (* even though sigma0 itself already fixed x, because x can't be one of a       *)
 (* DEEPER NL_Fun/NL_Guess step's fresh pairs -- those are always outside the    *)
 (* CURRENT heap's domain by construction, and domains only grow). *)
-Lemma hupd_preserves_some : forall (G : NHeap) x v w, G w <> None -> hupd G x v w <> None.
-Proof.
-  intros G x v w H. unfold hupd. destruct (Nat.eqb w x); [discriminate | exact H].
-Qed.
+(* hupd_preserves_some relocated to curry_test_leftmost.v (ahead of
+   NEval_left_to_NEval, which needs NEval_left_domain_mono -- see Sec.55 of
+   the process notes). *)
 
 Lemma NoDup_map_inj :
   forall (A B : Type) (f : A -> B) (l : list A),
@@ -2137,50 +2136,8 @@ Proof.
   exact (free_vars_b_rename_subset_bound (S (blk_size b)) b (Nat.lt_succ_diag_r _) s w H).
 Qed.
 
-Lemma hupd_list_preserves_some :
-  forall (G : NHeap) xs vs w, G w <> None -> hupd_list G xs vs w <> None.
-Proof.
-  intros G xs. induction xs as [| x xs' IH]; intros vs w Hw; destruct vs as [| v vs'].
-  - exact Hw.
-  - exact Hw.
-  - exact Hw.
-  - simpl. apply hupd_preserves_some. apply IH. exact Hw.
-Qed.
-
-(* Domain-monotonicity: NEval_left only ever GROWS the heap (via hupd),
-   never shrinks it -- needed to carry a closedness fact established
-   against an EARLIER heap (e.g. G0/G1 in NL_Select/NL_Guess, before the
-   scrutinee-forcing step) across to a LATER one. Standalone and simple by
-   design, unlike the closed-preservation induction. *)
-Lemma NEval_left_domain_mono :
-  forall P F G e G' v, NEval_left P F G e G' v -> forall w, G w <> None -> G' w <> None.
-Proof.
-  intros P F G e G' v H.
-  induction H as
-    [ F0 G0 z c args Hz
-    | F0 G0 z Hz
-    | F0 G0 z Hz
-    | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
-    | F0 G0
-    | F0 G0 c args
-    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
-    | F0 G0 G1 z e0 k v0 HzFresh Hnb Hrec IH
-    | F0 G0 x1 y1 G1 v0 Hrec IH
-    | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
-    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
-    ]; intros w Hw.
-  - exact Hw.
-  - exact Hw.
-  - apply hupd_preserves_some. exact Hw.
-  - apply hupd_preserves_some. apply IH. exact Hw.
-  - exact Hw.
-  - exact Hw.
-  - apply IH. exact Hw.
-  - apply IH. apply hupd_preserves_some. exact Hw.
-  - apply IH. exact Hw.
-  - apply IH2. apply IH1. exact Hw.
-  - apply IH2. apply hupd_list_preserves_some. apply hupd_preserves_some. apply IH1. exact Hw.
-Qed.
+(* hupd_list_preserves_some and NEval_left_domain_mono also relocated to
+   curry_test_leftmost.v, alongside hupd_preserves_some (see above). *)
 
 (* Program-level well-scopedness: every free variable of a function body
    (using the REAL free_vars_b, so nested lets/cases already correctly

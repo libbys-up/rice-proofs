@@ -93,7 +93,7 @@ Inductive NEval_left : list var -> NHeap -> Blk -> NHeap -> Blk -> Prop :=
     length ps = length args ->
     injective s ->
     (forall i x a, nth_error ps i = Some x -> nth_error args i = Some a -> s x = a) ->
-    (forall y, ~ In y ps -> G (s y) = None) ->
+    (forall y, ~ In y ps -> G1 (s y) = None) ->
     (forall y, ~ In y ps -> ~ ProgBoundName P (s y)) ->
     NEval_left F G (rename_b s body) G1 v ->
     NEval_left F G (BExpr (EFun f args)) G1 v
@@ -127,6 +127,56 @@ Inductive NEval_left : list var -> NHeap -> Blk -> NHeap -> Blk -> Prop :=
 
 End NatSemanticsLeft.
 
+(* hupd_preserves_some/hupd_list_preserves_some/NEval_left_domain_mono
+   relocated here from alpha_renaming_wip.v (ahead of NEval_left_to_NEval,
+   which needs NEval_left_domain_mono to bridge NL_Fun's newly-strengthened
+   G1-based freshness check back down to the plain NEval it embeds into --
+   THEOREM2_PROCESS_NOTES.md Sec.55). *)
+Lemma hupd_preserves_some : forall (G : NHeap) x v w, G w <> None -> hupd G x v w <> None.
+Proof.
+  intros G x v w H. unfold hupd. destruct (Nat.eqb w x); [discriminate | exact H].
+Qed.
+
+Lemma hupd_list_preserves_some :
+  forall (G : NHeap) xs vs w, G w <> None -> hupd_list G xs vs w <> None.
+Proof.
+  intros G xs. induction xs as [| x xs' IH]; intros vs w Hw; destruct vs as [| v vs'].
+  - exact Hw.
+  - exact Hw.
+  - exact Hw.
+  - simpl. apply hupd_preserves_some. apply IH. exact Hw.
+Qed.
+
+Lemma NEval_left_domain_mono :
+  forall P F G e G' v, NEval_left P F G e G' v -> forall w, G w <> None -> G' w <> None.
+Proof.
+  intros P F G e G' v H.
+  induction H as
+    [ F0 G0 z c args Hz
+    | F0 G0 z Hz
+    | F0 G0 z Hz
+    | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
+    | F0 G0
+    | F0 G0 c args
+    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v0 HzFresh Hnb Hrec IH
+    | F0 G0 x1 y1 G1 v0 Hrec IH
+    | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
+    ]; intros w Hw.
+  - exact Hw.
+  - exact Hw.
+  - apply hupd_preserves_some. exact Hw.
+  - apply hupd_preserves_some. apply IH. exact Hw.
+  - exact Hw.
+  - exact Hw.
+  - apply IH. exact Hw.
+  - apply IH. apply hupd_preserves_some. exact Hw.
+  - apply IH. exact Hw.
+  - apply IH2. apply IH1. exact Hw.
+  - apply IH2. apply hupd_list_preserves_some. apply hupd_preserves_some. apply IH1. exact Hw.
+Qed.
+
 Lemma NEval_left_to_NEval :
   forall P F Gam e Gam' v, NEval_left P F Gam e Gam' v -> NEval P F Gam e Gam' v.
 Proof.
@@ -150,7 +200,12 @@ Proof.
   - eapply N_VarExp; [exact HzF | exact Hz | exact Hne1 | exact Hne2 | exact Hne3 | exact IH].
   - apply N_ValFree.
   - apply N_ValCon.
-  - eapply N_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact Hfresh | exact IH].
+  - assert (Hfresh' : forall y, ~ In y ps -> G (s y) = None).
+    { intros y Hy. destruct (G (s y)) as [b | ] eqn:E; [ | reflexivity].
+      exfalso.
+      assert (HGne : G (s y) <> None) by (rewrite E; discriminate).
+      exact ((NEval_left_domain_mono P F0 G (rename_b s body) G1 v Hrec (s y) HGne) (Hfresh y Hy)). }
+    eapply N_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact Hfresh' | exact IH].
   - apply N_Let; [exact HzFresh | exact IH].
   - eapply N_Or; [left; reflexivity | exact IH].
   - eapply N_Select; [exact IH1 | exact HIn | exact Hlen | exact IH2].
@@ -192,7 +247,7 @@ Proof.
   - destruct (IH Gam2 Heq) as [G2' [HNE2 Heq2]].
     exists G2'. split; [ | exact Heq2].
     eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact Hnb | exact HNE2].
-    intros w Hw. rewrite Heq. exact (Hfresh w Hw).
+    intros w Hw. rewrite (Heq2 (s w)). exact (Hfresh w Hw).
   - assert (Heq' : forall w, hupd Gam2 z (let_content z e0) w = hupd G z (let_content z e0) w).
     { intro w; unfold hupd; destruct (Nat.eqb w z); [reflexivity | apply Heq]. }
     destruct (IH (hupd Gam2 z (let_content z e0)) Heq') as [G2' [HNE2 Heq2]].
@@ -1477,9 +1532,11 @@ Proof.
     + eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact Hnb | exact HNE'].
       intros y0 Hy0.
       assert (Hne : s y0 <> x).
-      { intro Heq. specialize (Hfresh y0 Hy0). rewrite Heq in Hfresh.
-        destruct Hgx as [Hgx' | Hgx']; rewrite Hgx' in Hfresh; discriminate. }
-      rewrite (hupd_neq G x (BExpr (ECon c args)) (s y0) Hne). exact (Hfresh y0 Hy0).
+      { intro Heq.
+        assert (HGx : G x <> None) by (destruct Hgx as [Hgx' | Hgx']; rewrite Hgx'; discriminate).
+        assert (HG1x : G1 x <> None) by exact (NEval_left_domain_mono P F0 G (rename_b s body) G1 v Hrec x HGx).
+        apply HG1x. rewrite <- Heq. exact (Hfresh y0 Hy0). }
+      rewrite (Heq' (s y0)). rewrite (hupd_neq G1 x (BExpr (ECon c args)) (s y0) Hne). exact (Hfresh y0 Hy0).
     + exact Heq'.
   - assert (Hzx : z <> x).
     { intro Heq; subst z. destruct Hgx as [Hgx' | Hgx']; rewrite HzFresh in Hgx'; discriminate. }
@@ -1689,8 +1746,11 @@ Proof.
     + eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact Hnb | exact HNE'].
       intros y0 Hy0.
       assert (Hne : s y0 <> x).
-      { intro Heq. specialize (Hfresh y0 Hy0). rewrite Heq in Hfresh. rewrite Hgx in Hfresh. discriminate Hfresh. }
-      rewrite (hupd_neq G x (BExpr (EVar z)) (s y0) Hne). exact (Hfresh y0 Hy0).
+      { intro Heq.
+        assert (HGx : G x <> None) by (rewrite Hgx; discriminate).
+        assert (HG1x : G1 x <> None) by exact (NEval_left_domain_mono P F0 G (rename_b s body) G1 v1 Hrec x HGx).
+        apply HG1x. rewrite <- Heq. exact (Hfresh y0 Hy0). }
+      rewrite (Hptw (s y0) Hne). exact (Hfresh y0 Hy0).
     + split; [exact Hptw | exact Hdisj].
   - (* NL_Let *)
     assert (Hzx0 : z0 <> x) by (intro Heq; subst z0; rewrite Hz0Fresh in Hgx; discriminate Hgx).
@@ -3772,8 +3832,12 @@ Proof.
        all -- this cross-relation lemma (already Admitted before this
        session, see its own G_CaseFun case below) has no way to derive one
        from anything currently proven. Genuinely new admit, not a
-       regression: this lemma was already incomplete. *)
-    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | admit | ].
+       regression: this lemma was already incomplete.
+       Sec.55: the OLD "G(s y)=None" fact (HfreshGam) is ALSO no longer
+       enough on its own -- NL_Fun's freshness check now needs G1(s y)=None
+       (the heap AFTER the WHOLE call, not just before) -- another admit,
+       same reason (already-Admitted lemma, no regression). *)
+    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | admit | admit | ].
     exact (Hplug F0 Gamk vk Hforce).
   - (* G_Let *)
     intros Gam HGam HWF x Hxdom Hxeq.
@@ -3855,8 +3919,10 @@ Proof.
     { intros y0 Hin. specialize (Hfresh y0 Hin). specialize (proj1 HGam (s y0)) as HGamsy0.
       rewrite Hfresh in HGamsy0. exact HGamsy0. }
     (* NEW GAP (global-freshness strengthening): GEval's G_Fun carries no
-       ProgBoundName fact about s. *)
-    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | admit | exact HNE].
+       ProgBoundName fact about s, and (Sec.55) the old G(s y)=None fact is
+       no longer enough either (need G1(s y)=None, the heap after the
+       WHOLE call). *)
+    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | admit | admit | exact HNE].
   - (* G_Let *)
     intros Gam HGam HWF x Hxdom Hxeq F0.
     assert (Hxz : x <> x0).
@@ -4395,8 +4461,11 @@ Proof.
     + eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | | exact Hnb | exact HNE2].
       intros y0 Hy0.
       assert (Hsyx : s y0 <> x).
-      { intro Heqsy. specialize (Hfresh y0 Hy0). rewrite Heqsy in Hfresh. rewrite Hgx in Hfresh. discriminate Hfresh. }
-      rewrite (Heq (s y0) Hsyx). exact (Hfresh y0 Hy0).
+      { intro Heqsy.
+        assert (HGx : G x <> None) by (rewrite Hgx; discriminate).
+        assert (HG1x : G1 x <> None) by exact (NEval_left_domain_mono P F0 G (rename_b s body) G1 v Hrec x HGx).
+        apply HG1x. rewrite <- Heqsy. exact (Hfresh y0 Hy0). }
+      rewrite (Heq2 (s y0) Hsyx). exact (Hfresh y0 Hy0).
     + exact Heq2.
   - assert (Hzx : z <> x) by (intro Heq'; subst z; rewrite HzFresh in Hgx; discriminate Hgx).
     assert (Heq' : forall w, w <> x -> hupd Gam2 z (let_content z e1) w = hupd G z (let_content z e1) w).
@@ -4587,7 +4656,7 @@ Lemma NEval_left_fun_shape :
   exists ps body s,
     P f = Some (ps, body) /\ length ps = length args /\ injective s /\
     (forall i x a, nth_error ps i = Some x -> nth_error args i = Some a -> s x = a) /\
-    (forall y, ~ In y ps -> Gam (s y) = None) /\
+    (forall y, ~ In y ps -> G' (s y) = None) /\
     (forall y, ~ In y ps -> ~ ProgBoundName P (s y)) /\
     NEval_left P F Gam (rename_b s body) G' v.
 Proof.
@@ -4907,7 +4976,13 @@ Proof.
              [ rewrite Hc1 | rewrite Hc2 | rewrite Hc3 | rewrite Hz1 ]; discriminate. }
            assert (Hy1in : In y1 ps).
            { destruct (in_dec Nat.eq_dec y1 ps) as [Hin | Hnin]; [exact Hin | ].
-             exfalso. apply HGamw0. rewrite <- Hsy1. exact (Hfresh2 y1 Hnin). }
+             exfalso. apply HGamw0. rewrite <- Hsy1.
+             destruct (Gam (s y1)) as [b | ] eqn:E; [ | reflexivity].
+             exfalso.
+             assert (HGne : Gam (s y1) <> None) by (rewrite E; discriminate).
+             assert (HG1'ne : G1' (s y1) <> None)
+               by exact (NEval_left_domain_mono P (x0 :: F) Gam (BExpr (EVar w0)) G1' (BExpr (EVar x')) Hrec3 (s y1) HGne).
+             exact (HG1'ne (Hfresh2 y1 Hnin)). }
            destruct (GEval_fun_shape P G0 f0 args0 G1 vx Hrec1g) as
              [psG [bodyG [sG [HPfG [HlenG [HinjG [HmatchG [HfreshG Hrec1g']]]]]]]].
            assert (Hpp : psG = ps /\ bodyG = body).
@@ -5064,7 +5139,13 @@ Proof.
              [ rewrite Hc1 | rewrite Hc2 | rewrite Hc3 | rewrite Hz1 ]; discriminate. }
            assert (Hy1in : In y1 ps).
            { destruct (in_dec Nat.eq_dec y1 ps) as [Hin | Hnin]; [exact Hin | ].
-             exfalso. apply HGamy1'. rewrite <- Hsy1. exact (Hfresh2 y1 Hnin). }
+             exfalso. apply HGamy1'. rewrite <- Hsy1.
+             destruct (Gam (s y1)) as [b | ] eqn:E; [ | reflexivity].
+             exfalso.
+             assert (HGne : Gam (s y1) <> None) by (rewrite E; discriminate).
+             assert (HG1'ne : G1' (s y1) <> None)
+               by exact (NEval_left_domain_mono P (x0 :: F) Gam (BExpr (EVar y1')) G1' (BExpr (EVar x')) Hforce_y1' (s y1) HGne).
+             exact (HG1'ne (Hfresh2 y1 Hnin)). }
            destruct (GEval_fun_shape P G0 f0 args0 G1 vx Hrec1g) as
              [psG [bodyG [sG [HPfG [HlenG [HinjG [HmatchG [HfreshG Hrec1g']]]]]]]].
            assert (Hpp : psG = ps /\ bodyG = body).
@@ -7464,8 +7545,9 @@ Proof.
     { intros y0 Hin. specialize (Hfresh y0 Hin).
       assert (HGamsy0 := HGam (s y0)). rewrite Hfresh in HGamsy0. exact HGamsy0. }
     (* NEW GAP (global-freshness strengthening): GEval's G_Fun carries no
-       ProgBoundName fact about s. *)
-    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | admit | ].
+       ProgBoundName fact about s, and (Sec.55) the old G(s y)=None fact is
+       no longer enough either (need G1(s y)=None). *)
+    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | admit | admit | ].
     exact (Hplug F0 Gamk vk Hforce).
   - (* G_Let *)
     destruct HNAL as [Hne0 HNALk].
@@ -7708,8 +7790,9 @@ Proof.
         specialize (HGam (s y0)) as HGamsy0. rewrite Hfresh in HGamsy0. exact HGamsy0. }
       exists Gam1. split.
       * (* NEW GAP (global-freshness strengthening): GEval's G_Fun carries no
-           ProgBoundName fact about s. *)
-        eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | exact HfreshGam | admit | exact HNE].
+           ProgBoundName fact about s, and (Sec.55) the old G(s y)=None fact
+           is no longer enough either (need G1(s y)=None). *)
+        eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | admit | admit | exact HNE].
       * exact HHC1.
     + intros x brs Hcontra. discriminate Hcontra.
   - (* G_Let *)

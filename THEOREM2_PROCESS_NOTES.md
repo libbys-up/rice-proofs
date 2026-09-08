@@ -3852,6 +3852,73 @@ step:** construct the widened `ysX` at `NL_Select`, verify `Hhyg1`/`Hhyg2`/`Hrho
 (traced by hand in §53/54's own discussion to go through, not yet checked against `coqc`), then the full
 `BrsAlpha_lookup`/`zipsubst_compose_in`/`zipsubst_compose_out`/`BlkAlpha_compose_rename` wiring as before.
 
+## 55. Same session, continued: stepped back to ask what other lazy-language mechanizations do about this
+exact class of problem, then landed on a MUCH smaller version of "bake freshness into the semantics" than
+§54's own counter sketch — strengthen `NL_Fun`'s existing freshness check to look at its OWN output heap
+instead of its input, closing the dead-code collision with a change that turned out to touch only ONE file
+
+**The research detour, requested directly.** Asked what Launchbury-style (heap-based, natural-semantics)
+lazy evaluation formalizations do about exactly this class of problem. Answer: Launchbury's own 1993 paper
+(the direct ancestor of this project's own `NEval`-shaped rules) invokes the Barendregt variable convention
+— "assume all bound names are fresh" — as an unstated meta-convention, never discharging it; this project has
+been trying to *prove* what that lineage simply *assumes*. The mechanization that faced this head-on is
+Joachim Breitner's Isabelle/HOL formalization of Launchbury's semantics, built on Nominal Isabelle (freshness
+as a first-class, library-level notion). The generally-recurring PRACTICAL technique for the *heap-address*
+half specifically (separate from binder-structure tricks like de Bruijn/nominal, which don't cover a mutable
+store) is a monotonically-growing allocator — the heap's domain kept to `[0, n)`, with allocation exactly `n`
+each time, `n` incremented — matching what this project's own `GlobalFreshHeap`/`Hnb` machinery was already
+gesturing at with a fixed set instead of a growing bound.
+
+**Why the FULL version of that (a literal counter) was too big.** For a *rule* to enforce "the fresh choice
+is exactly `n`", `n` must be visible to the rule — i.e. part of `NEval_left`'s own type, threaded in/out like
+the heap already is. That changes the relation's ARITY, meaning literally every site across both files that
+constructs or pattern-matches an `NEval_left` derivation needs two new arguments — not the ~50-pattern-plus-
+14-construction shape of the `ProgBoundName` sweep, but every call site, full stop (likely hundreds).
+
+**The much smaller version that actually worked.** Traced which of `NEval_left`'s 11 rules genuinely *invent*
+a name, as opposed to merely re-checking one already fixed by an earlier step: only `NL_Fun`'s `s` (a whole
+BATCH, covering every non-parameter name in the function body AT ONCE, dead branches included, since
+`rename_b` touches the whole syntax tree regardless of reachability) and `NL_Guess`'s `ws`. `NL_Let`'s own `x`
+isn't a choice at all — it's just whatever name already sits in the term being evaluated, itself `s`'s own
+earlier output. Given that, the fix needs to touch only `NL_Fun`: strengthen its existing freshness premise
+from `G (s y) = None` (checked against the heap *before* the call) to `G1 (s y) = None` (checked against
+`G1` — the heap *after* the whole call finishes, already part of the constructor's own type, no new premise,
+no arity change). Since the heap only grows (`NEval_left_domain_mono`), this new check subsumes the old one
+outright, and — crucially — it protects `s`'s image for EVERY non-parameter name, including ones inside
+branches that never execute, against anything the REST of this same function call ever allocates or already
+had defined, closing exactly the dead-code collision `Hinj1` needed and `GlobalFreshHeap`/`ProgBoundName`
+couldn't reach (since a dead branch's own bound name, once renamed by `s`, is guaranteed to NOT be a
+`ProgBoundName` in the first place — `NoCaptureProgB`'s whole point — so `GlobalFreshHeap`'s protection never
+even engaged there). Checked by hand first (tracing the exact chronology: `body`'s own batch is fixed once,
+at call time, before anything inside it — including a scrutinee-forcing step deep in a live branch — has run,
+so whatever THAT produces is provably outside the batch, either because it predates the call [already in the
+heap `NL_Fun` itself checked against] or postdates it [and lands in `G1` by the time `NL_Fun`'s own new check
+looks]). `NL_Guess`'s own analogous `ws`-vs-`G2` version was tried and found SELF-CONTRADICTORY (`ws` gets
+*written* into the heap by the very same rule, so checking it against the post-write heap can never hold) —
+reverted; `NL_Guess` needs no change at all, because whatever it substitutes into (`body1`) already inherits
+its own protection transitively from the enclosing, now-strengthened `NL_Fun`.
+
+**The sweep, and a genuine surprise.** `curry_test_leftmost.v` needed real work — roughly a dozen sites, all
+following the same shape (a stale argument for "why `s y` avoids some OLD heap" needed replacing with a
+`NEval_left_domain_mono`-based bridge to the new, `G1`-based fact; `NEval_left_fun_shape`'s own conclusion
+needed the same strengthening, cascading to its two callers), plus five new `admit`s in the SAME already-
+`Admitted` cross-`GEval`/`NEval_left` lemmas §51 already found `ProgBoundName` couldn't reach either (GEval's
+own `G_Fun` carries neither fact) — no regressions, `Admitted.` count unchanged (9 before, 9 after). Needed
+relocating `hupd_preserves_some`/`hupd_list_preserves_some`/`NEval_left_domain_mono` from `alpha_renaming_wip.v`
+to `curry_test_leftmost.v` (ahead of `NEval_left_to_NEval`, which now needs `NEval_left_domain_mono` to bridge
+back down to plain `NEval`'s still-`G`-based `N_Fun`). The genuine surprise: `alpha_renaming_wip.v` itself —
+the file `NEval_left_confluence` lives in — needed **zero** changes. Every mention of `Hfresh` there turned
+out to be a pure pattern-bind, never actually consumed in a proof body; only `curry_test_leftmost.v` ever
+used its content. A materially smaller footprint than the `ProgBoundName` sweep, not a repeat of it.
+
+**Status:** both files compile clean, zero errors, verified via a genuinely fresh recompile (stale `.vo`
+removed first). `curry_test_leftmost.v`: `Admitted.` count unchanged (9), `admit` count 39 → 44 (5 new, all
+in already-`Admitted` lemmas). `alpha_renaming_wip.v`: still exactly **2 admits** (`NL_Select`, `NL_Guess`),
+unchanged. **Next step:** actually use this — `NL_Select`'s `Hinj1` dead-code sub-case should now be directly
+dischargeable via the new `G1`-based `Hfresh` (no `ysX` widening needed for THAT sub-case at all); the
+free-variable sharing sub-case still needs the `ysX`-widening + `Hagree`-consistency argument from §53/54.
+Then the full `BrsAlpha_lookup`/`zipsubst_compose_in`/`zipsubst_compose_out`/`BlkAlpha_compose_rename` wiring.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
