@@ -4225,6 +4225,56 @@ plus `body`/`body2`'s own `BrsUniqB`/`NoShadowB`/`NoCaptureB`/`NoCaptureProgB` f
 `_bcase_branch` extraction lemmas. This is the SAME mechanical shape as NL_Fun's own already-Qed'd case, not
 new mathematical content.
 
+## 62. Same session, continued: finished the heap-invariant threading sweep for real — `NL_Select`'s ENTIRE
+case is now fully proven, no `admit` remaining in it at all; `NL_Guess` is the only admit left in the whole
+file
+
+**What it took, following §61's own closing paragraph exactly.** `ClosedHeap`/`BrsUniqHeap`/`GlobalFreshHeap`+
+`NoCaptureProgHeap` for `G1` (D1 side) via the existing `NEval_left_closed_preserved`/
+`NEval_left_BrsUniqHeap_preserved`/`NEval_left_globalfresh_preserved`applied directly to `Hrec1`.
+`ClosedHeap Gam2` (needed as `NEval_left_globalfresh_preserved`'s own precondition on the D2 side) via
+`ClosedHeap_NHeapAlpha_transport` (§54, already built) from `Hclosed1`/`Halpha0` — no new theorem needed.
+`GlobalFreshHeap`/`NoCaptureProgHeap` for `G1''` (D2 side) via the same `NEval_left_globalfresh_preserved`,
+now applied to `Hrec1'` (the D2-side scrutinee-forcing derivation `NEval_left_bcase_shape` already handed
+back). **`NoShadowHeap`/`NoCaptureHeap` for both `G1`/`G1''` needed no preservation theorem built at all** —
+realized, before writing one, that both invariants are IMPLIED wholesale by `HeapBExpr` (already a confluence
+hypothesis, §56/58): every heap-resident value is `BExpr`-shaped, and `NoShadowB`/`NoCaptureB` are trivially
+true of any `BExpr` (`bound_vars_b (BExpr _) = nil`), so `HeapBExpr G1`/`HeapBExpr G1''` (via
+`NEval_left_heapbexpr_preserved` applied to `Hrec1`/`Hrec1'`) closes both invariants directly, no case-by-case
+induction needed — the two dedicated preservation theorems this section's own opening paragraph expected to
+maybe need building turned out unnecessary.
+
+**`body`/`body2`'s own facts all reduce to one recurring shape.** `theta1`/`theta2` (the `zipsubst`
+substitutions) are the IDENTITY on `bound_vars_b body`/`bound_vars_b body2` (`ys`/`ys2` are disjoint from
+each, via `NoShadowB_bcase_branch`'s own third conjunct) — confirmed once via a new, small
+`bound_vars_b_rename_id_on_own` (built on a new, generic `map_id_on`), then reused directly for
+`NoShadowB (rename_b theta1 body)` (`= NoShadowB body` outright, no `NoShadowB_rename`/injectivity needed at
+all — sidesteps the fact that `zipsubst` genuinely ISN'T globally injective when `zs` has legitimate
+aliasing), `NoCaptureProgB P (rename_b theta1 body)` (same identity, applied to the extracted
+`NoCaptureProgB P body`), and `NoCaptureFinalB G2 (rename_b theta1 body)`/`NoCaptureFinalB Gam2' (rename_b
+theta2 body2)` (both = `HbodyFinal`/`Hbody2Final`, already built in this same case, literally unchanged after
+the rewrite). `BrsUniqB (rename_b theta1 body)` via the existing `BrsUniqB_rename` (which never needed
+injectivity to begin with, since constructor labels don't get renamed). The one genuinely new argument:
+`NoCaptureB (rename_b theta1 body)` (needed on the D1 side only — confluence has no `NoCaptureB e2`
+hypothesis, confirmed not needed here either) splits on whether the colliding free name is in `ys`: if so, its
+image is a forced field, contradicting `HbodyFinal` via `HzsG2` exactly as `Hinj1`'s own dead-code half did;
+if not, `theta1` is the identity there too, reducing straight to `body`'s own, already-guaranteed `NoCaptureB`.
+
+**One naming trap, caught by the compiler, not by inspection:** the final `IH2` call's own trailing `Gam2'
+v2 Hrec2'` arguments must be the OUTER `Gam2'`/`v2` (this whole case's own D2-side conclusion) — not `G2`
+(NL_Select's own D1-side one), which was the first thing tried and immediately rejected with a precise type
+mismatch (`Hrec2'`'s own type already pins its output to `Gam2'`/`v2`, since that's literally what
+`NEval_left_bcase_shape` handed back).
+
+**Status.** All four files compile clean from a genuinely fresh rebuild. `alpha_renaming_wip.v` now has
+exactly **one** `admit` in the entire file — `NL_Guess` — down from the two that persisted across this
+entire session's own numbered sections. `curry_test_leftmost.v`/`failed_attempts.v` unchanged (9 `Admitted`,
+44 `admit`). **Next step:** `NL_Guess`, per the file's own long-standing comment: the "same `BrsAlpha`-
+lookup/`BrsUniqB` machinery" for branch identification (trivial here, `hd_error` picks a unique element),
+`BlkAlpha_compose_rename` (fully built, no further changes anticipated), and its own `ws`-batch analogue of
+`ysX`/`Hagree` (restricted to just `ws`, no `pa`-merging, per gap 7's own resolution) — structurally the same
+shape as `NL_Select`, now with every supporting piece already in hand.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
