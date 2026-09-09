@@ -4939,7 +4939,39 @@ Proof.
        itself -- has NOT yet been attempted; every piece it needs now
        exists, Qed'd. See THEOREM2_PROCESS_NOTES.md Sec.42-48 for the
        full history. *)
-    admit.
+    remember (BCase x brs) as target eqn:Ht.
+    destruct He2 as [ | | x0 brs1 brs2' Hbrs]; try discriminate Ht.
+    injection Ht as Htx Htbrs. subst x0 brs1.
+    assert (Hxclosed1 : forall w, In w (free_vars_b (BExpr (EVar x))) -> G0 w <> None).
+    { intros w Hw. simpl in Hw. destruct Hw as [Hw | []]. subst w. apply He1closed. left. reflexivity. }
+    assert (HBAx : BlkAlpha sigma0 (BExpr (EVar x)) (BExpr (EVar (sigma0 x))))
+      by (constructor; apply Expr0Alpha_intro).
+    destruct (NEval_left_bcase_shape P F2 Gam2 (sigma0 x) brs2' Gam2' v2 H2) as
+      [ [c2 [zs2 [ys2 [body2 [G1'' [Hrec1' [HIn2 [Hlen2 Hrec2']]]]]]]]
+      | [x2' [G1'' [c1' [ys1' [body1' [ws' [Hrec1' [Hhd' [Hlenws' [HND' [Hfr' [HnbFr' Hrec2']]]]]]]]]]]] ].
+    + (* Select disjunct on the D2 side: the one that survives. *)
+      destruct (IH1 sigma0 tau0 Hmi0 F2 HF2eq Gam2 (BExpr (EVar (sigma0 x))) HBAx Halpha0
+                  HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
+                  Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1 Hgf2 HNCHeap2
+                  Hbe1 Hbe2
+                  Hxclosed1 I (NoShadowB_bexpr (EVar x)) (NoShadowB_bexpr (EVar (sigma0 x)))
+                  (NoCaptureB_bexpr (EVar x)) (NoCaptureProgB_bexpr P (EVar x)) (NoCaptureProgB_bexpr P (EVar (sigma0 x)))
+                  (NoCaptureFinalB_bexpr G1 (EVar x)) G1'' (BExpr (ECon c2 zs2)) Hrec1'
+                  (NoCaptureFinalB_bexpr G1'' (ECon c2 zs2)))
+        as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
+      simpl in Heqv. injection Heqv as Hceq Hzseq. subst c2.
+      admit.
+    + (* Guess disjunct on the D2 side: ruled out, D1 forced an ECon. *)
+      destruct (IH1 sigma0 tau0 Hmi0 F2 HF2eq Gam2 (BExpr (EVar (sigma0 x))) HBAx Halpha0
+                  HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
+                  Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1 Hgf2 HNCHeap2
+                  Hbe1 Hbe2
+                  Hxclosed1 I (NoShadowB_bexpr (EVar x)) (NoShadowB_bexpr (EVar (sigma0 x)))
+                  (NoCaptureB_bexpr (EVar x)) (NoCaptureProgB_bexpr P (EVar x)) (NoCaptureProgB_bexpr P (EVar (sigma0 x)))
+                  (NoCaptureFinalB_bexpr G1 (EVar x)) G1'' (BExpr (EVar x2')) Hrec1'
+                  (NoCaptureFinalB_bexpr G1'' (EVar x2')))
+        as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
+      simpl in Heqv. discriminate Heqv.
   - (* NL_Guess: same BrsAlpha-lookup/BrsUniqB machinery as NL_Select
        resolves its own branch-identification step (against hd_error brs =
        Some (c1,ys1,body1), trivial since hd_error picks a unique

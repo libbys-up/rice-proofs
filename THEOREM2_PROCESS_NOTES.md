@@ -4073,6 +4073,57 @@ body` construction from §57 and discharging `Hhyg2` with the newly-available `H
 `GlobalFreshHeap`-style contrapositive argument used for the D1-side dead-code case, now against `Gam2'`/
 `bound_vars_b body2` instead of `Gam1'`/`bound_vars_b body`), then invoking `BlkAlpha_compose_rename` itself.
 
+## 59. Same session, continued: wrote and verified `NL_Select`'s branch-identification/scrutinee-forcing
+steps for real (compiles); hit a genuinely deeper obstacle assembling `Hinj2` under the widened-`ysX` plan
+than §57/58 anticipated — flagging before going further, per this session's own established practice
+
+**What's now actually built and compiling (not just designed).** `NL_Select`'s case body, up through: inverting
+`He2` (`BA_Case`) to get `Hbrs : BrsAlpha sigma0 brs brs2`; decomposing `H2` via `NEval_left_bcase_shape`;
+applying `IH1` to both disjuncts uniformly and discharging the Guess one via `discriminate` (`IH1`'s own
+conclusion forces the D2-side forcing result to be `ECon`-shaped, contradicting `EVar`); landing in the Select
+disjunct with `c2 = c0` and, critically, `zs2 = map sigma zs` where `sigma` is `IH1`'s own output renaming
+(confirmed exactly as §57 predicted, not the ambient `sigma0`). This much is real `Qed`-track code (currently
+closed by a placeholder `admit.` for the rest), verified via a genuinely fresh four-file recompile.
+
+**Where it got harder than the plan assumed.** Assembling `BlkAlpha_compose_rename`'s `Hinj2` hypothesis —
+
+```
+forall w1 w2, (In w1 (vars_of_b body2) \/ In w1 (map rho (vars_of_b body))) ->
+              (In w2 (vars_of_b body2) \/ In w2 (map rho (vars_of_b body))) ->
+              theta2 w1 = theta2 w2 -> w1 = w2 \/ (In w1 (map rho0 ysX) /\ In w2 (map rho0 ysX))
+```
+
+— exposed that its domain is a UNION of two sets that are NOT interchangeable the way `Hinj1`'s single
+`vars_of_b body` domain was. `Hinj1` (the D1 side) closed cleanly with `ysX := ys ++ free_vars_b body`: every
+`w ∉ ys` in `vars_of_b body` is either bound (ruled out by §56's `NoCaptureFinalB`, exactly the dead-code fix)
+or free (automatically `∈ ysX` by construction) — a clean two-way split. `Hinj2`'s domain being a union means
+a name landing in the "`w1 ∉ ys2`" branch of the case split could have gotten there via EITHER disjunct:
+`w2 ∈ vars_of_b body2` directly (same two-way split as before, using `He2Final`/§58's D2-side mirror — this
+half is fine), OR `w2 = rho w2'` for some `w2' ∈ vars_of_b body \ ys` (via the OTHER disjunct) — and THIS half
+needs `w2'` bound-or-free split too, but now under `rho`'s image, and checking a bound `w2'` requires
+`rho`'s image of a name `body` doesn't even use directly (as a leaf reference) to still avoid `zs2` — not
+obviously available from anything currently in hand. Checked for a shortcut first (an
+"`vars_of_b body2 = map rho (vars_of_b body)`" identity that would collapse the union to one side, mirroring
+how `Expr0Alpha`'s own determinism gives exactly this for free at the leaf-expression level via
+`vars_of_e0_rename`) — confirmed this does NOT hold for block-level `BlkAlpha`: `BA_Let`'s own continuation
+uses a locally-overridden `sigma'`, not `rho` itself, so a nested position's actual image isn't `rho`'s image
+in general. The union in `BlkAlpha_compose_rename`'s own signature is there for a real reason, not an
+oversight, and can't be sidestepped at the call site either.
+
+**Why this is flagged rather than pushed through.** This is comparable in depth to the case-split work
+`BlkAlpha_compose_rename`'s own induction already went through once (§44-47) — exactly the risk §53 flagged
+for option (a) (a third `Hinj1` disjunct inside the lemma itself) when choosing option (b) (widen `ysX` at the
+call site) specifically to AVOID reopening that induction. Finding a comparable amount of case-work needed at
+the call site instead is a real update to that risk assessment, not a minor snag — worth a direct check-in
+before spending more effort down either path.
+
+**Status.** `alpha_renaming_wip.v` compiles clean (fresh four-file rebuild verified), still exactly 2 admits
+(`NL_Select` now has real branch-identification code ahead of its own remaining `admit.`; `NL_Guess`
+untouched). `curry_test_leftmost.v`/`failed_attempts.v` unchanged. **Next step:** undecided — either push
+through `Hinj2`'s own bound-vs-free split under `rho`'s image (untangling what `map rho (vars_of_b body \
+ys)`'s own bound-name portion needs), or reconsider option (a) from §53 now that both paths look comparably
+deep. Flagged for discussion.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
