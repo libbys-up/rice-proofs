@@ -4172,6 +4172,59 @@ exactly 2 admits (`NL_Select`'s own selected-branch continuation, `NL_Guess`), z
 `Hinj2` (now dischargeable via `free_vars_b_BlkAlpha_subset` + the D1/D2 `NoCaptureFinalB` pair from
 §56/58), then the rest of `BlkAlpha_compose_rename`'s hypothesis list, then invoke it to close the case.
 
+## 61. Same session, continued: built every remaining `BlkAlpha_compose_rename` hypothesis for real
+(`Hinj1`, `Hinj2`, `Hhyg1`, `Hhyg2`, `Hbt`, `Hrhoinj0`, `Hconsistent`, `Hagree`) and invoked the lemma —
+`NL_Select`'s own hard mathematical content is now fully resolved, leaving only a heap-invariant threading
+sweep for `IH2`
+
+**One more genuine finding along the way: `Hhyg2`'s own "free-name-lands-on-a-bound-position" half.** Before
+writing it, hand-built a counterexample to check whether `BlkAlpha` alone (even with `NoShadowB`/`NoCaptureB`
+on both sides) guarantees a free name's `rho`-image avoids the OTHER side's bound names: `b1 = BLet x (EVar y)
+(EVar 99)`, `id`-related to `b2 = BLet 99 (EVar y) (EVar 99)` (a legal but adversarial fresh-binder choice for
+`x`'s own image, landing exactly on the unrelated free name `99`) — `NoShadowB b2`/`NoCaptureB b2` both hold,
+yet `99` (free in `b1`) gets silently absorbed as a *binder* in `b2`. Confirms `BlkAlpha`'s bare definition
+cannot rule this out, so `Hhyg2` needed something outside it. What actually closes it, at NL_Select's real
+call site: the free name `y'` in question isn't an arbitrary syntax tree position — it's *heap-defined*
+(`He1closed` gives `G0 y' <> None`, since it's free in the whole `BCase x brs`), so `NHeapAlpha sigma0 tau0 G0
+Gam2` (already `Halpha0`, a confluence hypothesis) forces `Gam2 (sigma0 y') <> None` too — and `sigma0 y' =
+rho y'` off `ys`. Combined with `He2Final`/`NoCaptureFinalB_bcase_branch` (giving `body2`'s own bound names
+undefined in `Gam2'`) plus one step of `NEval_left_domain_mono` (heap only grows, so undefined-in-`Gam2'`
+implies undefined-in-`Gam2` too, since `Gam2 ⊆ Gam2'`), `rho y'` being *heap-defined* directly contradicts it
+being one of `body2`'s bound names. The abstract counterexample doesn't apply here because it never tied `y`
+to anything heap-resident — once real evaluation state is in the picture, the freedom the counterexample
+exploited isn't available. (The `ys`-membership overlap case — a pattern variable that's *also* referenced
+free within its own branch body, e.g. `case x of C y -> y`, syntactically ordinary — needed its own small
+sub-case in both `Hhyg2` and `Hconsistent`/`Hagree`, using `Forall2_in_l` to route it through the `ys2`
+side instead.)
+
+**The rest, once the pieces above were in hand, followed the plan from §57 directly:** `Hinj1` (D1 side)
+splits on `ys`-membership, using `NEval_left_forced_args_defined` + `NEval_left_domain_mono` to show a forced
+field lands in `G2`, contradicting `HbodyFinal` (`NoCaptureFinalB G2 body`, from `He1Final` via
+`NoCaptureFinalB_bcase_branch`) whenever the collision partner is bound, and falling into `ysX`'s free half
+(via the new `vars_of_b_bound_or_free`, also built this section) otherwise. `Hinj2` (D2 side) mirrors it using
+`Hbody2Final`/`Hzs2Gam2'` (via `NEval_left_forced_args_stay_defined`, which turned out to already package the
+whole `NHeapAlpha`-transport + `domain_mono` chain in one call) and `free_vars_b_BlkAlpha_subset` (§60) for
+the "`w` free in `body2`" half of the union. `Hbt` is vacuous exactly as designed (`NoCaptureB_bcase_branch`).
+`Hrhoinj0` is `Hinjrho` (from `BrsAlpha_lookup`) lifted through `ysX`'s own two-part shape. `Hconsistent` and
+`Hagree` both split on `ys`-membership and close via `zipsubst_compose_in` / `zipsubst_compose_out2` (§60)
+plus injective `sigma` (`mutual_inverse_injective_l`).
+
+**Status.** `alpha_renaming_wip.v` compiles clean from a genuinely fresh four-file rebuild. `NL_Select`'s case
+now builds `HBA_final : BlkAlpha sigma (rename_b theta1 body) (rename_b theta2 body2)` for real, via a live
+call to `BlkAlpha_compose_rename` — the lemma's entire nine-hypothesis interface is now discharged by actual,
+`Qed`-track code, not sketched. Still exactly 2 admits (one now sitting just past `HBA_final`, needing `IH2`;
+`NL_Guess` untouched), zero regressions. **What's left is a different KIND of task, not more of this one:**
+`IH2` (confluence's own recursive call, closing the case) needs the usual heap-invariant bundle threaded from
+`G0`/`Gam2` to `G1`/`G1''` — `ClosedHeap`, `BrsUniqHeap`, `NoShadowHeap`, `NoCaptureHeap`,
+`GlobalFreshHeap`/`NoCaptureProgHeap`, `HeapBExpr` — mostly via `NEval_left_closed_preserved`/
+`NEval_left_BrsUniqHeap_preserved`/`NEval_left_globalfresh_preserved`/`NEval_left_heapbexpr_preserved`
+(already built) applied to `Hrec1`, though `NoShadowHeap`/`NoCaptureHeap` have no existing preservation
+theorem yet and may need one built fresh (mirroring `NEval_left_BrsUniqHeap_preserved`'s own shape) unless an
+`NHeapAlpha`-transport shortcut (mirroring `ClosedHeap_NHeapAlpha_transport`, §54) works for them instead —
+plus `body`/`body2`'s own `BrsUniqB`/`NoShadowB`/`NoCaptureB`/`NoCaptureProgB` facts via the existing
+`_bcase_branch` extraction lemmas. This is the SAME mechanical shape as NL_Fun's own already-Qed'd case, not
+new mathematical content.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
