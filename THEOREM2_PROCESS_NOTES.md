@@ -3919,6 +3919,126 @@ dischargeable via the new `G1`-based `Hfresh` (no `ysX` widening needed for THAT
 free-variable sharing sub-case still needs the `ysX`-widening + `Hagree`-consistency argument from §53/54.
 Then the full `BrsAlpha_lookup`/`zipsubst_compose_in`/`zipsubst_compose_out`/`BlkAlpha_compose_rename` wiring.
 
+## 56. Same session, continued: closed `Hinj1`'s dead-code sub-case for real (a new `NoCaptureFinalB`/
+`HeapBExpr` pair, both `Qed`'d, threaded through all 11 confluence cases, zero regressions); traced the
+free-variable-sharing sub-case's `Hhyg2` obligation down to a concrete, buildable D2-side mirror, not yet built
+
+**Turning §55's `Hfresh` fix into a usable fact at `NL_Select`.** §55 strengthened `NL_Fun`'s premise but
+left it sitting unused at the one case that needs it. The gap: confluence's own induction has no hypothesis
+saying "the CURRENT term's own bound names avoid its eventual output heap" — without one, there's no way to
+reach back to "some enclosing `NL_Fun` already protected this" from inside `NL_Select`'s own case. Built:
+
+- `NoCaptureFinalB G b := forall y, In y (bound_vars_b b) -> G y = None` (`alpha_renaming_wip.v`, by
+  `NoCaptureProgB`'s side, with `_bexpr`/`_let_k`/`_bcase_branch` helpers mirroring it exactly).
+- Added `NoCaptureFinalB Gam1' e1` to `NEval_left_confluence`'s own statement and threaded it through all 11
+  cases. The one place this looked like it would break and didn't: at `NL_Select`'s own recursive call
+  (`Hrec2`, over `rename_b theta1 body`), `bound_vars_b (rename_b theta1 body) = map theta1 (bound_vars_b
+  body)` looked like it should include `theta1`'s image of `ys` (which DOES land back in `G2`, since `zs` is
+  exactly what's substituted in — a real dead end if true). It doesn't: `ys` is a *sibling* field of the
+  branch triple `(c, ys, bd)`, never part of `bd`'s own `bound_vars_b`, so `theta1` is the identity on
+  everything this invariant actually ranges over and the fact survives unchanged. (Wasted real effort chasing
+  this before working out precisely why it doesn't apply — recorded here so it isn't re-chased.)
+- `Fun`'s case derives the recursive call's own fact fresh from `Hfresh` (§55) + `ProgNoShadowWF`, exactly
+  mirroring `NoCaptureProgB`'s own `Hnb`-based derivation one case above it. `Let` splits its input via
+  `NoCaptureFinalB_let_k`. `VarExp`/`Or` are vacuous (`BExpr`-shaped targets). `Select`/`Guess` are where it
+  gets *consumed* (§57 below) — they don't need to re-establish it for their own recursive calls at all,
+  since `Hinj1` is used once, locally, not threaded further.
+- `VarExp`'s own recursive call needed one more thing `NoCaptureFinalB` alone doesn't give: is a heap-stored
+  value (`G0 x = Some e`, forced by `VarExp`) itself `BExpr`-shaped, so its own `NoCaptureFinalB` obligation
+  is trivially vacuous regardless of which heap it's checked against? Not for an arbitrary heap satisfying
+  only `ClosedHeap`/`NoShadowHeap`/etc. — none of those constrain *shape*. Built the missing piece in
+  `curry_test_leftmost.v` (a semantic fact about `NEval_left` itself, not about alpha-renaming, so it belongs
+  there, not in `alpha_renaming_wip.v`):
+  - `NEval_left_result_is_bexpr`: every `NEval_left` result `v` is `BExpr`-shaped — immediate structural
+    induction (the five base rules literally conclude with a `BExpr` term; every other rule inherits `v`
+    unchanged from a sub-derivation).
+  - `HeapBExpr G := forall z b, G z = Some b -> exists e0, b = BExpr e0`.
+  - `NEval_left_heapbexpr_preserved : NEval_left P F G e G' v -> HeapBExpr G -> HeapBExpr G'` — every write
+    this semantics ever makes (`let_content`, `NL_Guess`'s constructor cell and its `ws`-many `EVar` cells,
+    and — via the lemma just above — `NL_VarFree`/`NL_VarExp`'s own `v`) is `BExpr`-shaped, so heap-shape is
+    preserved end to end. Needed no `ClosedHeap`/scoping side conditions at all — purely structural.
+  - Added `HeapBExpr Gam1` to `NEval_left_confluence`'s statement, threaded the same way (`VarExp`/`Fun`/`Or`
+    pass it through unchanged; `Let` derives a fresh `hupd`-updated copy via `let_content_is_bexpr`; `Guess`
+    similarly via `hupd_list_HeapBExpr`). Also had to widen `NEval_left_self_confluence` (the identity-
+    renaming corollary meant for `G_CaseFun`) with both new hypotheses — not yet called from anywhere, so no
+    downstream fix needed.
+- One real proof-engineering snag: the natural `zipsubst_compose_out` lemma (built in an earlier session)
+  states its offset premise as `forall w, ~In w ys -> sigma' w = sigma w` — a blanket universal — but its own
+  proof only ever *applies* that premise at the one `w` the conclusion is about (which is additionally known
+  free in `body1`). The blanket form can't be satisfied here (`rho`, from `BrsAlpha_lookup`, only provably
+  agrees with the IH1-supplied `sigma`, not with the original `sigma0`, at names actually free in `body` —
+  `IH1`'s own `Hext` only reaches `Gam1`-defined names, and an unused, off-`body` name has no such guarantee
+  at all). Added `zipsubst_compose_out2`, identical statement and proof except the offset premise is scoped
+  down to exactly what's used: `forall w, In w (free_vars_b body1) -> ~In w ys -> sigma' w = sigma w`. General
+  lesson for this codebase: when a lemma's stated premise is stronger than what its own proof consumes, and a
+  call site can't discharge the strong form, check the proof body before concluding the call site is wrong.
+
+**Status.** Both files compile clean from a genuinely fresh build (`.vo`/`.vos`/`.vok`/`.glob` removed first).
+`alpha_renaming_wip.v` still exactly 2 admits (`NL_Select`, `NL_Guess`) — the two new facts are wired into
+confluence's statement and all 9 already-`Qed`'d cases, but `NL_Select`'s own case body is still untouched
+(the wiring closes half of `Hinj1`'s problem; the case itself hasn't been written yet). `curry_test_leftmost.v`
+unchanged from §55 (9 `Admitted.`, same 44 `admit`s). Both new theorems `Print Assumptions`-clean.
+
+## 57. Same session, continued: started writing `NL_Select`'s real proof body; got branch-identification and
+the scrutinee-forcing/discriminate step design fully worked out; traced `Hhyg2` (the widened-`ysX` plan's own
+remaining obligation from §53/54) to a precise, buildable requirement — a D2-side mirror of §56's own
+`NoCaptureFinalB`/`HeapBExpr` pair — not yet built
+
+**The plan, worked out concretely against `BlkAlpha_compose_rename`'s actual nine hypotheses (not just in the
+abstract, as §53/54 left it).** For `NL_Select`'s case (`Hrec1 : NEval_left F0 G0 (EVar x) G1 (ECon c0 zs)`,
+`HIn : In (c0, ys, body) brs`, `Hrec2 : NEval_left F0 G1 (rename_b (zipsubst ys zs) body) G2 v`):
+
+1. Invert `He2` (`BA_Case`) to get `e2 = BCase (sigma0 x) brs2` with `Hbrs : BrsAlpha sigma0 brs brs2`.
+2. Decompose `H2` via `NEval_left_bcase_shape` (already built) into its own Select/Guess disjunct, and apply
+   `IH1` to whichever scrutinee-forcing derivation it hands back, uniformly — `IH1`'s own conclusion forces
+   the result to be `rename_b sigma (BExpr (ECon c0 zs)) = BExpr (ECon c0 (map sigma zs))`, so the Guess
+   disjunct (`BExpr (EVar x')`) is immediately `discriminate`-able (`EVar` vs. `ECon`), leaving only Select,
+   with `c2 = c0` and — the fact the whole rest of the plan leans on — **`zs2 = map sigma zs`, where `sigma`
+   is `IH1`'s own output renaming, not the ambient `sigma0`.**
+3. `BrsAlpha_lookup` on `Hbrs`/`HIn` finds D2's own alpha-corresponding branch `(c0, ys2', body2')`, with a
+   branch-local renaming `rho` (`Forall2 (rho y1 = y2) ys ys2'`, `Hoffset : ~In w ys -> rho w = sigma0 w`,
+   local injectivity on `ys ∪ free_vars_b body`, `BlkAlpha rho body body2'`). `brs_label_unique` (using
+   `BrsAlpha_labels_eq` to transport `He1BrsUniq`'s own `NoDup` of labels onto `brs2`, so no new `BrsUniqB e2`
+   hypothesis is needed) then forces this to be the LITERAL SAME entry `HIn2` (D2's own `In`-witness from
+   `NEval_left_bcase_shape`) already pinned down — `ys2 = ys2'`, `body2 = body2'`.
+4. Feed `BlkAlpha_compose_rename` with `theta1 := zipsubst ys zs`, `theta2 := zipsubst ys2 zs2`, `bv1 :=
+   bound_vars_b body`, `bv2 := bound_vars_b body2` (`Hbv1`/`Hbv2` then trivial identities). `Hbt` becomes
+   VACUOUS with this choice — its premise needs `y ∈ bv1` (= `bound_vars_b body`) AND `y ∈ free_vars_b body`
+   simultaneously, which `NoCaptureB_bcase_branch` (applied to `He1NoCapture`/`He1NoShadow`/`HIn`, already a
+   confluence hypothesis) rules out outright — so `Hbt`'s own case-split work from §47 (built for the general
+   lemma) is never actually exercised at this call site. `zipsubst_compose_in`/the new `zipsubst_compose_out2`
+   (§56) supply `Hagree`'s first conjunct (`sigma (theta1 w) = theta2 (rho w)`) for `w ∈ ys` and `w ∉ ys`
+   respectively — the `w ∉ ys` case needs `w`'s free-in-`body` membership to get `G0 w <> None` (via
+   `He1closed` + `free_vars_b_bcase_branch`) and hence `sigma w = sigma0 w` (via `IH1`'s own `Hext`) before
+   `zipsubst_compose_out2` applies.
+
+**Where it's genuinely open: `ysX`, `rho0`, `Hhyg2`, `Hrhoinj0`, `Hagree`'s second conjunct.** The natural
+choice — `ysX := ys ++ free_vars_b body`, `rho0 := rho`, `fv1 := free_vars_b body` — makes `Hagree`'s second
+conjunct (`~In w bv1 -> In w fv1 /\ rho w = rho0 w`) trivial (`bv1 ∩ free_vars_b body = ∅` via `NoCaptureB`,
+so the premise always fires, and `rho0 = rho` makes the conclusion `reflexivity`), and makes `Hrhoinj0`
+*exactly* `BrsAlpha_lookup`'s own local-injectivity output (`ysX ∪ fv1 = ys ∪ free_vars_b body`, precisely
+what it's already stated over). What's NOT yet dischargeable: `Hhyg2 : forall y, In y (map rho0 ysX) -> ~In y
+bv2` needs `map rho ys ++ map rho (free_vars_b body)` (i.e. `ys2 ++ rho`'s image of `body`'s free names) to
+avoid `bound_vars_b body2`. The `ys2` half is `NoShadowB_bcase_branch` applied to D2's own branch (`He2NoShadow`
+already a confluence hypothesis) — fine. The `rho (free_vars_b body)` half is NOT: nothing currently threaded
+says a free name's D2-side image avoids `body2`'s own (possibly deeply-nested) bound names, and this is
+exactly the same shape of problem §55/56 already solved once, on the D1 side, for a different pair (`zs` vs.
+`bound_vars_b body`) — **the fix is almost certainly the same one, mirrored**: a `He2Final : NoCaptureFinalB
+Gam2' e2` hypothesis (D2-side counterpart of §56's `He1Final`) plus a `HeapBExpr Gam2` hypothesis (D2-side
+counterpart of §56's `Hbe1`), each threaded through all 11 cases the same way. The one structural wrinkle:
+`Gam2'` isn't in scope until `H2` is introduced (unlike `Gam1'`, which is the theorem's own top-level
+conclusion variable, fixed before `He1Final` is even stated), so `He2Final` has to be phrased as part of the
+*inner* `forall Gam2' v2, NEval_left P F2 Gam2 e2 Gam2' v2 -> He2Final -> exists ...` implication, alongside
+`H2` itself, not as an earlier premise the way `He1Final` is. Not yet attempted — flagged for discussion
+before building a second full 11-case sweep, given the first one (§56) was already substantial.
+
+**Status.** No code changes this section beyond what §56 already committed — this is the design trace for
+the *next* piece, done by hand against the actual lemma signatures (`BlkAlpha_compose_rename`,
+`BrsAlpha_lookup`, `zipsubst_compose_in`/`_out2`, `NoCaptureB_bcase_branch`, `NoShadowB_bcase_branch`) rather
+than left abstract. `NL_Select` is still a bare `admit.`. **Next step:** build the D2-side mirror (`He2Final`/
+`HeapBExpr Gam2`, an 11-case threading sweep mirroring §56's own D1-side one), then actually assemble
+`BlkAlpha_compose_rename`'s full call at `NL_Select` using the pieces enumerated above.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary

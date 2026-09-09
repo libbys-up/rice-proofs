@@ -177,6 +177,106 @@ Proof.
   - apply IH2. apply hupd_list_preserves_some. apply hupd_preserves_some. apply IH1. exact Hw.
 Qed.
 
+(* Every NEval_left result is BExpr-shaped -- immediate by structural
+   induction, since the base rules (VarCons/VarSelf/VarFree/ValFree/ValCon)
+   literally conclude with a BExpr term and every other rule's own v is
+   inherited, unchanged, from a strictly smaller sub-derivation's own v.
+   Needed below for HeapBExpr's own preservation (VarFree/VarExp write v
+   itself into the heap). *)
+Lemma NEval_left_result_is_bexpr :
+  forall P F G e G' v, NEval_left P F G e G' v -> exists e0, v = BExpr e0.
+Proof.
+  intros P F G e G' v H.
+  induction H as
+    [ F0 G0 z c args Hz
+    | F0 G0 z Hz
+    | F0 G0 z Hz
+    | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
+    | F0 G0
+    | F0 G0 c args
+    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v0 HzFresh Hnb Hrec IH
+    | F0 G0 x1 y1 G1 v0 Hrec IH
+    | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
+    ].
+  - exists (ECon c args); reflexivity.
+  - exists (EVar z); reflexivity.
+  - exists (EVar z); reflexivity.
+  - exact IH.
+  - exists EFree; reflexivity.
+  - exists (ECon c args); reflexivity.
+  - exact IH.
+  - exact IH.
+  - exact IH.
+  - exact IH2.
+  - exact IH2.
+Qed.
+
+(* Sec.56: every value this semantics ever writes into the heap --
+   let_content's own output, NL_Guess's constructor cell and its ws-many
+   BExpr(EVar w) cells, and (via NEval_left_result_is_bexpr just above)
+   NL_VarFree/NL_VarExp's own v -- is BExpr-shaped, so every heap arising
+   from evaluation has this property once its starting heap does. This is
+   what makes NoCaptureFinalB (alpha_renaming_wip.v) trivially dischargeable
+   for anything read back OUT of the heap: a BExpr block has no bound names
+   at all, so it can never be captured by anything, regardless of which
+   heap it is checked against. *)
+Definition HeapBExpr (G : NHeap) : Prop :=
+  forall z b, G z = Some b -> exists e0, b = BExpr e0.
+
+Lemma let_content_is_bexpr : forall x e0, exists e1, let_content x e0 = BExpr e1.
+Proof. intros x e0. unfold let_content. destruct e0; eexists; reflexivity. Qed.
+
+Lemma hupd_HeapBExpr :
+  forall G x b, (exists e0, b = BExpr e0) -> HeapBExpr G -> HeapBExpr (hupd G x b).
+Proof.
+  intros G x b Hb H z b' Hzb. unfold hupd in Hzb. destruct (Nat.eqb z x).
+  - injection Hzb as Hzb. subst b'. exact Hb.
+  - exact (H z b' Hzb).
+Qed.
+
+Lemma hupd_list_HeapBExpr :
+  forall ws G, HeapBExpr G ->
+  HeapBExpr (hupd_list G ws (map (fun w => BExpr (EVar w)) ws)).
+Proof.
+  induction ws as [| w ws' IHws]; intros G H.
+  - exact H.
+  - simpl. apply hupd_HeapBExpr; [exists (EVar w); reflexivity | apply IHws; exact H].
+Qed.
+
+Theorem NEval_left_heapbexpr_preserved :
+  forall P F G e G' v, NEval_left P F G e G' v -> HeapBExpr G -> HeapBExpr G'.
+Proof.
+  intros P F G e G' v H.
+  induction H as
+    [ F0 G0 z c args Hz
+    | F0 G0 z Hz
+    | F0 G0 z Hz
+    | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
+    | F0 G0
+    | F0 G0 c args
+    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v0 HzFresh Hnb Hrec IH
+    | F0 G0 x1 y1 G1 v0 Hrec IH
+    | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
+    ]; intro Hhb.
+  - exact Hhb.
+  - exact Hhb.
+  - apply hupd_HeapBExpr; [exists (EVar z); reflexivity | exact Hhb].
+  - destruct (NEval_left_result_is_bexpr P (z :: F0) G0 e0 G1 v0 Hrec) as [e1 He1]. subst v0.
+    apply hupd_HeapBExpr; [exists e1; reflexivity | apply IH; exact Hhb].
+  - exact Hhb.
+  - exact Hhb.
+  - apply IH. exact Hhb.
+  - apply IH. apply hupd_HeapBExpr; [exact (let_content_is_bexpr z e0) | exact Hhb].
+  - apply IH. exact Hhb.
+  - apply IH2. apply IH1. exact Hhb.
+  - apply IH2. apply hupd_list_HeapBExpr.
+    apply hupd_HeapBExpr; [exists (ECon c1 ws); reflexivity | apply IH1; exact Hhb].
+Qed.
+
 Lemma NEval_left_to_NEval :
   forall P F Gam e Gam' v, NEval_left P F Gam e Gam' v -> NEval P F Gam e Gam' v.
 Proof.
