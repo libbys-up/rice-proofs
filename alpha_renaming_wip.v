@@ -2594,6 +2594,17 @@ Proof.
     + destruct (IH v Hv) as [u [Hu HR]]. exists u. split; [right; exact Hu | exact HR].
 Qed.
 
+Lemma Forall2_in_l :
+  forall (A B : Type) (R : A -> B -> Prop) (l1 : list A) (l2 : list B), Forall2 R l1 l2 ->
+  forall u, In u l1 -> exists v, In v l2 /\ R u v.
+Proof.
+  induction 1 as [| a b l1' l2' Hab Hrest IH]; intros u Hu.
+  - destruct Hu.
+  - destruct Hu as [Hu | Hu].
+    + subst u. exists b. split; [left; reflexivity | exact Hab].
+    + destruct (IH u Hu) as [v [Hv HR]]. exists v. split; [right; exact Hv | exact HR].
+Qed.
+
 (* The companion "outside ys" fact: sigma/sigma' agree there (offset), and
    the CAPTURE half of local injectivity (w outside ys but sigma(w)
    colliding with ys2 would force w into ys1 via Forall2 + injectivity)
@@ -4154,6 +4165,98 @@ Proof.
   - simpl. constructor; [apply H; exact Hab | exact IH].
 Qed.
 
+(* Sec.60 (Hinj2's own remaining gap, worked back from BlkAlpha_compose_rename's
+   union domain): every free name of b2 traces back, via rho, to SOME free
+   name of b1 -- the ONE direction of "BlkAlpha preserves free variables"
+   that actually holds unconditionally (the OTHER direction is FALSE in
+   general: a badly-chosen bound name on the b2 side can accidentally
+   shadow an unrelated free reference that had nothing to do with it,
+   confirmed by hand with a concrete BLet counterexample before attempting
+   this lemma at all -- so this is deliberately stated as a subset, mirroring
+   free_vars_b_rename_subset's own asymmetric shape one section up).
+   Exactly the missing piece for the "w free in body2" half of Hinj2's own
+   union domain at NL_Select's call site: it collapses that half down to
+   "w = rho w' for some w' free in body", matching the OTHER half of the
+   union (map rho (vars_of_b body)) instead of needing new case-work. *)
+Lemma free_vars_b_BlkAlpha_subset_bound :
+  forall n b1, blk_size b1 < n ->
+  forall rho b2, BlkAlpha rho b1 b2 ->
+  forall w, In w (free_vars_b b2) -> exists y, In y (free_vars_b b1) /\ rho y = w.
+Proof.
+  induction n as [n IHn] using (well_founded_induction lt_wf).
+  intros b1 Hsize rho b2 Hba w Hin.
+  destruct b1 as [x e k | x brs | e].
+  - (* BLet *)
+    remember (BLet x e k) as target eqn:Ht.
+    destruct Hba as [ | x1 x2 e1 e2 k1 k2 sigma' He Hxeq Hoff Hbk | ]; try discriminate Ht.
+    injection Ht as Htx Hte Htk; subst x1 e1 k1.
+    simpl in Hin. apply in_app_or in Hin. destruct Hin as [Hin | Hin].
+    + assert (He2eq : e2 = rename_e0 rho e) by (apply Expr0Alpha_det; exact He).
+      subst e2. rewrite vars_of_e0_rename in Hin. apply in_map_iff in Hin.
+      destruct Hin as [y [Hsy Hyin]]. exists y. split; [apply in_or_app; left; exact Hyin | exact Hsy].
+    + apply in_remove in Hin. destruct Hin as [Hin Hne].
+      assert (Hn : blk_size k + 1 < n) by (simpl in Hsize; lia).
+      assert (Hm : blk_size k < blk_size k + 1) by lia.
+      destruct (IHn (blk_size k + 1) Hn k Hm sigma' k2 Hbk w Hin) as [y [Hy Hsy]].
+      destruct (Nat.eq_dec y x) as [Heqyx | Hneqyx].
+      * subst y. rewrite Hxeq in Hsy. exfalso. exact (Hne (eq_sym Hsy)).
+      * exists y. split.
+        -- apply in_or_app. right. apply in_in_remove; [exact Hneqyx | exact Hy].
+        -- rewrite <- Hsy. symmetry. apply Hoff. exact Hneqyx.
+  - (* BCase *)
+    remember (BCase x brs) as target eqn:Ht.
+    destruct Hba as [ | | x1' brs1' brs2' Hbrs ]; try discriminate Ht.
+    injection Ht as Htx Htbrs; subst x1' brs1'.
+    simpl in Hin. destruct Hin as [Hin | Hin].
+    + subst w. exists x. split; [left; reflexivity | reflexivity].
+    + assert (Hbrs' : forall brsA, (forall c ys bd, In (c, ys, bd) brsA -> In (c, ys, bd) brs) ->
+        forall brsB, BrsAlpha rho brsA brsB ->
+        In w (fold_right (fun p acc => match p with (c,ps,bd) => remove_all ps (free_vars_b bd) ++ acc end) nil brsB) ->
+        exists y, In y (fold_right (fun p acc => match p with (c,ps,bd) => remove_all ps (free_vars_b bd) ++ acc end) nil brsA) /\ rho y = w).
+      { induction brsA as [| [[c ys1] b1] brsA' IHbrs]; intros Hsub brsB Hb Hin2.
+        - remember (@nil (cname * list var * Blk)) as tgt eqn:Htg.
+          destruct Hb as [ | ]; try discriminate Htg. destruct Hin2.
+        - remember ((c, ys1, b1) :: brsA') as tgt eqn:Htg.
+          destruct Hb as [ | c0 ys1' ys2 b1' b2 tbrsA tbrsB sigma'' HF2 Hoff2 Hcap Hbk2 Hbrest ];
+            try discriminate Htg.
+          injection Htg as Htgc Htgys Htgbd Htgrest. subst c0 ys1' b1' tbrsA.
+          simpl in Hin2. apply in_app_or in Hin2. destruct Hin2 as [Hin2 | Hin2].
+          + apply remove_all_in in Hin2. destruct Hin2 as [Hin2 Hnin2].
+            assert (HinHead : In (c, ys1, b1) brs) by (apply Hsub; left; reflexivity).
+            assert (Hn : blk_size b1 + 1 < n).
+            { assert (Hlt : blk_size b1 < blk_size (BCase x brs)) by exact (blk_size_in_bound x brs c ys1 b1 HinHead).
+              lia. }
+            assert (Hm : blk_size b1 < blk_size b1 + 1) by lia.
+            destruct (IHn (blk_size b1 + 1) Hn b1 Hm sigma'' b2 Hbk2 w Hin2) as [y [Hy Hsy]].
+            destruct (in_dec Nat.eq_dec y ys1) as [Hyin | Hynin].
+            * exfalso. apply Hnin2.
+              destruct (Forall2_in_l var var (fun y1 y2 => sigma'' y1 = y2) ys1 ys2 HF2 y Hyin) as [y2 [Hy2in Hy2eq]].
+              rewrite <- Hsy, Hy2eq. exact Hy2in.
+            * exists y. split.
+              -- apply in_or_app. left. apply remove_all_in_intro; [exact Hy | exact Hynin].
+              -- rewrite <- Hsy. symmetry. apply Hoff2. exact Hynin.
+          + destruct (IHbrs (fun c0 ys0 bd0 Hin0 => Hsub c0 ys0 bd0 (or_intror Hin0)) tbrsB Hbrest Hin2)
+              as [y [Hy Hsy]].
+            exists y. split; [apply in_or_app; right; exact Hy | exact Hsy]. }
+      destruct (Hbrs' brs (fun c ys bd Hin0 => Hin0) brs2' Hbrs Hin) as [y [Hy Hsy]].
+      exists y. split; [simpl; right; exact Hy | exact Hsy].
+  - (* BExpr *)
+    remember (BExpr e) as target eqn:Ht.
+    destruct Hba as [e1' e2' He | | ]; try discriminate Ht.
+    injection Ht as Hte; subst e1'.
+    assert (He2eq : e2' = rename_e0 rho e) by (apply Expr0Alpha_det; exact He).
+    subst e2'. simpl in Hin. rewrite vars_of_e0_rename in Hin. apply in_map_iff in Hin.
+    destruct Hin as [y [Hsy Hyin]]. exists y. split; [exact Hyin | exact Hsy].
+Qed.
+
+Lemma free_vars_b_BlkAlpha_subset :
+  forall rho b1 b2, BlkAlpha rho b1 b2 ->
+  forall w, In w (free_vars_b b2) -> exists y, In y (free_vars_b b1) /\ rho y = w.
+Proof.
+  intros rho b1 b2 Hba w H.
+  exact (free_vars_b_BlkAlpha_subset_bound (S (blk_size b1)) b1 (Nat.lt_succ_diag_r _) rho b2 Hba w H).
+Qed.
+
 Lemma BlkAlpha_compose_rename :
   forall n body, blk_size body < n ->
   forall rho body2, BlkAlpha rho body body2 ->
@@ -4162,8 +4265,21 @@ Lemma BlkAlpha_compose_rename :
   (forall w, In w (bound_vars_b body2) -> In w bv2) ->
   (forall w1 w2, In w1 (vars_of_b body) -> In w2 (vars_of_b body) -> theta1 w1 = theta1 w2 ->
      w1 = w2 \/ (In w1 ysX /\ In w2 ysX)) ->
-  (forall w1 w2, (In w1 (vars_of_b body2) \/ In w1 (map rho (vars_of_b body))) ->
-                 (In w2 (vars_of_b body2) \/ In w2 (map rho (vars_of_b body))) ->
+  (* Sec.60: this domain used to be the FULL vars_of_b on both sides
+     (In w1 (vars_of_b body2) \/ In w1 (map rho (vars_of_b body))) -- but
+     the proof below never actually applies this hypothesis to a "map rho"
+     witness that isn't already free_vars_b-shaped (the two spots it's
+     produced -- the BLet/BCase forwarding sites for a recursive call, and
+     the BCase-branch local-injectivity site -- always land w on the ys/
+     free_vars_b split already, never a bare bound name via map rho). At a
+     call site, rho's own image of a bound name is NOT meaningfully
+     constrained by BlkAlpha at all (BA_Let's binder gets sigma' x1 = x2,
+     never rho x1 itself, so rho x1 could be anything) -- so the FULL
+     vars_of_b version is undischargeable in general, exactly like
+     zipsubst_compose_out's own offset premise (Sec.56) was stronger than
+     what its proof consumed. Narrowed to free_vars_b, mirroring that fix. *)
+  (forall w1 w2, (In w1 (vars_of_b body2) \/ In w1 (map rho (free_vars_b body))) ->
+                 (In w2 (vars_of_b body2) \/ In w2 (map rho (free_vars_b body))) ->
                  theta2 w1 = theta2 w2 -> w1 = w2 \/ (In w1 (map rho0 ysX) /\ In w2 (map rho0 ysX))) ->
   (forall y, In y ysX -> ~ In y bv1) ->
   (forall y, In y (map rho0 ysX) -> ~ In y bv2) ->
@@ -4202,15 +4318,15 @@ Proof.
           [ simpl; right; apply in_or_app; right; exact Hw1
           | simpl; right; apply in_or_app; right; exact Hw2 | exact Heq].
       * intros w1 w2 Hw1 Hw2 Heq.
-        assert (Hlift : forall w, (In w (vars_of_b k2) \/ In w (map rho'' (vars_of_b k))) ->
-                        (In w (vars_of_b (BLet x2 e2 k2)) \/ In w (map rho (vars_of_b (BLet x e k))))).
+        assert (Hlift : forall w, (In w (vars_of_b k2) \/ In w (map rho'' (free_vars_b k))) ->
+                        (In w (vars_of_b (BLet x2 e2 k2)) \/ In w (map rho (free_vars_b (BLet x e k))))).
         { intros w [Hw | Hw].
           - left. simpl. right. apply in_or_app. right. exact Hw.
           - apply in_map_iff in Hw. destruct Hw as [y0 [Hy0eq Hy0in]].
             destruct (Nat.eq_dec y0 x) as [Heqy0 | Hney0].
             + subst y0. left. rewrite Hxeq in Hy0eq. subst w. simpl. left. reflexivity.
             + right. rewrite (Hoff y0 Hney0) in Hy0eq. apply in_map_iff. exists y0.
-              split; [exact Hy0eq | simpl; right; apply in_or_app; right; exact Hy0in]. }
+              split; [exact Hy0eq | simpl; apply in_or_app; right; apply in_in_remove; [exact Hney0 | exact Hy0in]]. }
         apply Hinj2; [apply Hlift; exact Hw1 | apply Hlift; exact Hw2 | exact Heq].
       * exact Hhyg1.
       * exact Hhyg2.
@@ -4337,7 +4453,7 @@ Proof.
           destruct Hw1' as [y1 [Hy1 Hty1]]. destruct Hw2' as [y2 [Hy2 Hty2]].
           subst w1 w2.
           rewrite (Hkey y1 Hy1), (Hkey y2 Hy2) in Heq.
-          assert (Hrhoy1 : In (rho''' y1) (vars_of_b (BCase (rho x) brs2')) \/ In (rho''' y1) (map rho (vars_of_b (BCase x brs)))).
+          assert (Hrhoy1 : In (rho''' y1) (vars_of_b (BCase (rho x) brs2')) \/ In (rho''' y1) (map rho (free_vars_b (BCase x brs)))).
           { destruct Hy1 as [Hy1 | Hy1].
             - left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). left.
               rewrite Hys2eq. apply in_map_iff. exists y1. split; [reflexivity | exact Hy1].
@@ -4345,9 +4461,9 @@ Proof.
               + left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). left.
                 rewrite Hys2eq. apply in_map_iff. exists y1. split; [reflexivity | exact Hyin].
               + right. rewrite (Hoff2 y1 Hynin). apply in_map_iff. exists y1.
-                split; [reflexivity | apply (vars_of_b_bcase_branch x brs c ys bd HinHead); right;
-                        apply free_vars_b_subset_vars_of_b; exact Hy1]. }
-          assert (Hrhoy2 : In (rho''' y2) (vars_of_b (BCase (rho x) brs2')) \/ In (rho''' y2) (map rho (vars_of_b (BCase x brs)))).
+                split; [reflexivity | apply (free_vars_b_bcase_branch x brs c ys bd HinHead);
+                        apply remove_all_in_intro; [exact Hy1 | exact Hynin]]. }
+          assert (Hrhoy2 : In (rho''' y2) (vars_of_b (BCase (rho x) brs2')) \/ In (rho''' y2) (map rho (free_vars_b (BCase x brs)))).
           { destruct Hy2 as [Hy2 | Hy2].
             - left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). left.
               rewrite Hys2eq. apply in_map_iff. exists y2. split; [reflexivity | exact Hy2].
@@ -4355,8 +4471,8 @@ Proof.
               + left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). left.
                 rewrite Hys2eq. apply in_map_iff. exists y2. split; [reflexivity | exact Hyin].
               + right. rewrite (Hoff2 y2 Hynin). apply in_map_iff. exists y2.
-                split; [reflexivity | apply (vars_of_b_bcase_branch x brs c ys bd HinHead); right;
-                        apply free_vars_b_subset_vars_of_b; exact Hy2]. }
+                split; [reflexivity | apply (free_vars_b_bcase_branch x brs c ys bd HinHead);
+                        apply remove_all_in_intro; [exact Hy2 | exact Hynin]]. }
           destruct (Hinj2 (rho''' y1) (rho''' y2) Hrhoy1 Hrhoy2 Heq) as [Heqrr | [Hexp1 Hexp2]].
           * assert (Hy12' : y1 = y2) by (apply Hcap1; [exact Hy1 | exact Hy2 | exact Heqrr]).
             f_equal. exact Hy12'.
@@ -4401,8 +4517,8 @@ Proof.
               [ apply (vars_of_b_bcase_branch x brs c ys bd HinHead); right; exact Hw1
               | apply (vars_of_b_bcase_branch x brs c ys bd HinHead); right; exact Hw2 | exact Heq].
           * intros w1 w2 Hw1 Hw2 Heq.
-            assert (Hdom2 : forall w, (In w (vars_of_b b2) \/ In w (map rho''' (vars_of_b bd))) ->
-                            (In w (vars_of_b (BCase (rho x) brs2')) \/ In w (map rho (vars_of_b (BCase x brs))))).
+            assert (Hdom2 : forall w, (In w (vars_of_b b2) \/ In w (map rho''' (free_vars_b bd))) ->
+                            (In w (vars_of_b (BCase (rho x) brs2')) \/ In w (map rho (free_vars_b (BCase x brs))))).
             { intros w [Hw | Hw].
               - left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). right. exact Hw.
               - apply in_map_iff in Hw. destruct Hw as [w0 [Hw0eq Hw0in]].
@@ -4410,7 +4526,8 @@ Proof.
                 + left. apply (vars_of_b_bcase_branch (rho x) brs2' c ys2 b2 HinHead2). left.
                   subst w. rewrite Hys2eq. apply in_map_iff. exists w0. split; [reflexivity | exact Hyin].
                 + right. subst w. rewrite (Hoff2 w0 Hynin). apply in_map_iff. exists w0.
-                  split; [reflexivity | apply (vars_of_b_bcase_branch x brs c ys bd HinHead); right; exact Hw0in]. }
+                  split; [reflexivity | apply (free_vars_b_bcase_branch x brs c ys bd HinHead);
+                          apply remove_all_in_intro; [exact Hw0in | exact Hynin]]. }
             apply Hinj2; [apply Hdom2; exact Hw1 | apply Hdom2; exact Hw2 | exact Heq].
           * exact Hhyg1.
           * exact Hhyg2.

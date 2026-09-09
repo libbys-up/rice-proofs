@@ -4124,6 +4124,54 @@ through `Hinj2`'s own bound-vs-free split under `rho`'s image (untangling what `
 ys)`'s own bound-name portion needs), or reconsider option (a) from §53 now that both paths look comparably
 deep. Flagged for discussion.
 
+## 60. Same session, continued: user chose to reopen `BlkAlpha_compose_rename` (§53's option (a)) — turned
+out to be a single, surgical one-line change plus a small new helper lemma, not a re-derivation of its
+existing case-split work
+
+**Working out exactly what needed to change, by hand, before touching the live lemma.** Traced the "w2 bound,
+not free, colliding via `rho`'s image" sub-case §59 flagged as unresolved, down through `Hinj2`'s THREE actual
+consumption sites inside `BlkAlpha_compose_rename`'s own proof (`Hlift` in the `BLet` case, `Hdom2` and
+`Hrhoy1`/`Hrhoy2` in the `BCase` case) — and found that **none of them ever produces a witness that's a bound,
+non-pattern name under `map rho`.** Every site that builds a `map rho (vars_of_b body)`-shaped witness
+immediately splits on "is this name in `ys` or not" and, in the "not" branch, only ever has a *free*-in-`body`
+name in hand (via `Hoff`/`Hoff2`-style offset rewriting) — never a bound one. The `vars_of_b` in the lemma's
+own stated domain is strictly stronger than what its own proof ever consumes — exactly Sec.56's own
+`zipsubst_compose_out` lesson, now recurring one level up in the SAME lemma. Confirmed (by hand, informally)
+that `rho`'s value at a genuinely bound position is not meaningfully constrained by `BlkAlpha` at all —
+`BA_Let`'s own binder gets `sigma' x1 = x2`, never `rho x1`, so `rho x1` really could be anything — so the
+full `vars_of_b` form is *not* dischargeable at the call site in general, matching what §59 found. Also
+checked, and found FALSE, a shortcut that would have avoided touching the lemma at all: "`BlkAlpha` preserves
+free variables via `rho`" as an *equality* (`free_vars_b b2 = map rho (free_vars_b b1)`) — a hand-built
+`BLet` counterexample (an adversarial `x2` choice accidentally shadowing an unrelated already-free name)
+breaks the `⊇` direction. The `⊆` direction, though, is NOT broken by that counterexample and turns out to be
+exactly what's needed at the call site.
+
+**The actual changes, once this was worked out.**
+- `Hinj2`'s domain narrowed from `In w (vars_of_b body2) \/ In w (map rho (vars_of_b body))` to the same
+  shape with `free_vars_b body` in place of `vars_of_b body` — a one-line change to the lemma's own statement.
+  All three internal consumption sites needed a small, local adjustment to match (swapping a
+  `vars_of_b_bcase_branch` step for the corresponding `free_vars_b_bcase_branch`/`remove_all_in_intro` one) —
+  no new case-split, no re-derivation of the lemma's own structure.
+- `free_vars_b_BlkAlpha_subset` (new, standalone, `Qed`'d, zero axioms): `BlkAlpha rho b1 b2 -> In w
+  (free_vars_b b2) -> exists y, In y (free_vars_b b1) /\ rho y = w` — the `⊆` direction confirmed above,
+  proved by the same well-founded-on-`blk_size` + local `BrsAlpha`-list-induction idiom this file already
+  uses throughout (mirroring `BlkAlpha_compose_rename`'s own `Hbrs'` helper's induction-on-the-list-not-the-
+  proof structure, needed to sidestep `BrsAlpha`'s own `sigma`-as-index quirk — `induction` on a `BrsAlpha`
+  proof directly requires an extra leading binder per case for the generalized `sigma`, confirmed against
+  `BrsAlpha_labels_eq`'s own existing pattern list; sidestepped entirely by inducting on the branch list with
+  `Hb` peeled off via `remember`+`destruct` instead, exactly as `BlkAlpha_compose_rename` already does). This
+  collapses NL_Select's own `Hinj2` construction: `free_vars_b body2 \` `ys2` and `map rho (free_vars_b
+  body) \` `ys2` become the SAME kind of set (a `rho`-image of a free name of `body`), closing what would
+  otherwise have needed the "BlkAlpha_compose_rename preserves free vars" shortcut this section just disproved.
+- Also added `Forall2_in_l` (the missing mirror of the file's own existing `Forall2_in_r`).
+
+**Status.** `alpha_renaming_wip.v` compiles clean from a genuinely fresh four-file rebuild.
+`BlkAlpha_compose_rename` and the new `free_vars_b_BlkAlpha_subset` are both `Print Assumptions`-clean. Still
+exactly 2 admits (`NL_Select`'s own selected-branch continuation, `NL_Guess`), zero regressions.
+`curry_test_leftmost.v`/`failed_attempts.v` unchanged. **Next step:** finish assembling `NL_Select`'s own
+`Hinj2` (now dischargeable via `free_vars_b_BlkAlpha_subset` + the D1/D2 `NoCaptureFinalB` pair from
+§56/58), then the rest of `BlkAlpha_compose_rename`'s hypothesis list, then invoke it to close the case.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
