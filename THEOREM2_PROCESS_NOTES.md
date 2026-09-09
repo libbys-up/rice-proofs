@@ -4275,6 +4275,66 @@ lookup/`BrsUniqB` machinery" for branch identification (trivial here, `hd_error`
 `ysX`/`Hagree` (restricted to just `ws`, no `pa`-merging, per gap 7's own resolution) — structurally the same
 shape as `NL_Select`, now with every supporting piece already in hand.
 
+## 63. Same session, continued: started `NL_Guess`; branch identification and the `Hinj1`-style dead-code
+argument both carry over from `NL_Select` cleanly, but the renaming-reconciliation step exposed a genuine gap
+this session's own machinery doesn't close — the abandoned `batch_extend` design from earlier in the project
+
+**What carries over cleanly, confirmed by hand before writing anything.** `NL_Guess`'s own `ws` (the fresh
+batch it invents, mirroring `NL_Fun`'s `s`) plays exactly `NL_Select`'s `zs` role for the dead-code argument:
+`ws[i]` isn't heap-defined *before* the rule fires (unlike `zs`, which came from an already-forced
+constructor), but it becomes heap-defined via the rule's own `hupd_list` write, and `NEval_left_domain_mono`
+carries that forward to `G2` (this case's own eventual output) exactly as `zs` did — so `HbodyFinal`
+(`NoCaptureFinalB G2 body1`, from `He1Final`) still gives the same contradiction against `HbodyFinal`
+whenever the colliding name is bound in `body1`. Branch identification is actually simpler than `NL_Select`'s
+own (`hd_error` is positional, no `BrsUniqB`/label-uniqueness argument needed at all — `BrsAlpha_labels_eq`
+plus one `injection` on the two `hd_error`-projected label sequences pins the D2-side head branch down
+directly). Built one small, genuinely reusable piece along the way: `ren_override2_Forall2_direct` (`NoDup ws
+-> length ws = length ws2 -> Forall2 (fun w1 w2 => ren_override2 ws ws2 sigma w1 = w2) ws ws2`) — the
+"pairing" fact for a *fresh*, from-scratch batch, as opposed to `ren_override2_map_Forall2` (built earlier for
+`NL_Select`'s own internal `BlkAlpha_compose_rename` recursion, keyed on `map s ys` for some pre-existing `s`).
+`Qed`'d, zero axioms, needed relocating past `Forall2_impl_in_l`'s own definition (it's used in the proof) and
+an `eapply`-not-`apply` fix (spelling the motive functions out explicitly hit a `simpl`-under-binders mismatch
+`apply`'s syntactic unification couldn't bridge; letting `eapply` infer them from the goal side-stepped it).
+
+**Where it breaks: constructing the actual composed renaming to feed `IH2`.** `NL_Select`'s own recursive
+call used `sigma` (from `IH1`) directly, since `zs2 = map sigma zs` came for free out of `IH1`'s own
+conclusion (`zs` was *part of* the value `IH1` was already relating). `NL_Guess`'s `ws`/`ws'` (the D2-side
+guessed batch, from `NEval_left_bcase_shape`'s own Guess disjunct) have **no such relationship** — `ws'` is
+chosen entirely independently, satisfying only its own freshness conditions, with nothing tying it to `sigma`
+at all. Composing them needs an actual **new, extended renaming** — `sigma_final := ren_override2 ws ws'
+sigma`, mapping `ws[i] ↦ ws'[i]` and falling back to `sigma` elsewhere — and this composed renaming must
+itself be part of a genuine `mutual_inverse` pair to satisfy `IH2`'s own `sigma0` parameter.
+
+**Confirmed, by hand, that the naive override can genuinely fail to be bijective.** `sigma` is *already* a
+full bijection on all of `var` (`Hmisig`, from `IH1`), meaning for any `ws'[i]`, there's already an existing
+preimage `tau (ws'[i])` under it — and nothing says that preimage happens to already be `ws[i]` (or even to be
+in `ws` at all — it could be any unrelated name entirely, since `sigma`/`tau` were fixed *before* `ws`/`ws'`
+were ever chosen). Overriding `ws[i] ↦ ws'[i]` while leaving that unrelated preimage's own mapping untouched
+creates two different inputs mapping to the same output — not a bijection. This is exactly the "swap" problem
+`splice_sigma`/`splice_tau`(the single-point extension `NL_Let`'s own already-Qed'd case uses) were built to
+solve for ONE point at a time (`splice_sigma sigma tau a d w := if w=a then d else if w=tau d then sigma a
+else sigma w` — whatever *used to* map to `d` gets displaced onto `a`'s own old image, preserving bijectivity
+by construction). A `ws`-sized *batch* version of the same swap is buildable in principle (fold `splice_sigma`/
+`splice_tau` pairwise over the list, `mutual_inverse` preserved at each step by `splice_mutual_inverse`,
+applied iteratively) — but tracking *which* positions end up displaced by the fold, and proving the resulting
+renaming still agrees with `sigma` outside `ws` in the way `Hext`'s own chain needs, is precisely the shape of
+problem the project's own **`batch_extend`** design (referenced throughout the file's own historical comments
+near `PaInv`/`Hcontain0`/`ps_pairs`, e.g. around lines 130–440) was built to solve for `NL_Fun`, before `NL_Fun`'s
+own case found a way to avoid needing it entirely (§Sec.34's "gap 7 is gone" — confining free names to `ps`
+via `FunBodyWellScoped`, so no batch reconciliation was ever needed there). `batch_extend` itself is no longer
+defined anywhere in the file — it was abandoned once `NL_Fun` stopped needing it — and `NL_Guess` has no
+analogous "confine free names to a known set" escape hatch (a guessed branch's own free variables are
+unrestricted, unlike a function body's).
+
+**Status.** `alpha_renaming_wip.v` compiles clean from a genuinely fresh four-file rebuild, still exactly one
+`admit` (`NL_Guess`, untouched beyond the branch-identification/dead-code groundwork traced above — no code
+committed for the renaming-reconciliation step itself, since it isn't sound as sketched). `Print
+Assumptions`-clean on the new lemma. **Flagged for discussion rather than decided unilaterally**, matching how
+every other genuine fork this session hit was handled: this needs either (a) building the batch-swap
+`mutual_inverse` extension for real (a real, if bounded, sub-project — essentially reviving a piece of the
+abandoned `batch_extend` design, scoped down to just `ws`/`ws'` with no `pa`-merging), or (b) finding a
+different construction for `NL_Guess`'s own composed renaming that sidesteps needing one at all.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary

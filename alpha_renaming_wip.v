@@ -4171,6 +4171,31 @@ Proof.
   - simpl. f_equal; [exact (eq_sym Hab) | exact IH].
 Qed.
 
+(* Sec.63: NL_Guess's own version of the aliasing-source-vs-image pairing --
+   unlike ren_override2_map_in/_map_Forall2 above (built for NL_Select's own
+   internal use, keyed on map s ys for some existing s), NL_Guess needs the
+   override keyed DIRECTLY on ws (a brand-new, freshly-chosen batch with no
+   underlying s at all) paired against an INDEPENDENTLY-chosen ws2 on the D2
+   side. NoDup ws is what keeps the override from misfiring on a duplicate
+   key before reaching its own tail. *)
+Lemma ren_override2_Forall2_direct :
+  forall ws ws2 sigma, NoDup ws -> length ws = length ws2 ->
+  Forall2 (fun w1 w2 => ren_override2 ws ws2 sigma w1 = w2) ws ws2.
+Proof.
+  induction ws as [| w ws' IH]; intros ws2 sigma HND Hlen; destruct ws2 as [| w2 ws2'].
+  - constructor.
+  - discriminate Hlen.
+  - discriminate Hlen.
+  - simpl. inversion HND as [| ? ? Hnotin HND']; subst.
+    constructor.
+    + destruct (Nat.eq_dec w w) as [_ | Hc]; [reflexivity | congruence].
+    + assert (IH' := IH ws2' sigma HND' (eq_add_S _ _ Hlen)).
+      eapply Forall2_impl_in_l; [exact IH' | ].
+      intros a b Ha Heq. simpl. destruct (Nat.eq_dec a w) as [Heqaw | Hneqaw].
+      * exfalso. subst a. exact (Hnotin Ha).
+      * exact Heq.
+Qed.
+
 Lemma Forall2_map_both :
   forall (A B C D : Type) (f : A -> C) (g : B -> D) (R : A -> B -> Prop) (S : C -> D -> Prop)
     (l1 : list A) (l2 : list B),
