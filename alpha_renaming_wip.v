@@ -4449,11 +4449,11 @@ Theorem NEval_left_confluence :
   FunBodyWellScoped P -> ProgBrsUniqWF P -> ProgNoShadowWF P -> ProgNoCaptureWF P ->
   ClosedHeap Gam1 -> BrsUniqHeap Gam1 -> NoShadowHeap Gam1 -> NoCaptureHeap Gam1 ->
   GlobalFreshHeap P Gam1 -> NoCaptureProgHeap P Gam1 -> GlobalFreshHeap P Gam2 -> NoCaptureProgHeap P Gam2 ->
-  HeapBExpr Gam1 ->
+  HeapBExpr Gam1 -> HeapBExpr Gam2 ->
   (forall w, In w (free_vars_b e1) -> Gam1 w <> None) -> BrsUniqB e1 ->
   NoShadowB e1 -> NoShadowB e2 -> NoCaptureB e1 -> NoCaptureProgB P e1 -> NoCaptureProgB P e2 ->
   NoCaptureFinalB Gam1' e1 ->
-  forall Gam2' v2, NEval_left P F2 Gam2 e2 Gam2' v2 ->
+  forall Gam2' v2, NEval_left P F2 Gam2 e2 Gam2' v2 -> NoCaptureFinalB Gam2' e2 ->
   exists sigma tau, mutual_inverse sigma tau /\
     (forall w, Gam1 w <> None -> sigma w = sigma0 w) /\
     NHeapAlpha sigma tau Gam1' Gam2' /\ v2 = rename_b sigma v1.
@@ -4475,9 +4475,9 @@ Proof.
     ; intros sigma0 tau0 Hmi0 F2 HF2eq Gam2 e2 He2 Halpha0
       HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
       Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1 Hgf2 HNCHeap2
-      Hbe1
+      Hbe1 Hbe2
       He1closed He1BrsUniq He1NoShadow He2NoShadow He1NoCapture He1NCProg He2NCProg
-      He1Final Gam2' v2 H2.
+      He1Final Gam2' v2 H2 He2Final.
   - (* NL_VarCons *)
     destruct Hmi0 as [Hst0 Hts0].
     assert (Hgamx : Gam2 (sigma0 x) = Some (BExpr (ECon c0 (map sigma0 args0)))).
@@ -4576,14 +4576,16 @@ Proof.
       assert (He0NoShadow2 : NoShadowB (rename_b sigma0 e)) by exact (NoShadowB_rename sigma0 e He0NoShadow Hinj0).
       assert (He0Final : NoCaptureFinalB G1 e).
       { destruct (Hbe1 x e Hgx0) as [e0 He0eq]. subst e. apply NoCaptureFinalB_bexpr. }
+      assert (He0Final2 : NoCaptureFinalB G1' (rename_b sigma0 e)).
+      { destruct (Hbe1 x e Hgx0) as [e0 He0eq]. subst e. apply NoCaptureFinalB_bexpr. }
       destruct (IH sigma0 tau0 (conj Hst0 Hts0) (sigma0 x :: map sigma0 F0) eq_refl Gam2
                   (rename_b sigma0 e) (BlkAlpha_refl sigma0 Hinj0 e) Halpha0
                   HFdom1' HFdom2'
                   HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
                   Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1 Hgf2 HNCHeap2
-                  Hbe1
+                  Hbe1 Hbe2
                   He0closed He0BrsUniq He0NoShadow He0NoShadow2 He0NoCapture He0NCProg He0NCProg2
-                  He0Final G1' v2 Hrec2)
+                  He0Final G1' v2 Hrec2 He0Final2)
         as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
       exists sigma, tau. split; [exact Hmisig | ].
       split; [exact Hext | ].
@@ -4695,12 +4697,18 @@ Proof.
       assert (Hy1notin : ~ In y1 ps).
       { intro Hc. exact (NoDup_app_disjoint var ps (bound_vars_b body) (HProgNoShadow f ps body HPf) y1 Hc Hy1in). }
       exact (Hfresh y1 Hy1notin). }
+    assert (HbodyFinal2 : NoCaptureFinalB Gam2' (rename_b s2 body)).
+    { intros y0 Hy0. rewrite bound_vars_b_rename in Hy0. apply in_map_iff in Hy0.
+      destruct Hy0 as [y1 [Hsy1 Hy1in]]. subst y0.
+      assert (Hy1notin : ~ In y1 ps).
+      { intro Hc. exact (NoDup_app_disjoint var ps (bound_vars_b body) (HProgNoShadow f ps body HPf) y1 Hc Hy1in). }
+      exact (Hfresh2 y1 Hy1notin). }
     destruct (IH sigma0 tau0 Hmi0 (map sigma0 F0) eq_refl Gam2 (rename_b s2 body) HBA Halpha0
                 HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
                 Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1 Hgf2 HNCHeap2
-                Hbe1
+                Hbe1 Hbe2
                 Hbodyclosed HbodyBrsUniq HbodyNoShadow HbodyNoShadow2 HbodyNoCapture HbodyNCProg HbodyNCProg2
-                HbodyFinal Gam2' v2 Hrec2)
+                HbodyFinal Gam2' v2 Hrec2 HbodyFinal2)
       as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
     exists sigma, tau. split; [exact Hmisig | ].
     split; [exact Hext | ].
@@ -4810,7 +4818,11 @@ Proof.
       - exact (HNCHeap2 w b Hwb). }
     assert (HnewHbe1 : HeapBExpr (hupd G0 x (let_content x e))).
     { apply hupd_HeapBExpr; [exact (let_content_is_bexpr x e) | exact Hbe1]. }
+    assert (HnewHbe2 : HeapBExpr (hupd Gam2 x2n (let_content x2n (rename_e0 sigma0 e)))).
+    { apply hupd_HeapBExpr; [exact (let_content_is_bexpr x2n (rename_e0 sigma0 e)) | exact Hbe2]. }
     assert (HkFinal : NoCaptureFinalB G1 k) by exact (NoCaptureFinalB_let_k G1 x e k He1Final).
+    assert (Hk2Final : NoCaptureFinalB Gam2' k2n)
+      by exact (NoCaptureFinalB_let_k Gam2' x2n (rename_e0 sigma0 e) k2n He2Final).
     assert (Hxnotinf0 : ~ In x F0) by (intro Hin; exact (HFdom1 x Hin Hxfresh)).
     assert (Htx2notinf0 : ~ In (tau0 x2n) F0) by (intro Hin; exact (HFdom1 (tau0 x2n) Hin HG0tx2n)).
     assert (HF2eq'' : F2 = map sigma0'' F0).
@@ -4823,9 +4835,9 @@ Proof.
                 HFdom1' HFdom2'
                 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
                 HnewClosed HnewBrsUniqHeap HnewNoShadowHeap HnewNoCaptureHeap HnewGF HnewNCHeap HnewGF2 HnewNCHeap2
-                HnewHbe1
+                HnewHbe1 HnewHbe2
                 Hkclosed HkBrsUniq HkNoShadow Hk2NoShadow HkNoCapture HkNCProg Hk2NCProg
-                HkFinal Gam2' v2 Hrec2)
+                HkFinal Gam2' v2 Hrec2 Hk2Final)
       as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
     exists sigma, tau. split; [exact Hmisig | ].
     split.
@@ -4859,10 +4871,10 @@ Proof.
     destruct (IH sigma0 tau0 Hmi0 F1a HF2eq G1a (BExpr (EVar (sigma0 x))) HBAx Halpha0
                 HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
                 Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1 Hgf2 HNCHeap2
-                Hbe1
+                Hbe1 Hbe2
                 Hxclosed I (NoShadowB_bexpr (EVar x)) (NoShadowB_bexpr (EVar (sigma0 x)))
                 (NoCaptureB_bexpr (EVar x)) (NoCaptureProgB_bexpr P (EVar x)) (NoCaptureProgB_bexpr P (EVar (sigma0 x)))
-                (NoCaptureFinalB_bexpr G1 (EVar x)) G1b v1 HrecD)
+                (NoCaptureFinalB_bexpr G1 (EVar x)) G1b v1 HrecD (NoCaptureFinalB_bexpr G1b (EVar (sigma0 x))))
       as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
     exists sigma, tau. split; [exact Hmisig | ].
     split; [exact Hext | ].
@@ -4955,12 +4967,12 @@ Corollary NEval_left_self_confluence :
   GlobalFreshHeap P Gam -> NoCaptureProgHeap P Gam -> HeapBExpr Gam ->
   (forall w, In w (free_vars_b e) -> Gam w <> None) -> BrsUniqB e ->
   NoShadowB e -> NoCaptureB e -> NoCaptureProgB P e -> NoCaptureFinalB Gam1 e ->
-  forall Gam2 v2, NEval_left P F Gam e Gam2 v2 ->
+  forall Gam2 v2, NEval_left P F Gam e Gam2 v2 -> NoCaptureFinalB Gam2 e ->
   exists sigma tau, mutual_inverse sigma tau /\ NHeapAlpha sigma tau Gam1 Gam2 /\ v2 = rename_b sigma v1.
 Proof.
   intros P F Gam e Gam1 v1 H1 HFdom HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
     Hclosed HBrsUniqHeap HNoShadowHeap HNoCaptureHeap Hgf HNCHeap Hbe
-    Heclosed HeBrsUniq HeNoShadow HeNoCapture HeNCProg HeFinal Gam2 v2 H2.
+    Heclosed HeBrsUniq HeNoShadow HeNoCapture HeNCProg HeFinal Gam2 v2 H2 He2Final.
   assert (HBAid : BlkAlpha (fun w => w) e e).
   { assert (H := BlkAlpha_refl (fun w => w) (fun x y H => H) e). rewrite (rename_b_id e) in H. exact H. }
   destruct (NEval_left_confluence P F Gam e Gam1 v1 H1
@@ -4970,9 +4982,9 @@ Proof.
               HFdom HFdom
               HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
               Hclosed HBrsUniqHeap HNoShadowHeap HNoCaptureHeap Hgf HNCHeap Hgf HNCHeap
-              Hbe
+              Hbe Hbe
               Heclosed HeBrsUniq HeNoShadow HeNoShadow HeNoCapture HeNCProg HeNCProg
-              HeFinal Gam2 v2 H2)
+              HeFinal Gam2 v2 H2 He2Final)
     as [sigma [tau [Hmi [_ [Halpha Heq]]]]].
   exists sigma, tau. split; [exact Hmi | split; [exact Halpha | exact Heq]].
 Qed.

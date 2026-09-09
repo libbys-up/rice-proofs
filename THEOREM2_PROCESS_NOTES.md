@@ -4039,6 +4039,40 @@ than left abstract. `NL_Select` is still a bare `admit.`. **Next step:** build t
 `HeapBExpr Gam2`, an 11-case threading sweep mirroring §56's own D1-side one), then actually assemble
 `BlkAlpha_compose_rename`'s full call at `NL_Select` using the pieces enumerated above.
 
+## 58. Same session, continued: built the D2-side mirror (`HeapBExpr Gam2`/`NoCaptureFinalB Gam2' e2`), all
+11 cases re-threaded, zero regressions — `Hhyg2`'s obligation from §57 is now dischargeable
+
+**The addition.** `HeapBExpr Gam2` added right alongside `HeapBExpr Gam1` (same position, since `Gam2` is in
+scope from the start). `NoCaptureFinalB Gam2' e2`, unlike its D1 counterpart, can't sit as an earlier premise
+— `Gam2'` isn't bound until `H2` is — so it's the last hypothesis of the *inner* implication: `forall Gam2'
+v2, NEval_left P F2 Gam2 e2 Gam2' v2 -> NoCaptureFinalB Gam2' e2 -> exists ...`, exactly as planned in §57.
+
+**Threading, case by case — no surprises this time (the D1-side sweep in §56 had already found and resolved
+the one genuine subtlety, the `ys`-is-a-sibling-field fact, which applies identically to D2's own branch/body
+pair).** `VarCons`/`VarSelf`/`VarFree`/`ValFree`/`ValCon`: untouched (leaves). `VarExp`: `Hbe2` threaded
+unchanged (recursion starts from the same `Gam2`); `NoCaptureFinalB` for the recursive call's own D2-side
+target (`rename_b sigma0 e`) is vacuous the same way its D1 counterpart was (heap-stored `e` is `BExpr`-shaped
+via `Hbe1`, and renaming preserves that). `Fun`: a `HbodyFinal2 : NoCaptureFinalB Gam2' (rename_b s2 body)`
+built by the identical proof as `HbodyFinal`, just swapping `Hfresh` for `Hfresh2` (`NEval_left_fun_shape`'s
+own D2-side output, already `G'`-based since §55's fix widened both shape lemmas together back in §54). `Let`:
+`HnewHbe2` via `hupd_HeapBExpr` + `let_content_is_bexpr` (mirrors `HnewHbe1` exactly); `Hk2Final` via
+`NoCaptureFinalB_let_k` applied to `He2Final` (mirrors `HkFinal`). `Or`: both new obligations vacuous
+(`BExpr`-shaped targets on both sides), `Hbe2` passed through unchanged. `Select`/`Guess`: absorbed by
+`admit.`, no threading needed. `NEval_left_self_confluence` (the identity-renaming corollary): gained the
+same two hypotheses, `Hbe` reused for both `Gam1`/`Gam2` slots (identity renaming, same heap on both sides)
+and a new `He2Final` argument threaded straight through to `NEval_left_confluence`'s own call.
+
+**Status.** All four files (`curry.v`, `curry_test_leftmost.v`, `alpha_renaming_wip.v`, `failed_attempts.v`)
+compile clean from a genuinely fresh build (all `.vo`/`.vos`/`.vok`/`.glob`/`.aux` removed first, not just
+recompiled over stale artifacts). `alpha_renaming_wip.v` still exactly 2 admits (`NL_Select`, `NL_Guess`),
+`curry_test_leftmost.v` unchanged (9 `Admitted.`, 44 `admit`). `NEval_left_confluence` now carries the full
+set of hypotheses `BlkAlpha_compose_rename`'s widened-`ysX` plan needs on both sides. **Next step:** actually
+assemble `NL_Select`'s proof body — branch identification (§57, steps 1-3) is fully designed; what remains is
+writing it out, building the widened `ysX := ys ++ free_vars_b body` / `rho0 := rho` / `fv1 := free_vars_b
+body` construction from §57 and discharging `Hhyg2` with the newly-available `He2Final`/`Hbe2` pair (the same
+`GlobalFreshHeap`-style contrapositive argument used for the D1-side dead-code case, now against `Gam2'`/
+`bound_vars_b body2` instead of `Gam1'`/`bound_vars_b body`), then invoking `BlkAlpha_compose_rename` itself.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
