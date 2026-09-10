@@ -5599,7 +5599,275 @@ Proof.
        batch-splice for ws (restricted to just ws, no pa merging, per gap
        7's resolution) -- NOT YET ATTEMPTED, pending NL_Select's own case
        being finished first. *)
-    admit.
+    remember (BCase x brs) as target eqn:Ht.
+    destruct He2 as [ | | x0 brs1 brs2' Hbrs]; try discriminate Ht.
+    injection Ht as Htx Htbrs. subst x0 brs1.
+    assert (Hxdef : G0 x <> None) by (apply He1closed; left; reflexivity).
+    assert (Hxclosed1 : forall w, In w (free_vars_b (BExpr (EVar x))) -> G0 w <> None).
+    { intros w Hw. simpl in Hw. destruct Hw as [Hw | []]. subst w. exact Hxdef. }
+    assert (HBAx : BlkAlpha sigma0 (BExpr (EVar x)) (BExpr (EVar (sigma0 x))))
+      by (constructor; apply Expr0Alpha_intro).
+    destruct (NEval_left_bcase_shape P F2 Gam2 (sigma0 x) brs2' Gam2' v2 H2) as
+      [ [c2 [zs2 [ys2 [body2 [G1s [Hrec1s [HIn2s [Hlen2s Hrec2s]]]]]]]]
+      | [x2' [G1'' [c1' [ys1' [body1' [ws' [Hrec1' [Hhd' [Hlenws' [HND' [Hfr' [HnbFr' Hrec2']]]]]]]]]]]] ].
+    + (* Select disjunct on the D2 side: ruled out, D1 forced a free variable
+         (guess), never a constructor. *)
+      destruct (IH1 sigma0 tau0 Hmi0 F2 HF2eq Gam2 (BExpr (EVar (sigma0 x))) HBAx Halpha0
+                  HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
+                  Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1 Hgf2 HNCHeap2
+                  Hbe1 Hbe2
+                  Hxclosed1 I (NoShadowB_bexpr (EVar x)) (NoShadowB_bexpr (EVar (sigma0 x)))
+                  (NoCaptureB_bexpr (EVar x)) (NoCaptureProgB_bexpr P (EVar x)) (NoCaptureProgB_bexpr P (EVar (sigma0 x)))
+                  (NoCaptureFinalB_bexpr G1 (EVar x)) G1s (BExpr (ECon c2 zs2)) Hrec1s
+                  (NoCaptureFinalB_bexpr G1s (ECon c2 zs2)))
+        as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
+      simpl in Heqv. discriminate Heqv.
+    + (* Guess disjunct on the D2 side: the one that survives. *)
+      destruct (IH1 sigma0 tau0 Hmi0 F2 HF2eq Gam2 (BExpr (EVar (sigma0 x))) HBAx Halpha0
+                  HFdom1 HFdom2 HScoped HProgBrsUniq HProgNoShadow HProgNoCapture
+                  Hclosed1 HBrsUniqHeap1 HNoShadowHeap1 HNoCaptureHeap1 Hgf1 HNCHeap1 Hgf2 HNCHeap2
+                  Hbe1 Hbe2
+                  Hxclosed1 I (NoShadowB_bexpr (EVar x)) (NoShadowB_bexpr (EVar (sigma0 x)))
+                  (NoCaptureB_bexpr (EVar x)) (NoCaptureProgB_bexpr P (EVar x)) (NoCaptureProgB_bexpr P (EVar (sigma0 x)))
+                  (NoCaptureFinalB_bexpr G1 (EVar x)) G1'' (BExpr (EVar x2')) Hrec1'
+                  (NoCaptureFinalB_bexpr G1'' (EVar x2')))
+        as [sigma [tau [Hmisig [Hext [Halpha Heqv]]]]].
+      simpl in Heqv. injection Heqv as Hxeqv.
+      (* Branch identification: same BrsAlpha_lookup/brs_label_unique
+         machinery as NL_Select, except hd_error is positional -- the two
+         heads' own labels coincide directly via BrsAlpha_labels_eq, no
+         BrsUniqB/NoDup-of-labels argument needed to FIND the right entry
+         (only to confirm it's the unique one brs_label_unique also pins
+         down, matching NL_Select's own style for reuse). *)
+      assert (HinC1 : In (c1, ys1, body1) brs) by exact (hd_error_in brs (c1, ys1, body1) Hhd).
+      destruct (BrsAlpha_lookup sigma0 brs brs2' Hbrs c1 ys1 body1 HinC1) as
+        [ys2A [body2A [rho [HinA [Hforall2 [Hoffset [Hinjrho HbaBody]]]]]]].
+      assert (Hc1eq : c1 = c1').
+      { assert (Hlab := BrsAlpha_labels_eq sigma0 brs brs2' Hbrs).
+        destruct brs as [| [[cc yy] bb] brsT]; [discriminate Hhd | ].
+        simpl in Hhd. injection Hhd as Hhdc Hhdy Hhdb. subst cc yy bb.
+        destruct brs2' as [| [[cc2 yy2] bb2] brsT2]; [discriminate Hhd' | ].
+        simpl in Hhd'. injection Hhd' as Hhdc2 Hhdy2 Hhdb2. subst cc2 yy2 bb2.
+        simpl in Hlab. injection Hlab as Hlabc Hlabrest. exact Hlabc. }
+      subst c1'.
+      assert (HinC1' : In (c1, ys1', body1') brs2') by exact (hd_error_in brs2' (c1, ys1', body1') Hhd').
+      assert (HND2 : NoDup (map (fun p => match p with (c, _, _) => c end) brs2')).
+      { rewrite <- (BrsAlpha_labels_eq sigma0 brs brs2' Hbrs). exact (proj1 He1BrsUniq). }
+      destruct (brs_label_unique brs2' c1 ys2A body2A ys1' body1' HND2 HinA HinC1') as [Hyseq2 Hbdeq2].
+      subst ys2A body2A.
+      (* NL_Guess's own composed renaming: ws and ws' are each invented
+         independently (unlike NL_Select's zs2 = map sigma zs, which came
+         for free out of IH1's own conclusion), so sigma/tau themselves
+         need genuinely extending, via splice_batch (Sec.64), to pair ws
+         to ws' while staying mutual_inverse. G1/G1'' (rather than G0/Gam2)
+         are the right "protected" pair: HzsG1-style freshness (Hfresh2,
+         Hfr') is stated against them directly, and G1 already contains
+         G0 (so whatever "Hext" needs on G0's own domain survives too, via
+         monotonicity through the offset guarantee below). *)
+      set (Pd := fun w => G1 w <> None).
+      set (Pr := fun w => G1'' w <> None).
+      assert (HPdPr : forall w, Pd w -> Pr (sigma w)).
+      { intros w0 Hw0. unfold Pd in Hw0. unfold Pr.
+        rewrite (Halpha (sigma w0)). rewrite (nheap_rename_at sigma tau Hmisig G1 w0).
+        intro Hc. apply Hw0. destruct (G1 w0); [discriminate Hc | reflexivity]. }
+      assert (HPrPd : forall w, Pr w -> Pd (tau w)).
+      { intros w0 Hw0. unfold Pr in Hw0. unfold Pd. intro Hc.
+        assert (Hcontra : G1'' w0 = None) by (rewrite (Halpha w0); unfold nheap_rename; rewrite Hc; reflexivity).
+        exact (Hw0 Hcontra). }
+      assert (HwsNPd : forall w, In w ws -> ~ Pd w) by (intros w Hw Hc; exact (Hc (Hfresh2 w Hw))).
+      assert (Hws'NPr : forall w, In w ws' -> ~ Pr w) by (intros w Hw Hc; exact (Hc (Hfr' w Hw))).
+      assert (Hys1eq : ys1' = map rho ys1) by exact (Forall2_eq_map var var rho ys1 ys1' Hforall2).
+      assert (Hlenwsws' : length ws = length ws').
+      { rewrite Hlenws, Hlenws', Hys1eq, map_length. reflexivity. }
+      destruct (splice_batch_spec ws ws' HND HND' Hlenwsws' sigma tau Hmisig Pd Pr HwsNPd Hws'NPr HPdPr HPrPd)
+        as [Hmisigf [Hpairf [HPdf HPrf]]].
+      set (sigma_final := fst (splice_batch sigma tau ws ws')).
+      set (tau_final := snd (splice_batch sigma tau ws ws')).
+      set (theta1 := zipsubst ys1 ws).
+      set (theta2 := zipsubst ys1' ws').
+      set (ysX := ys1 ++ free_vars_b body1).
+      set (bv1 := bound_vars_b body1).
+      set (bv2 := bound_vars_b body1').
+      set (fv1 := free_vars_b body1).
+      assert (Hwseq : ws' = map sigma_final ws) by exact (Forall2_eq_map var var sigma_final ws ws' Hpairf).
+      assert (HwsG2 : forall w, In w ws -> G2 w <> None).
+      { intros w Hw.
+        assert (Hwr : hupd_list (hupd G1 x' (BExpr (ECon c1 ws))) ws (map (fun w0 => BExpr (EVar w0)) ws) w <> None).
+        { rewrite (hupd_list_map_self ws (hupd G1 x' (BExpr (ECon c1 ws))) w Hw). discriminate. }
+        exact (NEval_left_domain_mono P F0 (hupd_list (hupd G1 x' (BExpr (ECon c1 ws))) ws (map (fun w0 => BExpr (EVar w0)) ws))
+                 (rename_b theta1 body1) G2 v Hrec2 w Hwr). }
+      assert (HbodyFinal : NoCaptureFinalB G2 body1)
+        by exact (NoCaptureFinalB_bcase_branch G2 x brs c1 ys1 body1 HinC1 He1Final).
+      assert (Hinj1 : forall w1 w2, In w1 (vars_of_b body1) -> In w2 (vars_of_b body1) -> theta1 w1 = theta1 w2 ->
+         w1 = w2 \/ (In w1 ysX /\ In w2 ysX)).
+      { intros w1 w2 Hw1 Hw2 Heq.
+        destruct (in_dec Nat.eq_dec w1 ys1) as [Hw1ys | Hw1nys].
+        - destruct (in_dec Nat.eq_dec w2 ys1) as [Hw2ys | Hw2nys].
+          + right. split; [apply in_or_app; left; exact Hw1ys | apply in_or_app; left; exact Hw2ys].
+          + assert (Hw2id : theta1 w2 = w2) by (unfold theta1; apply zipsubst_notin; exact Hw2nys).
+            rewrite Hw2id in Heq.
+            destruct (in_dec Nat.eq_dec w2 bv1) as [Hw2bd | Hw2nbd].
+            * exfalso.
+              assert (Hw2ws : In w2 ws).
+              { rewrite <- Heq. unfold theta1. apply zipsubst_in; [exact (eq_sym Hlenws) | exact Hw1ys]. }
+              exact (HwsG2 w2 Hw2ws (HbodyFinal w2 Hw2bd)).
+            * destruct (vars_of_b_bound_or_free body1 w2 Hw2) as [Hbb | Hff]; [exfalso; exact (Hw2nbd Hbb) | ].
+              right. split; [apply in_or_app; left; exact Hw1ys | apply in_or_app; right; exact Hff].
+        - destruct (in_dec Nat.eq_dec w2 ys1) as [Hw2ys | Hw2nys].
+          + assert (Hw1id : theta1 w1 = w1) by (unfold theta1; apply zipsubst_notin; exact Hw1nys).
+            rewrite Hw1id in Heq.
+            destruct (in_dec Nat.eq_dec w1 bv1) as [Hw1bd | Hw1nbd].
+            * exfalso.
+              assert (Hw1ws : In w1 ws).
+              { rewrite Heq. unfold theta1. apply zipsubst_in; [exact (eq_sym Hlenws) | exact Hw2ys]. }
+              exact (HwsG2 w1 Hw1ws (HbodyFinal w1 Hw1bd)).
+            * destruct (vars_of_b_bound_or_free body1 w1 Hw1) as [Hbb | Hff]; [exfalso; exact (Hw1nbd Hbb) | ].
+              right. split; [apply in_or_app; right; exact Hff | apply in_or_app; left; exact Hw2ys].
+          + assert (Hw1id : theta1 w1 = w1) by (unfold theta1; apply zipsubst_notin; exact Hw1nys).
+            assert (Hw2id : theta1 w2 = w2) by (unfold theta1; apply zipsubst_notin; exact Hw2nys).
+            left. rewrite Hw1id, Hw2id in Heq. exact Heq. }
+      assert (HmapysX : map rho ysX = ys1' ++ map rho (free_vars_b body1)).
+      { unfold ysX. rewrite map_app. f_equal. symmetry. exact Hys1eq. }
+      assert (Hws'Gam2' : forall w, In w ws' -> Gam2' w <> None).
+      { intros w Hw.
+        assert (Hwr : hupd_list (hupd G1'' x2' (BExpr (ECon c1 ws'))) ws' (map (fun w0 => BExpr (EVar w0)) ws') w <> None).
+        { rewrite (hupd_list_map_self ws' (hupd G1'' x2' (BExpr (ECon c1 ws'))) w Hw). discriminate. }
+        exact (NEval_left_domain_mono P F2 (hupd_list (hupd G1'' x2' (BExpr (ECon c1 ws'))) ws' (map (fun w0 => BExpr (EVar w0)) ws'))
+                 (rename_b theta2 body1') Gam2' v2 Hrec2' w Hwr). }
+      assert (Hbody2Final : NoCaptureFinalB Gam2' body1')
+        by exact (NoCaptureFinalB_bcase_branch Gam2' (sigma0 x) brs2' c1 ys1' body1' HinC1' He2Final).
+      assert (Hinj2 : forall w1 w2, (In w1 (vars_of_b body1') \/ In w1 (map rho (free_vars_b body1))) ->
+                     (In w2 (vars_of_b body1') \/ In w2 (map rho (free_vars_b body1))) ->
+                     theta2 w1 = theta2 w2 -> w1 = w2 \/ (In w1 (map rho ysX) /\ In w2 (map rho ysX))).
+      { intros w1 w2 Hw1u Hw2u Heq.
+        destruct (in_dec Nat.eq_dec w1 ys1') as [Hw1ys2 | Hw1nys2].
+        - destruct (in_dec Nat.eq_dec w2 ys1') as [Hw2ys2 | Hw2nys2].
+          + right. rewrite HmapysX. split; apply in_or_app; left; [exact Hw1ys2 | exact Hw2ys2].
+          + assert (Hw2id : theta2 w2 = w2) by (unfold theta2; apply zipsubst_notin; exact Hw2nys2).
+            rewrite Hw2id in Heq.
+            assert (Hw2ws2 : In w2 ws').
+            { rewrite <- Heq. unfold theta2. apply zipsubst_in; [exact (eq_sym Hlenws') | exact Hw1ys2]. }
+            destruct Hw2u as [Hw2vb2 | Hw2rho].
+            * destruct (vars_of_b_bound_or_free body1' w2 Hw2vb2) as [Hbb2 | Hff2].
+              -- exfalso. exact (Hws'Gam2' w2 Hw2ws2 (Hbody2Final w2 Hbb2)).
+              -- right. split.
+                 ++ rewrite HmapysX. apply in_or_app; left; exact Hw1ys2.
+                 ++ rewrite HmapysX. apply in_or_app. right.
+                    destruct (free_vars_b_BlkAlpha_subset rho body1 body1' HbaBody w2 Hff2) as [y' [Hy'f Hy'eq]].
+                    apply in_map_iff. exists y'. split; [exact Hy'eq | exact Hy'f].
+            * right. split; rewrite HmapysX; apply in_or_app; [left; exact Hw1ys2 | right; exact Hw2rho].
+        - destruct (in_dec Nat.eq_dec w2 ys1') as [Hw2ys2 | Hw2nys2].
+          + assert (Hw1id : theta2 w1 = w1) by (unfold theta2; apply zipsubst_notin; exact Hw1nys2).
+            rewrite Hw1id in Heq.
+            assert (Hw1ws2 : In w1 ws').
+            { rewrite Heq. unfold theta2. apply zipsubst_in; [exact (eq_sym Hlenws') | exact Hw2ys2]. }
+            destruct Hw1u as [Hw1vb2 | Hw1rho].
+            * destruct (vars_of_b_bound_or_free body1' w1 Hw1vb2) as [Hbb1 | Hff1].
+              -- exfalso. exact (Hws'Gam2' w1 Hw1ws2 (Hbody2Final w1 Hbb1)).
+              -- right. split.
+                 ++ rewrite HmapysX. apply in_or_app. right.
+                    destruct (free_vars_b_BlkAlpha_subset rho body1 body1' HbaBody w1 Hff1) as [y' [Hy'f Hy'eq]].
+                    apply in_map_iff. exists y'. split; [exact Hy'eq | exact Hy'f].
+                 ++ rewrite HmapysX. apply in_or_app; left; exact Hw2ys2.
+            * right. split; rewrite HmapysX; apply in_or_app; [right; exact Hw1rho | left; exact Hw2ys2].
+          + assert (Hw1id : theta2 w1 = w1) by (unfold theta2; apply zipsubst_notin; exact Hw1nys2).
+            assert (Hw2id : theta2 w2 = w2) by (unfold theta2; apply zipsubst_notin; exact Hw2nys2).
+            left. rewrite Hw1id, Hw2id in Heq. exact Heq. }
+      assert (Hhyg1 : forall y, In y ysX -> ~ In y bv1).
+      { intros y Hy. unfold ysX in Hy. apply in_app_or in Hy. destruct Hy as [Hy | Hy].
+        - destruct (NoShadowB_bcase_branch x brs c1 ys1 body1 HinC1 He1NoShadow) as [_ [_ Hd]]. exact (Hd y Hy).
+        - intro Hc. exact (NoCaptureB_bcase_branch x brs c1 ys1 body1 HinC1 He1NoCapture He1NoShadow y Hc Hy). }
+      assert (Hbody2Gam2 : NoCaptureFinalB Gam2 body1').
+      { intros y Hy.
+        assert (Hy2n : Gam2' y = None) by exact (Hbody2Final y Hy).
+        destruct (Gam2 y) as [b | ] eqn:E; [ | reflexivity].
+        assert (HGam2ne : Gam2 y <> None) by (rewrite E; discriminate).
+        assert (HGam2'ne : Gam2' y <> None) by exact (NEval_left_domain_mono P F2 Gam2 (BCase (sigma0 x) brs2') Gam2' v2 H2 y HGam2ne).
+        exfalso. exact (HGam2'ne Hy2n). }
+      assert (Hhyg2 : forall y, In y (map rho ysX) -> ~ In y bv2).
+      { intros y Hy Hyb2.
+        rewrite HmapysX in Hy. apply in_app_or in Hy. destruct Hy as [Hy | Hy].
+        - destruct (NoShadowB_bcase_branch (sigma0 x) brs2' c1 ys1' body1' HinC1' He2NoShadow) as [_ [_ Hd]].
+          exact (Hd y Hy Hyb2).
+        - apply in_map_iff in Hy. destruct Hy as [y' [Hy'eq Hy'in]]. subst y.
+          destruct (in_dec Nat.eq_dec y' ys1) as [Hy'ys | Hy'nys].
+          + destruct (Forall2_in_l var var (fun y1 y2 => rho y1 = y2) ys1 ys1' Hforall2 y' Hy'ys) as [y2v [Hy2vin Hy2veq]].
+            rewrite Hy2veq in Hyb2.
+            destruct (NoShadowB_bcase_branch (sigma0 x) brs2' c1 ys1' body1' HinC1' He2NoShadow) as [_ [_ Hd]].
+            exact (Hd y2v Hy2vin Hyb2).
+          + assert (Hy'free : In y' (free_vars_b (BCase x brs))).
+            { apply (free_vars_b_bcase_branch x brs c1 ys1 body1 HinC1).
+              apply remove_all_in_intro; [exact Hy'in | exact Hy'nys]. }
+            assert (Hy'closed : G0 y' <> None) by exact (He1closed y' Hy'free).
+            assert (HGam2sy' : Gam2 (sigma0 y') <> None).
+            { rewrite (Halpha0 (sigma0 y')). rewrite (nheap_rename_at sigma0 tau0 Hmi0 G0 y').
+              intro Hc. apply Hy'closed. destruct (G0 y'); [discriminate Hc | reflexivity]. }
+            rewrite <- (Hoffset y' Hy'nys) in HGam2sy'.
+            exact (HGam2sy' (Hbody2Gam2 (rho y') Hyb2)). }
+      assert (Hbt : forall y, In y bv1 -> In y (free_vars_b body1) -> In (rho y) bv2).
+      { intros y Hyb1 Hyf. exfalso. exact (NoCaptureB_bcase_branch x brs c1 ys1 body1 HinC1 He1NoCapture He1NoShadow y Hyb1 Hyf). }
+      assert (Hrhoinj0 : forall w1 w2, (In w1 ysX \/ In w1 fv1) -> (In w2 ysX \/ In w2 fv1) -> rho w1 = rho w2 -> w1 = w2).
+      { intros w1 w2 Hw1 Hw2 Heq. apply Hinjrho.
+        - destruct Hw1 as [Hw1 | Hw1]; [unfold ysX in Hw1; apply in_app_or in Hw1;
+            destruct Hw1 as [Hw1 | Hw1]; [left; exact Hw1 | right; exact Hw1] | right; exact Hw1].
+        - destruct Hw2 as [Hw2 | Hw2]; [unfold ysX in Hw2; apply in_app_or in Hw2;
+            destruct Hw2 as [Hw2 | Hw2]; [left; exact Hw2 | right; exact Hw2] | right; exact Hw2].
+        - exact Heq. }
+      assert (Hlocinjys : forall w1 w2, In w1 ys1 -> In w2 ys1 -> rho w1 = rho w2 -> w1 = w2)
+        by (intros w1 w2 Hp1 Hp2 Heq; exact (Hinjrho w1 w2 (or_introl Hp1) (or_introl Hp2) Heq)).
+      assert (HoffsetS : forall w, In w (free_vars_b body1) -> ~ In w ys1 -> rho w = sigma_final w).
+      { intros w Hwf Hwnin.
+        assert (Hwfree : In w (free_vars_b (BCase x brs))).
+        { apply (free_vars_b_bcase_branch x brs c1 ys1 body1 HinC1). apply remove_all_in_intro; [exact Hwf | exact Hwnin]. }
+        assert (HG0w : G0 w <> None) by exact (He1closed w Hwfree).
+        assert (HG1w : G1 w <> None)
+          by exact (NEval_left_domain_mono P F0 G0 (BExpr (EVar x)) G1 (BExpr (EVar x')) Hrec1 w HG0w).
+        assert (Hsf_eq : sigma_final w = sigma w) by exact (HPdf w HG1w).
+        rewrite (Hoffset w Hwnin). rewrite Hsf_eq. symmetry. exact (Hext w HG0w). }
+      assert (Hsinj : injective sigma_final) by exact (mutual_inverse_injective_l sigma_final tau_final Hmisigf).
+      assert (Hconsistent : forall y1'' y2'', In y1'' ysX -> In y2'' ysX ->
+                 theta2 (rho y1'') = theta2 (rho y2'') -> theta1 y1'' = theta1 y2'').
+      { intros y1'' y2'' Hy1'' Hy2'' Heq.
+        destruct (in_dec Nat.eq_dec y1'' ys1) as [Hy1''ys | Hy1''nys].
+        - assert (Hs1 : sigma_final (theta1 y1'') = theta2 (rho y1''))
+            by exact (zipsubst_compose_in ys1 ws ys1' ws' sigma_final rho (eq_sym Hlenws) Hwseq Hforall2 Hlocinjys y1'' Hy1''ys).
+          destruct (in_dec Nat.eq_dec y2'' ys1) as [Hy2''ys | Hy2''nys].
+          + assert (Hs2 : sigma_final (theta1 y2'') = theta2 (rho y2''))
+              by exact (zipsubst_compose_in ys1 ws ys1' ws' sigma_final rho (eq_sym Hlenws) Hwseq Hforall2 Hlocinjys y2'' Hy2''ys).
+            apply Hsinj. rewrite Hs1, Hs2. exact Heq.
+          + assert (Hy2''free : In y2'' (free_vars_b body1)).
+            { unfold ysX in Hy2''. apply in_app_or in Hy2''.
+              destruct Hy2'' as [Hy2'' | Hy2'']; [exfalso; exact (Hy2''nys Hy2'') | exact Hy2'']. }
+            assert (Hs2 : sigma_final (theta1 y2'') = theta2 (rho y2''))
+              by exact (zipsubst_compose_out2 ys1 ws ys1' ws' sigma_final rho body1 Hforall2 HoffsetS Hinjrho y2'' Hy2''free Hy2''nys).
+            apply Hsinj. rewrite Hs1, Hs2. exact Heq.
+        - assert (Hy1''free : In y1'' (free_vars_b body1)).
+          { unfold ysX in Hy1''. apply in_app_or in Hy1''.
+            destruct Hy1'' as [Hy1'' | Hy1'']; [exfalso; exact (Hy1''nys Hy1'') | exact Hy1'']. }
+          assert (Hs1 : sigma_final (theta1 y1'') = theta2 (rho y1''))
+            by exact (zipsubst_compose_out2 ys1 ws ys1' ws' sigma_final rho body1 Hforall2 HoffsetS Hinjrho y1'' Hy1''free Hy1''nys).
+          destruct (in_dec Nat.eq_dec y2'' ys1) as [Hy2''ys | Hy2''nys].
+          + assert (Hs2 : sigma_final (theta1 y2'') = theta2 (rho y2''))
+              by exact (zipsubst_compose_in ys1 ws ys1' ws' sigma_final rho (eq_sym Hlenws) Hwseq Hforall2 Hlocinjys y2'' Hy2''ys).
+            apply Hsinj. rewrite Hs1, Hs2. exact Heq.
+          + assert (Hy2''free : In y2'' (free_vars_b body1)).
+            { unfold ysX in Hy2''. apply in_app_or in Hy2''.
+              destruct Hy2'' as [Hy2'' | Hy2'']; [exfalso; exact (Hy2''nys Hy2'') | exact Hy2'']. }
+            assert (Hs2 : sigma_final (theta1 y2'') = theta2 (rho y2''))
+              by exact (zipsubst_compose_out2 ys1 ws ys1' ws' sigma_final rho body1 Hforall2 HoffsetS Hinjrho y2'' Hy2''free Hy2''nys).
+            apply Hsinj. rewrite Hs1, Hs2. exact Heq. }
+      assert (Hagree : forall w, In w (free_vars_b body1) ->
+         sigma_final (theta1 w) = theta2 (rho w) /\ (~ In w bv1 -> In w fv1 /\ rho w = rho w)).
+      { intros w Hwf. split.
+        - destruct (in_dec Nat.eq_dec w ys1) as [Hwys | Hwnys].
+          + exact (zipsubst_compose_in ys1 ws ys1' ws' sigma_final rho (eq_sym Hlenws) Hwseq Hforall2 Hlocinjys w Hwys).
+          + exact (zipsubst_compose_out2 ys1 ws ys1' ws' sigma_final rho body1 Hforall2 HoffsetS Hinjrho w Hwf Hwnys).
+        - intros _. split; [exact Hwf | reflexivity]. }
+      assert (HBA_final : BlkAlpha sigma_final (rename_b theta1 body1) (rename_b theta2 body1')).
+      { apply (BlkAlpha_compose_rename (S (blk_size body1)) body1 (Nat.lt_succ_diag_r _) rho body1' HbaBody
+                 theta1 theta2 sigma_final ysX rho fv1 bv1 bv2
+                 (fun w H => H) (fun w H => H) Hinj1 Hinj2 Hhyg1 Hhyg2 Hbt Hrhoinj0 Hconsistent Hagree). }
+      admit.
 Admitted.
 
 (* The corollary that's actually needed at G_CaseFun (curry_test_leftmost.v
