@@ -682,6 +682,7 @@ Proof.
         exact (Hts w).
 Qed.
 
+
 (* ==================================================================== *)
 (* PIECE 1: heap_rename, and its interaction with rename_b/rename_e0/    *)
 (* hupd/hupd_list.                                                        *)
@@ -4194,6 +4195,113 @@ Proof.
       intros a b Ha Heq. simpl. destruct (Nat.eq_dec a w) as [Heqaw | Hneqaw].
       * exfalso. subst a. exact (Hnotin Ha).
       * exact Heq.
+Qed.
+
+(* ==================================================================== *)
+(* Sec.64: the batch-swap extension NL_Guess's own case needs -- unlike    *)
+(* NL_Select (where D2's own guessed batch never needs building at all,   *)
+(* since it comes for free out of IH1's own conclusion), NL_Guess invents  *)
+(* a batch on EACH side independently, so composing them needs an actual  *)
+(* new, bijective renaming, not just reuse of what IH1 already produced.   *)
+(* splice_batch folds splice_sigma/splice_tau pairwise over the two        *)
+(* batches (processing the tail first, splicing each head pair on top),    *)
+(* extending Sec.53-era splice_mutual_inverse's single-point swap to a      *)
+(* whole list at once, with the same "whatever used to map to d moves to   *)
+(* sigma a" swap at each step keeping bijectivity intact throughout.       *)
+(* ==================================================================== *)
+
+Fixpoint splice_batch (sigma tau : ren) (ws ws2 : list var) : ren * ren :=
+  match ws, ws2 with
+  | w :: ws', w2 :: ws2' =>
+      let (sigma', tau') := splice_batch sigma tau ws' ws2' in
+      (splice_sigma sigma' tau' w w2, splice_tau sigma' tau' w w2)
+  | _, _ => (sigma, tau)
+  end.
+
+(* The one lemma this whole construction rests on: given an EXTERNALLY
+   protected domain/range pair (Pd/Pr) that ws/ws2 themselves avoid, and
+   that sigma/tau's own action keeps closed under each other (Pd w ->
+   Pr (sigma w), and symmetrically for tau), the batch splice (a) stays
+   mutual_inverse, (b) pairs ws to ws2 exactly as intended, and (c) never
+   disturbs sigma/tau's own behavior on Pd/Pr -- so whatever the CALLER
+   already knows about sigma/tau's behavior there survives unchanged.
+   The two "non-interference" facts the induction needs at each step
+   (splicing at the head pair doesn't touch the ALREADY-spliced tail's own
+   pairing, and doesn't touch Pd/Pr) both reduce to: an already-bijective
+   renaming (mutual_inverse, from the IH) can't have two different inputs
+   landing on the same output -- no separate freshness bookkeeping needed
+   beyond what ws/ws2 already being disjoint from Pd/Pr and from each
+   OTHER (NoDup) provides. *)
+Lemma splice_batch_spec :
+  forall ws ws2, NoDup ws -> NoDup ws2 -> length ws = length ws2 ->
+  forall sigma tau, mutual_inverse sigma tau ->
+  forall Pd Pr : var -> Prop,
+  (forall w, In w ws -> ~ Pd w) ->
+  (forall w, In w ws2 -> ~ Pr w) ->
+  (forall w, Pd w -> Pr (sigma w)) ->
+  (forall w, Pr w -> Pd (tau w)) ->
+  mutual_inverse (fst (splice_batch sigma tau ws ws2)) (snd (splice_batch sigma tau ws ws2)) /\
+  Forall2 (fun w1 w2 => fst (splice_batch sigma tau ws ws2) w1 = w2) ws ws2 /\
+  (forall w, Pd w -> fst (splice_batch sigma tau ws ws2) w = sigma w) /\
+  (forall w, Pr w -> snd (splice_batch sigma tau ws ws2) w = tau w).
+Proof.
+  induction ws as [| w ws' IH]; intros ws2 HNDws HNDws2 Hlen sigma tau Hmi Pd Pr HwsPd HwsPr HPdPr HPrPd;
+    destruct ws2 as [| w2 ws2']; try discriminate Hlen.
+  - simpl. split; [exact Hmi | split; [constructor | split; intros w H; reflexivity]].
+  - simpl.
+    inversion HNDws as [| ? ? HninW HNDws']; subst.
+    inversion HNDws2 as [| ? ? HninW2 HNDws2']; subst.
+    destruct (IH ws2' HNDws' HNDws2' (eq_add_S _ _ Hlen) sigma tau Hmi Pd Pr
+                (fun w0 H0 => HwsPd w0 (or_intror H0)) (fun w0 H0 => HwsPr w0 (or_intror H0)) HPdPr HPrPd)
+      as [Hmi0 [Hpair0 [HPd0 HPr0]]].
+    destruct (splice_batch sigma tau ws' ws2') as [sigma0 tau0] eqn:E.
+    simpl in Hmi0, Hpair0, HPd0, HPr0.
+    assert (HwPd : ~ Pd w) by exact (HwsPd w (or_introl eq_refl)).
+    assert (Hw2Pr : ~ Pr w2) by exact (HwsPr w2 (or_introl eq_refl)).
+    assert (Hnotin_tau0w2_ws' : ~ In (tau0 w2) ws').
+    { intro Hc.
+      destruct (Forall2_in_l var var (fun w1 wv2 => sigma0 w1 = wv2) ws' ws2' Hpair0 (tau0 w2) Hc) as [wv2 Hex].
+      assert (Hwv2in : In wv2 ws2') by exact (proj1 Hex).
+      assert (Heqwv2 : sigma0 (tau0 w2) = wv2) by exact (proj2 Hex).
+      assert (Hsigma0_tau0w2 : sigma0 (tau0 w2) = w2) by exact (proj2 Hmi0 w2).
+      assert (Hwv2eq : wv2 = w2) by (rewrite <- Heqwv2; exact Hsigma0_tau0w2).
+      rewrite Hwv2eq in Hwv2in.
+      exact (HninW2 Hwv2in). }
+    assert (Hnotin_tau0w2_Pd : ~ Pd (tau0 w2)).
+    { intro Hc.
+      assert (Hsigma0eq : sigma0 (tau0 w2) = sigma (tau0 w2)) by exact (HPd0 (tau0 w2) Hc).
+      assert (Hsigma0_tau0w2 : sigma0 (tau0 w2) = w2) by exact (proj2 Hmi0 w2).
+      assert (Hsigma_tau0w2 : sigma (tau0 w2) = w2) by (rewrite <- Hsigma0eq; exact Hsigma0_tau0w2).
+      assert (Hgoal : Pr w2) by (rewrite <- Hsigma_tau0w2; exact (HPdPr (tau0 w2) Hc)).
+      exact (Hw2Pr Hgoal). }
+    split; [ | split; [ | split ] ].
+    + exact (splice_mutual_inverse sigma0 tau0 Hmi0 w w2).
+    + constructor.
+      * exact (splice_sigma_at_a sigma0 tau0 w w2).
+      * apply (Forall2_impl_in_l var var (fun w1 wv2 => sigma0 w1 = wv2)
+                 (fun w1 wv2 => splice_sigma sigma0 tau0 w w2 w1 = wv2) ws' ws2' Hpair0).
+        intros a b Ha Heq.
+        rewrite (splice_sigma_other sigma0 tau0 w w2 a); [exact Heq | | ].
+        -- intro Hc. subst a. exact (HninW Ha).
+        -- intro Hc. rewrite <- Hc in Hnotin_tau0w2_ws'. exact (Hnotin_tau0w2_ws' Ha).
+    + intros w0 Hw0. simpl.
+      rewrite (splice_sigma_other sigma0 tau0 w w2 w0).
+      * exact (HPd0 w0 Hw0).
+      * intro Hc. subst w0. exact (HwPd Hw0).
+      * intro Hc. rewrite Hc in Hw0. exact (Hnotin_tau0w2_Pd Hw0).
+    + intros w0 Hw0. simpl.
+      destruct (Nat.eq_dec w0 w2) as [Heqw0 | Hneqw0].
+      * subst w0. exfalso. exact (Hw2Pr Hw0).
+      * assert (Hnotin_sigma0w_Pr : ~ Pr (sigma0 w)).
+        { intro Hc.
+          assert (Htau0_sigma0w : tau0 (sigma0 w) = w) by exact (proj1 Hmi0 w).
+          assert (HPdw : Pd (tau (sigma0 w))) by exact (HPrPd (sigma0 w) Hc).
+          rewrite <- (HPr0 (sigma0 w) Hc) in HPdw.
+          rewrite Htau0_sigma0w in HPdw.
+          exact (HwPd HPdw). }
+        assert (Hw0sigma0w : w0 <> sigma0 w) by (intro Hc; subst w0; exact (Hnotin_sigma0w_Pr Hw0)).
+        rewrite (splice_tau_other sigma0 tau0 w w2 w0 Hneqw0 Hw0sigma0w).
+        exact (HPr0 w0 Hw0).
 Qed.
 
 Lemma Forall2_map_both :

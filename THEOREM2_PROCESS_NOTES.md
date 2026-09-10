@@ -4335,6 +4335,47 @@ every other genuine fork this session hit was handled: this needs either (a) bui
 abandoned `batch_extend` design, scoped down to just `ws`/`ws'` with no `pa`-merging), or (b) finding a
 different construction for `NL_Guess`'s own composed renaming that sidesteps needing one at all.
 
+## 64. Same session, continued: built `splice_batch` for real -- the batch-swap `mutual_inverse` extension
+§63 flagged, fully `Qed`'d, zero axioms
+
+**Design, worked out by hand before writing code.** `splice_batch` folds `splice_sigma`/`splice_tau` (§Sec.
+53's own single-point swap, already backing `NL_Let`'s case) pairwise over `ws`/`ws2`, processing the tail
+first and splicing each head pair on top — so the swap at the head only ever touches what the tail's own,
+already-established renaming actually produced, never something not yet accounted for.
+
+**The single lemma this rests on (`splice_batch_spec`)** takes an arbitrary externally-protected domain/range
+pair `Pd`/`Pr` that `ws`/`ws2` avoid, plus a closure condition tying them together (`Pd w -> Pr (sigma w)`,
+symmetrically for `tau`), and proves the spliced result (a) stays `mutual_inverse`, (b) pairs `ws` to `ws2`
+exactly, and (c) never disturbs `sigma`/`tau`'s own behavior on `Pd`/`Pr`. The two facts the inductive step
+needs — splicing the head pair doesn't disturb the tail's own already-established pairing, and doesn't
+disturb `Pd`/`Pr` — both turned out to reduce to the same one-line argument: an already-bijective renaming
+(`mutual_inverse`, from the IH) can't have two different inputs land on the same output, so if the "displaced"
+position from a swap landed back in `ws'` (or in `Pd`), a second, unrelated input would already need to have
+produced that same value — contradicting bijectivity directly, with **no extra freshness bookkeeping needed**
+beyond `NoDup`/the given `Pd`/`Pr` disjointness. This was the resolution to the concern §63 raised (would
+tracking "what gets displaced" need its own open-ended invariant, mirroring the abandoned `PaInv`/
+`Hcontain0`?) — it doesn't; bijectivity alone rules the interference cases out.
+
+**One proof-engineering snag, twice.** `destruct (Forall2_in_l ...) as [wv2 [Hwv2in Heqwv2]]` — descending
+into the inner conjunction — triggered an inconsistent auto-substitution (`wv2` got silently replaced by the
+equality's own RHS in one spot but not another, observed by hand across two compile attempts with the exact
+same tactic). Fixed by *not* descending into the conjunction in the pattern (`as [wv2 Hex]`) and pulling both
+halves out explicitly via `proj1`/`proj2` instead — fully predictable, no ambiguity. Separately, two of the
+four final goals needed an explicit `simpl.` before `rewrite` could find its target: `exact`/`apply` see
+through the `let`/`fst`/`snd` reduction from unfolding `splice_batch` on a literal cons pair automatically,
+but `rewrite`'s syntactic matching doesn't, and the two goals proved via `exact` alone had already gone
+through fine without it.
+
+**Status.** `alpha_renaming_wip.v` compiles clean from a genuinely fresh four-file rebuild.
+`splice_batch_spec` is `Print Assumptions`-clean (zero axioms). Still exactly one `admit` in the whole file
+(`NL_Guess`'s case body — not yet wired to use `splice_batch`). **Next step:** at `NL_Guess`'s own call site,
+instantiate `Pd := fun w => G0 w <> None` and `Pr := fun w => Gam2 w <> None`, discharge the closure
+conditions via `Halpha0`/`nheap_rename_at` exactly as reasoned through by hand this section (`G0`-defined
+implies `Gam2`-defined via forward `nheap_rename_at`; the reverse direction via the same equation's
+contrapositive, since `option_map` preserves `None`-ness), build `sigma_final`/`tau_final` from
+`splice_batch`, then follow `NL_Select`'s own template for `Hinj1`/`Hinj2`/.../`Hagree` and the final `IH2`
+call, substituting `ws`/`ws'`/`body1`/`body1'` for `zs`/`zs2`/`body`/`body2` throughout.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
