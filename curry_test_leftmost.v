@@ -412,6 +412,52 @@ Proof.
     split; [exact Hz | split; [exact Hne1 | split; [exact Hne2 | split; [exact Hne3 | split; [exact Hrec | reflexivity]]]]].
 Qed.
 
+(* NL_Guess needs this to know its own guessed x' is heap-resident as a
+   self-reference (G1 x' = Some (EVar x')) -- without it there's no way to
+   rule out x' coinciding with ws (the fresh batch NL_Guess separately
+   invents), which the batch-swap composed renaming (Sec.64) needs to NOT
+   disturb x's own already-established correspondence.  Deliberately NOT
+   stated with "e = BExpr (EVar x)" as a hypothesis (mirroring NEval_left_
+   evar_shape's own signature) -- the recursive VarExp case's own
+   sub-derivation Hrec is over whatever e0 happens to be (never
+   necessarily EVar-shaped itself, e.g. a BLet forwarding to an eventual
+   EVar), so the IH has to be free of any assumption on e's own shape for
+   it to actually apply there; every other case's own recursive result is
+   literally the SAME v its own sub-derivation produces, so the induction
+   goes through uniformly with no need to track *how* an EVar result was
+   reached. *)
+Lemma NEval_left_evar_result_defined :
+  forall P F G e G' v, NEval_left P F G e G' v ->
+  forall y, v = BExpr (EVar y) -> G' y = Some (BExpr (EVar y)).
+Proof.
+  intros P F G e G' v H.
+  induction H as
+    [ F0 G0 z c args Hz
+    | F0 G0 z Hz
+    | F0 G0 z Hz
+    | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
+    | F0 G0
+    | F0 G0 c args
+    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v0 HzFresh Hnb Hrec IH
+    | F0 G0 x1 y1 G1 v0 Hrec IH
+    | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
+    ]; intros y Hyv; try discriminate Hyv.
+  - injection Hyv as Hyv; subst z. exact Hz.
+  - injection Hyv as Hyv; subst z. unfold hupd. rewrite Nat.eqb_refl. reflexivity.
+  - destruct (Nat.eq_dec y z) as [Heq | Hneq].
+    + subst y. unfold hupd. rewrite Nat.eqb_refl. rewrite Hyv. reflexivity.
+    + unfold hupd. destruct (Nat.eqb y z) eqn:E.
+      * apply Nat.eqb_eq in E. exfalso. exact (Hneq E).
+      * exact (IH y Hyv).
+  - exact (IH y Hyv).
+  - exact (IH y Hyv).
+  - exact (IH y Hyv).
+  - exact (IH2 y Hyv).
+  - exact (IH2 y Hyv).
+Qed.
+
 (* Port of curry.v's NEval_bcase_forced_shape. *)
 Lemma NEval_left_bcase_shape :
   forall P F Gam x brs G' v, NEval_left P F Gam (BCase x brs) G' v ->

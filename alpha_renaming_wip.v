@@ -5681,8 +5681,8 @@ Proof.
       { rewrite Hlenws, Hlenws', Hys1eq, map_length. reflexivity. }
       destruct (splice_batch_spec ws ws' HND HND' Hlenwsws' sigma tau Hmisig Pd Pr HwsNPd Hws'NPr HPdPr HPrPd)
         as [Hmisigf [Hpairf [HPdf HPrf]]].
-      set (sigma_final := fst (splice_batch sigma tau ws ws')).
-      set (tau_final := snd (splice_batch sigma tau ws ws')).
+      set (sigma_final := fst (splice_batch sigma tau ws ws')) in *.
+      set (tau_final := snd (splice_batch sigma tau ws ws')) in *.
       set (theta1 := zipsubst ys1 ws).
       set (theta2 := zipsubst ys1' ws').
       set (ysX := ys1 ++ free_vars_b body1).
@@ -5690,6 +5690,91 @@ Proof.
       set (bv2 := bound_vars_b body1').
       set (fv1 := free_vars_b body1).
       assert (Hwseq : ws' = map sigma_final ws) by exact (Forall2_eq_map var var sigma_final ws ws' Hpairf).
+      (* x'/x2' are each their own guessed-variable's self-reference (a
+         genuinely new fact, Sec.65 -- neither NL_Select nor NL_Fun/NL_Let
+         ever needed it, since none of them recurse on the RESULT of
+         forcing a free variable's own name back into the heap), needed to
+         confirm the batch-swap never disturbs x's own, already-established
+         correspondence to x2' -- ws/ws' avoid Pd/Pr, and x'/x2' being
+         Pd/Pr-resident is exactly what keeps them off to the side. *)
+      assert (HG1x' : G1 x' = Some (BExpr (EVar x')))
+        by exact (NEval_left_evar_result_defined P F0 G0 (BExpr (EVar x)) G1 (BExpr (EVar x')) Hrec1 x' eq_refl).
+      assert (Hx'notws : ~ In x' ws).
+      { intro Hc. rewrite (Hfresh2 x' Hc) in HG1x'. discriminate HG1x'. }
+      assert (HG1''x2' : G1'' x2' = Some (BExpr (EVar x2')))
+        by exact (NEval_left_evar_result_defined P F2 Gam2 (BExpr (EVar (sigma0 x))) G1'' (BExpr (EVar x2')) Hrec1' x2' eq_refl).
+      assert (Hx2'notws' : ~ In x2' ws').
+      { intro Hc. rewrite (Hfr' x2' Hc) in HG1''x2'. discriminate HG1''x2'. }
+      assert (HPdx' : Pd x') by (unfold Pd; rewrite HG1x'; discriminate).
+      assert (HPrx2' : Pr x2') by (unfold Pr; rewrite HG1''x2'; discriminate).
+      assert (Hsigma_finalx' : sigma_final x' = x2') by (rewrite (HPdf x' HPdx'); exact (eq_sym Hxeqv)).
+      assert (Htau_finalx2' : tau_final x2' = x').
+      { apply (mutual_inverse_injective_l sigma_final tau_final Hmisigf).
+        rewrite (proj2 Hmisigf x2'). symmetry. exact Hsigma_finalx'. }
+      assert (HclosedG1 : ClosedHeap G1)
+        by exact (proj1 (NEval_left_closed_preserved P F0 G0 (BExpr (EVar x)) G1 (BExpr (EVar x'))
+                           Hrec1 HScoped Hclosed1 Hxclosed1)).
+      assert (GW := hupd_list (hupd G1 x' (BExpr (ECon c1 ws))) ws (map (fun w0 => BExpr (EVar w0)) ws)).
+      assert (GW'' := hupd_list (hupd G1'' x2' (BExpr (ECon c1 ws'))) ws' (map (fun w0 => BExpr (EVar w0)) ws')).
+      assert (Halpha_final : NHeapAlpha sigma_final tau_final
+                (hupd_list (hupd G1 x' (BExpr (ECon c1 ws))) ws (map (fun w0 => BExpr (EVar w0)) ws))
+                (hupd_list (hupd G1'' x2' (BExpr (ECon c1 ws'))) ws' (map (fun w0 => BExpr (EVar w0)) ws'))).
+      { intros w. unfold nheap_rename.
+        destruct (in_dec Nat.eq_dec w ws') as [Hwws' | Hwnws'].
+        - rewrite (hupd_list_map_self ws' (hupd G1'' x2' (BExpr (ECon c1 ws'))) w Hwws').
+          destruct (Forall2_in_r var var (fun w1 w2 => sigma_final w1 = w2) ws ws' Hpairf w Hwws') as [z0 [Hz0in Hz0eq]].
+          assert (Htfw : tau_final w = z0).
+          { apply (mutual_inverse_injective_l sigma_final tau_final Hmisigf).
+            rewrite (proj2 Hmisigf w). exact (eq_sym Hz0eq). }
+          rewrite Htfw. rewrite (hupd_list_map_self ws (hupd G1 x' (BExpr (ECon c1 ws))) z0 Hz0in).
+          simpl. rewrite Hz0eq. reflexivity.
+        - destruct (Nat.eq_dec w x2') as [Hwx2' | Hwnx2'].
+          + subst w.
+            rewrite (hupd_list_notin ws' (hupd G1'' x2' (BExpr (ECon c1 ws'))) _ x2' Hwnws').
+            unfold hupd. rewrite Nat.eqb_refl.
+            rewrite Htau_finalx2'.
+            rewrite (hupd_list_notin ws (hupd G1 x' (BExpr (ECon c1 ws))) _ x' Hx'notws).
+            unfold hupd. rewrite Nat.eqb_refl.
+            simpl. rewrite Hwseq. reflexivity.
+          + rewrite (hupd_list_notin ws' (hupd G1'' x2' (BExpr (ECon c1 ws'))) _ w Hwnws').
+            unfold hupd. destruct (Nat.eqb w x2') eqn:Hex2.
+            { apply Nat.eqb_eq in Hex2. exfalso. exact (Hwnx2' Hex2). }
+            destruct (in_dec Nat.eq_dec (tau_final w) ws) as [Htwws | Htwnws].
+            * exfalso.
+              destruct (Forall2_in_l var var (fun w1 w2 => sigma_final w1 = w2) ws ws' Hpairf (tau_final w) Htwws) as [w2v Hex].
+              assert (Hw2vin : In w2v ws') by exact (proj1 Hex).
+              assert (Hw2veq : sigma_final (tau_final w) = w2v) by exact (proj2 Hex).
+              assert (Hsftw : sigma_final (tau_final w) = w) by exact (proj2 Hmisigf w).
+              rewrite Hsftw in Hw2veq. subst w2v. exact (Hwnws' Hw2vin).
+            * destruct (Nat.eq_dec (tau_final w) x') as [Htwx' | Htwnx'].
+              -- exfalso.
+                 assert (Hsftw : sigma_final (tau_final w) = w) by exact (proj2 Hmisigf w).
+                 rewrite Htwx' in Hsftw. rewrite Hsigma_finalx' in Hsftw.
+                 exact (Hwnx2' (eq_sym Hsftw)).
+              -- rewrite (hupd_list_notin ws (hupd G1 x' (BExpr (ECon c1 ws))) _ (tau_final w) Htwnws).
+                 unfold hupd. destruct (Nat.eqb (tau_final w) x') eqn:Hetx.
+                 { apply Nat.eqb_eq in Hetx. exfalso. exact (Htwnx' Hetx). }
+                 destruct (G1 (tau_final w)) as [b | ] eqn:HGz.
+                 ++ assert (HPdtw : Pd (tau_final w)) by (unfold Pd; rewrite HGz; discriminate).
+                    assert (Hsftw_eq : sigma_final (tau_final w) = sigma (tau_final w)) by exact (HPdf (tau_final w) HPdtw).
+                    assert (Hsftw : sigma_final (tau_final w) = w) by exact (proj2 Hmisigf w).
+                    assert (Hsigma_tw : sigma (tau_final w) = w) by (rewrite <- Hsftw_eq; exact Hsftw).
+                    assert (Htau_eq : tau_final w = tau w).
+                    { apply (mutual_inverse_injective_l sigma tau Hmisig).
+                      rewrite Hsigma_tw. symmetry. exact (proj2 Hmisig w). }
+                    assert (Hclosedb : forall n, In n (vars_of_b b) -> G1 n <> None)
+                      by exact (HclosedG1 (tau_final w) b HGz).
+                    assert (Hagreeb : forall n, In n (vars_of_b b) -> sigma_final n = sigma n).
+                    { intros n Hn. apply HPdf. unfold Pd. exact (Hclosedb n Hn). }
+                    assert (Hrb : rename_b sigma_final b = rename_b sigma b) by exact (rename_b_congr b sigma_final sigma Hagreeb).
+                    rewrite (Halpha w). unfold nheap_rename. rewrite <- Htau_eq. rewrite HGz.
+                    simpl. rewrite Hrb. reflexivity.
+                 ++ assert (HPdtw : ~ Pd (tau_final w)) by (unfold Pd; rewrite HGz; intro Hcc; exact (Hcc eq_refl)).
+                    destruct (G1'' w) as [b'' | ] eqn:HG''w; [exfalso | reflexivity].
+                    assert (HPrw : Pr w) by (unfold Pr; rewrite HG''w; discriminate).
+                    assert (Htfw_eq : tau_final w = tau w) by exact (HPrf w HPrw).
+                    assert (HPdtw' : Pd (tau_final w)) by (rewrite Htfw_eq; exact (HPrPd w HPrw)).
+                    exact (HPdtw HPdtw'). }
       assert (HwsG2 : forall w, In w ws -> G2 w <> None).
       { intros w Hw.
         assert (Hwr : hupd_list (hupd G1 x' (BExpr (ECon c1 ws))) ws (map (fun w0 => BExpr (EVar w0)) ws) w <> None).
