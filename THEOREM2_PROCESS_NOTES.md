@@ -4376,6 +4376,52 @@ contrapositive, since `option_map` preserves `None`-ness), build `sigma_final`/`
 `splice_batch`, then follow `NL_Select`'s own template for `Hinj1`/`Hinj2`/.../`Hagree` and the final `IH2`
 call, substituting `ws`/`ws'`/`body1`/`body1'` for `zs`/`zs2`/`body`/`body2` throughout.
 
+## 65. Same session, continued: `NEval_left_confluence` is DONE — the whole heap-invariant threading sweep
+for `NL_Guess`'s own `IH2` call finished cleanly, closing the very last `admit` in the file; the theorem now
+ends in `Qed.`, `Print Assumptions`-clean, zero axioms
+
+**What it took, mirroring §62's own template exactly, with GW/GW'' (the heaps AFTER the rule's own
+`hupd_list` write) standing in for G1/G1''.** `ClosedHeap`/`BrsUniqHeap`/`GlobalFreshHeap`+
+`NoCaptureProgHeap`/`HeapBExpr` for `GW` split on three cases uniformly throughout — `z ∈ ws` (an `EVar z`
+write, trivially fresh/`BExpr`-shaped, its own freshness/`ProgBoundName`-avoidance coming straight from the
+rule's own `Hfresh2`/`Hnb` premises), `z = x'` (the `ECon c1 ws` write — freshness here needed one new fact,
+`~ ProgBoundName P x'`, derived from `G1 x' <> None` (`HG1x'`, §64) contradicting `GlobalFreshHeap P G1`'s own
+contrapositive), and everything else (a straight pass-through from `G1`, lifted via `hupd_list_preserves_some`
++ `hupd_preserves_some`, no `NEval_left` derivation needed for the lift itself since `hupd`/`hupd_list` are
+just heap-update functions). The D2 side (`GW''`) mirrors this exactly, using `HnbFr'`(the D2-side freshness
+premise `NEval_left_bcase_shape`'s own Guess disjunct already hands back) in place of `Hnb`.
+
+**One real tactic-engineering snag, caught immediately by the compiler, not by inspection.** `GW`/`GW''` were
+first introduced via `assert (GW := ...)` — which only carries the *type* of the given term into a fresh
+opaque hypothesis, discarding the definitional link entirely (unlike `set`, which keeps `GW` transparently
+equal to its own definition). Every subsequent `unfold GW`/`rewrite` failed outright once this was tried, with
+"cannot coerce to an evaluable reference" — switched to `set (GW := ...) in *`, then needed one `unfold GW.`
+as the very first tactic inside each of the eight proof blocks whose own *stated goal* mentions `GW`/`GW''`
+literally (since `set`'s own folding doesn't reach a hypothesis that doesn't exist yet at `set`-time, i.e. one
+introduced by a *later* `intros`) — `apply`/`exact`-based proofs needed no such unfolding, since those go
+through definitional equality automatically; only `rewrite`'s syntactic matching required it.
+
+**The moment it actually closed:** a fresh, from-scratch four-file rebuild returned `EXIT: 0` with zero
+`admit`s anywhere in `alpha_renaming_wip.v` for the first time this entire project. `Admitted.` at the very
+end of `NEval_left_confluence`'s own proof script was changed to `Qed.` (Coq itself doesn't do this
+automatically — a script with zero `admit`s used inside it can still be closed with `Admitted.` by mistake,
+which would silently keep the theorem axiomatic; checking is required). `Print Assumptions
+NEval_left_confluence` and `Print Assumptions NEval_left_self_confluence` both report "Closed under the
+global context" — genuinely zero axioms, matching the standard this whole project has held to throughout.
+
+**Status.** All four files (`curry.v`, `curry_test_leftmost.v`, `alpha_renaming_wip.v`, `failed_attempts.v`)
+compile clean from a genuinely fresh rebuild. `alpha_renaming_wip.v`: **zero** `admit`s, **zero**
+`Admitted.`s — `NEval_left_confluence` (the alpha-renaming-invariance theorem itself) and its
+`NEval_left_self_confluence` corollary are both fully `Qed`'d and axiom-free. `curry_test_leftmost.v`'s own 9
+pre-existing `Admitted.`s (separate, already-documented gaps unrelated to this theorem, mostly cross-`GEval`/
+`NEval_left` lemmas theorem2's own remaining gaps route through) are unchanged. **What this closes, for the
+project as a whole:** the "sixth gap" (and every sub-gap discovered while closing it — the Hinj1 dead-code and
+free-variable-sharing collisions, the D1/D2 `NoCaptureFinalB` pair, the widened-`ysX`/narrowed-`Hinj2`
+`BlkAlpha_compose_rename` reopening, and the `NL_Guess`-specific batch-swap renaming extension) that this
+session's entire arc, from §55 through §65, was built to close. `theorem2` itself still has other, separately-
+tracked gaps upstream in `curry_test_leftmost.v` (its own 9 `Admitted.`s) — but `NEval_left_confluence`,
+the alpha-invariance theorem `NEval_left`'s own determinized shape needed, is no longer one of them.
+
 ---
 
 # Part 2: Rocq/Coq Tactics and Idioms Glossary
