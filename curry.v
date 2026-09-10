@@ -209,6 +209,30 @@ Fixpoint hupd_list {A} (h : heap A) (xs : list var) (vs : list A) : heap A :=
 
 Definition hempty {A} : heap A := fun _ => None.
 
+(* Global-freshness apparatus (relocated here, ahead of GEval, from       *)
+(* curry_test_leftmost.v -- see THEOREM2_PROCESS_NOTES.md Sec.50-51/66:   *)
+(* originally built only for NL_Let/NL_Fun/NL_Guess's own analogous       *)
+(* premises, but GEval's matching rules (G_Fun's `s`, G_Let's `x`,       *)
+(* G_CaseConFree's `ws`) need the SAME static-freshness side condition:  *)
+(* a name fresh against the CURRENT GRAPH is not automatically fresh     *)
+(* against the finitely many names the PROGRAM ITSELF binds, statically, *)
+(* in its own source text.  A real implementation gets this for free     *)
+(* (compiled-away source names and malloc'd addresses are disjoint       *)
+(* namespaces); this formalization types both as the same `var` and so   *)
+(* has to state the disjointness explicitly.  ProgBoundName is "x is     *)
+(* bound somewhere, syntactically, in P" (a parameter of some function,  *)
+(* or bound anywhere in some function's own body, reached or not).       *)
+Fixpoint bound_vars_b (b : Blk) : list var :=
+  match b with
+  | BLet x e k => x :: bound_vars_b k
+  | BCase x brs =>
+      fold_right (fun p acc => match p with (c, ps, bd) => ps ++ bound_vars_b bd ++ acc end) nil brs
+  | BExpr e => nil
+  end.
+
+Definition ProgBoundName (P : Prog) (x : var) : Prop :=
+  exists f ps body, P f = Some (ps, body) /\ (In x ps \/ In x (bound_vars_b body)).
+
 (* ------------------------------------------------------------------ *)
 (* 4. The graph semantics (lsfa24.tex, Figures 8 & 9).                  *)
 (* ------------------------------------------------------------------ *)
@@ -248,6 +272,13 @@ Inductive GEval : Graph -> Blk -> Graph -> GNode -> Prop :=
     injective s ->
     (forall i x a, nth_error ps i = Some x -> nth_error args i = Some a -> s x = a) ->
     (forall y, ~ In y ps -> G (s y) = None) ->
+    (* Global-freshness strengthening (THEOREM2_PROCESS_NOTES.md Sec.66):  *)
+    (* mirrors NL_Fun's own analogous premise -- a name fresh against G     *)
+    (* alone can still collide with the program's OWN static bound names,   *)
+    (* which real fresh-name generation always avoids for free (a disjoint  *)
+    (* compiled-vs-allocated namespace) but this formalization has to        *)
+    (* state explicitly, since `var` is shared between the two. *)
+    (forall y, ~ In y ps -> ~ ProgBoundName P (s y)) ->
     GEval G (rename_b s body) G1 v ->
     GEval G (BExpr (EFun f args)) G1 v
 (* NOTE: we add the side condition `G x = None`, i.e. x is fresh.       *)
@@ -257,6 +288,8 @@ Inductive GEval : Graph -> Blk -> Graph -> GNode -> Prop :=
 (* clobber a live binding.  See the discussion at the end of this file. *)
 | G_Let : forall G G1 x e k v,
     G x = None ->
+    (* Global-freshness strengthening, same reason as G_Fun above. *)
+    ~ ProgBoundName P x ->
     GEval (hupd G x (GExpr e)) k G1 v ->
     GEval G (BLet x e k) G1 v
 | G_CaseBot : forall G x brs,
@@ -287,6 +320,8 @@ Inductive GEval : Graph -> Blk -> Graph -> GNode -> Prop :=
     length ws = length ys1 ->
     NoDup ws ->
     (forall w, In w ws -> G w = None) ->
+    (* Global-freshness strengthening, same reason as G_Fun above. *)
+    (forall w, In w ws -> ~ ProgBoundName P w) ->
     GEval (hupd_list (hupd G x (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws))
           (rename_b (zipsubst ys1 ws) body1)
           G1 v ->
@@ -2240,14 +2275,14 @@ Proof.
     | G c args
     | G x y
     | G x
-    | G G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh HGEbody IH
-    | G G1 x e k v HxFresh HGEk IH
+    | G G1 f args ps body v s HPf Hlen Hinj Hmatch Hfresh HnbFun HGEbody IH
+    | G G1 x e k v HxFresh HnbLet HGEk IH
     | G x brs HGx
     | G x y brs G1 v HGx HGEy IH
     | G x f args brs G1 vx G2 v HGx HGE1 IH1 HGE2 IH2
     | G x y z brs G1 v HGx HGEy IH
     | G x c zs brs ys body G1 v HGx HIn Hlen HGEbody IH
-    | G x c1 ys1 body1 brs G1 v ws HGx Hhd Hlen HND Hfresh HGEbody IH
+    | G x c1 ys1 body1 brs G1 v ws HGx Hhd Hlen HND Hfresh HnbGuess HGEbody IH
     ]; intros c0 args0 Hcorr Gam HGam.
   - (* G_Bot *) inversion Hcorr.
   - (* G_Free *) inversion Hcorr.

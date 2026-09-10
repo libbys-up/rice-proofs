@@ -3,11 +3,12 @@ Import ListNotations.
 Require Import curry.
 
 (* ==================================================================== *)
-(* Global-freshness apparatus (THEOREM2_PROCESS_NOTES.md Sec.50-51):     *)
-(* relocated ahead of NEval_left's own definition (bound_vars_b used to   *)
-(* live much later, in alpha_renaming_wip.v, but NL_Let/NL_Fun/NL_Guess    *)
-(* below need it in their own premises, and Coq requires every identifier *)
-(* fully defined before use -- see THEOREM2_PROCESS_NOTES.md's own T16).   *)
+(* Global-freshness apparatus (THEOREM2_PROCESS_NOTES.md Sec.50-51/66):  *)
+(* bound_vars_b/ProgBoundName now live in curry.v itself (relocated a     *)
+(* second time -- Sec.66 -- since GEval's own G_Fun/G_Let/G_CaseConFree   *)
+(* need the identical premise NL_Let/NL_Fun/NL_Guess below already had,    *)
+(* and curry.v obviously can't Require this file to reach them).  Both     *)
+(* names are inherited unqualified from the `Require Import curry` above. *)
 (*                                                                        *)
 (* The problem this closes: N_Select's zs (and N_Fun's s, N_Let's x,       *)
 (* N_Guess's ws) were only ever required fresh against the CURRENT HEAP    *)
@@ -21,17 +22,6 @@ Require Import curry.
 (* not); NL_Let/NL_Fun/NL_Guess below are strengthened to require every      *)
 (* newly-introduced heap key avoid it, giving a real, reusable               *)
 (* GlobalFreshHeap invariant (built in alpha_renaming_wip.v). *)
-Fixpoint bound_vars_b (b : Blk) : list var :=
-  match b with
-  | BLet x e k => x :: bound_vars_b k
-  | BCase x brs =>
-      fold_right (fun p acc => match p with (c, ps, bd) => ps ++ bound_vars_b bd ++ acc end) nil brs
-  | BExpr e => nil
-  end.
-
-Definition ProgBoundName (P : Prog) (x : var) : Prop :=
-  exists f ps body, P f = Some (ps, body) /\ (In x ps \/ In x (bound_vars_b body)).
-
 (* ==================================================================== *)
 (* GEval is a DETERMINISTIC execution model (a real compiler has to be):  *)
 (* G_CaseChoice only ever forwards to the FIRST operand of an EChoice,    *)
@@ -3951,14 +3941,14 @@ Proof.
     | G0 c0 args0
     | G0 x0 y0
     | G0 x0
-    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | G0 G1 x0 e0 k v1 HxFresh Hrec IH
+    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH
     | G0 x0 brs Hgx0
     | G0 x0 y0 brs G1 v1 Hgx0 Hrec IH
     | G0 x0 f args brs G1 vx G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
     | G0 x0 y0 z0 brs G1 v1 Hgx0 Hrec IH
     | G0 x0 c zs brs ys body G1 v1 Hgx0 HIn Hlen Hrec IH
-    | G0 x0 c1 ys1 body1 brs G1 v1 ws Hgx0 Hhd Hlen HND Hfresh Hrec IH
+    | G0 x0 c1 ys1 body1 brs G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
     ]; intros y Hv0; try discriminate Hv0.
   - (* G_Var *)
     injection Hv0 as Hv0; subst x0.
@@ -4043,14 +4033,14 @@ Proof.
     | G0 c0 args0
     | G0 x0 y0
     | G0 x0
-    | G0 G1 f args1 ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | G0 G1 x0 e0 k v1 HxFresh Hrec IH
+    | G0 G1 f args1 ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH
     | G0 x0 brs Hgx0
     | G0 x0 y0 brs G1 v1 Hgx0 Hrec IH
     | G0 x0 f args1 brs G1 vx G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
     | G0 x0 y0 z0 brs G1 v1 Hgx0 Hrec IH
     | G0 x0 c0 zs brs ys body G1 v1 Hgx0 HIn Hlen Hrec IH
-    | G0 x0 c1 ys1 body1 brs G1 v1 ws Hgx0 Hhd Hlen HND Hfresh Hrec IH
+    | G0 x0 c1 ys1 body1 brs G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
     ]; intros c args Hv0; try discriminate Hv0.
   - (* G_Con *)
     injection Hv0 as Hv0c Hv0a; subst c0 args0.
@@ -4213,14 +4203,14 @@ Proof.
     | G0 c args
     | G0 x0 y0
     | G0 x0
-    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | G0 G1 x0 e0 k v1 HxFresh Hrec IH
+    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH
     | G0 x0 brs Hgx0
     | G0 x0 y0 brs G1 v1 Hgx0 Hrec IH
     | G0 x0 f args brs G1 vx G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
     | G0 x0 y0 z0 brs G1 v1 Hgx0 Hrec IH
     | G0 x0 c zs brs ys body G1 v1 Hgx0 HIn Hlen Hrec IH
-    | G0 x0 c1 ys1 body1 brs G1 v1 ws Hgx0 Hhd Hlen HND Hfresh Hrec IH
+    | G0 x0 c1 ys1 body1 brs G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
     ]; intros x y Hxy.
   - exact Hxy.
   - exact Hxy.
@@ -4261,14 +4251,14 @@ Proof.
     | G0 c0 args0
     | G0 x0 y0
     | G0 x0
-    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | G0 G1 x0 e0 k v1 HxFresh Hrec IH
+    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH
     | G0 x0 brs Hgx0
     | G0 x0 y0 brs G1 v1 Hgx0 Hrec IH
     | G0 x0 f args brs G1 vx G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
     | G0 x0 y0 z0 brs G1 v1 Hgx0 Hrec IH
     | G0 x0 c0 zs brs ys body G1 v1 Hgx0 HIn Hlen Hrec IH
-    | G0 x0 c0 ys1 body1 brs G1 v1 ws Hgx0 Hhd Hlen HND Hfresh Hrec IH
+    | G0 x0 c0 ys1 body1 brs G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
     ]; intros p cc al Hx.
   - exact Hx.
   - exact Hx.
@@ -4384,14 +4374,14 @@ Proof.
     | G0 c0 args0
     | G0 x0 y0
     | G0 x0
-    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | G0 G1 x0 e0 k v1 HxFresh Hrec IH
+    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH
     | G0 x0 brs Hgx0
     | G0 x0 y0 brs G1 v1 Hgx0 Hrec IH
     | G0 x0 f args brs G1 vx G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
     | G0 x0 y0 z0 brs G1 v1 Hgx0 Hrec IH
     | G0 x0 c0 zs brs ys body G1 v1 Hgx0 HIn Hlen Hrec IH
-    | G0 x0 c0 ys1 body1 brs G1 v1 ws Hgx0 Hhd Hlen HND Hfresh Hrec IH
+    | G0 x0 c0 ys1 body1 brs G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
     ]; intros z Hcontra.
   - discriminate Hcontra.
   - discriminate Hcontra.
@@ -4430,14 +4420,14 @@ Proof.
     | G0 c0 args0
     | G0 x0 y0
     | G0 x0
-    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | G0 G1 x0 e0 k v1 HxFresh Hrec IH
+    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH
     | G0 x0 brs0 Hgx0
     | G0 x0 y0 brs0 G1 v1 Hgx0 Hrec IH
     | G0 x0 f args brs0 G1 vx G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
     | G0 x0 y0 z0 brs0 G1 v1 Hgx0 Hrec IH
     | G0 x0 c0 zs brs0 ys body G1 v1 Hgx0 HIn Hlen Hrec IH
-    | G0 x0 c0 ys1 body1 brs0 G1 v1 ws Hgx0 Hhd Hlen HND Hfresh Hrec IH
+    | G0 x0 c0 ys1 body1 brs0 G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
     ]; intros x1 brs1 He; try discriminate He; intros z Hcontra.
   - (* G_CaseBot *)
     injection He as He1 He2; subst x1 brs1.
@@ -4493,14 +4483,14 @@ Proof.
     | G0 c args
     | G0 x0 y0
     | G0 x0
-    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | G0 G1 x0 e0 k v1 HxFresh Hrec IH
+    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH
     | G0 x0 brs0 Hgx0
     | G0 x0 y0 brs0 G1 v1 Hgx0 Hrec IH
     | G0 x0 f0 args0 brs0 G1 vx G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
     | G0 x0 y0 z0 brs0 G1 v1 Hgx0 Hrec IH
     | G0 x0 c zs brs0 ys body G1 v1 Hgx0 HIn Hlen Hrec IH
-    | G0 x0 c1 ys1 body1 brs0 G1 v1 ws Hgx0 Hhd Hlen HND Hfresh Hrec IH
+    | G0 x0 c1 ys1 body1 brs0 G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
     ]; intros x1 brs1 He; try discriminate He.
   - (* G_CaseBot *) injection He as He1 He2; subst x1 brs1.
     exists x0. eapply CL_Here; exact Hgx0.
@@ -4987,14 +4977,14 @@ Proof.
     | G0 c args
     | G0 x0 y0
     | G0 x0
-    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | G0 G1 x0 e0 k v1 HxFresh Hrec IH
+    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH
     | G0 x0 brs0 Hgx0
     | G0 x0 y0 brs0 G1 v1 Hgx0 Hrec IH
     | G0 x0 f0 args0 brs0 G1 vx G2 v1 Hgx0 Hrec1g IH1 Hrec2g IH2
     | G0 x0 y0 z0 brs0 G1 v1 Hgx0 Hrec IH
     | G0 x0 c zs brs0 ys body G1 v1 Hgx0 HIn Hlen Hrec IH
-    | G0 x0 c1 ys1 body1 brs0 G1 v1 ws Hgx0 Hhd Hlen HND Hfresh Hrec IH
+    | G0 x0 c1 ys1 body1 brs0 G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
     ]; intros x1 brs1 He; try discriminate He;
     injection He as He1 He2; subst x1 brs1; intros Gam HGam2 F Gmid x' Hrec1.
   - (* G_CaseBot *)
@@ -7650,14 +7640,14 @@ Proof.
     | G0 c0 args0
     | G0 xh yh
     | G0 xh
-    | G0 G1' f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | G0 G1' xh eh k v1 HxFresh Hrec IH
+    | G0 G1' f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1' xh eh k v1 HxFresh HnbLet Hrec IH
     | G0 xh brs Hgx0
     | G0 xh yh brs G1' v1 Hgx0 Hrec IH
     | G0 xh f args brs G1' vx0 G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
     | G0 xh yh zh brs G1' v1 Hgx0 Hrec IH
     | G0 xh c zs brs ys body G1' v1 Hgx0 HIn Hlen Hrec IH
-    | G0 xh c1 ys1 body1 brs G1' v1 ws Hgx0 Hhd Hlen HND Hfresh Hrec IH
+    | G0 xh c1 ys1 body1 brs G1' v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
     ]; intros Gam HGam HNVT HNAL HWF HCC HAC x Hxdom.
   - (* G_Bot *)
     split; [reflexivity | split; [exact HNVT | split; [exact HWF |
@@ -7825,14 +7815,14 @@ Proof.
     | G0 c0 args0
     | G0 xh yh
     | G0 xh
-    | G0 G1' f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH
-    | G0 G1' xh eh k v1 HxFresh Hrec IH
+    | G0 G1' f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1' xh eh k v1 HxFresh HnbLet Hrec IH
     | G0 xh brs Hgx0
     | G0 xh yh brs G1' v1 Hgx0 Hrec IH
     | G0 xh f args brs G1' vx0 G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
     | G0 xh yh zh brs G1' v1 Hgx0 Hrec IH
     | G0 xh c zs brs ys body G1' v1 Hgx0 HIn Hlen Hrec IH
-    | G0 xh c1 ys1 body1 brs G1' v1 ws Hgx0 Hhd Hlen HND Hfresh Hrec IH
+    | G0 xh c1 ys1 body1 brs G1' v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
     ]; intro Hnbfc.
   - (* G_Bot *) split; [discriminate | intros y z Hcontra; discriminate Hcontra].
   - (* G_Free *) simpl in Hnbfc. destruct Hnbfc.
@@ -7887,14 +7877,14 @@ Proof.
     | G0 c0 args0                                                       (* G_Con *)
     | G0 x0 y0                                                          (* G_Choice *)
     | G0 x0                                                             (* G_Var *)
-    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh Hrec IH     (* G_Fun *)
-    | G0 G1 x0 e0 k v1 HxFresh Hrec IH                                  (* G_Let *)
+    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH     (* G_Fun *)
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH                                  (* G_Let *)
     | G0 x0 brs0 Hgx0                                                   (* G_CaseBot *)
     | G0 x0 y0 brs0 G1 v1 Hgx0 Hrec IH                                  (* G_CaseFwd *)
     | G0 x0 f0 args0 brs0 G1 vx G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2          (* G_CaseFun *)
     | G0 x0 y0 z0 brs0 G1 v1 Hgx0 Hrec IH                               (* G_CaseChoice *)
     | G0 x0 c zs brs0 ys body G1 v1 Hgx0 HIn Hlen Hrec IH               (* G_CaseCon *)
-    | G0 x0 c1 ys1 body1 brs0 G1 v1 ws Hgx0 Hhd Hlen HND Hfresh Hrec IH (* G_CaseConFree *)
+    | G0 x0 c1 ys1 body1 brs0 G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH (* G_CaseConFree *)
     ]; intros Gam HGam HNVT HNAL HWF HCC HAC.
   - (* G_Bot *)
     split.
@@ -7935,10 +7925,12 @@ Proof.
       { intros y0 Hin. specialize (Hfresh y0 Hin).
         specialize (HGam (s y0)) as HGamsy0. rewrite Hfresh in HGamsy0. exact HGamsy0. }
       exists Gam1. split.
-      * (* NEW GAP (global-freshness strengthening): GEval's G_Fun carries no
-           ProgBoundName fact about s, and (Sec.55) the old G(s y)=None fact
-           is no longer enough either (need G1(s y)=None). *)
-        eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | admit | admit | exact HNE].
+      * (* Sec.66: GEval's own G_Fun now carries the matching ~ProgBoundName
+           fact directly (HnbFun) -- that closes NL_Fun's 6th premise for
+           free. Its 5th premise (Gam1(s y)=None, not just Gam(s y)=None)
+           remains open: a genuinely deeper gap, not a plumbing one -- see
+           THEOREM2_PROCESS_NOTES.md Sec.66. *)
+        eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | admit | exact HnbFun | exact HNE].
       * exact HHC1.
     + intros x brs Hcontra. discriminate Hcontra.
   - (* G_Let *)
@@ -7960,8 +7952,8 @@ Proof.
       destruct (IH (hupd Gam x0 (let_content x0 e0)) HHCext HNVText HNALk HWText HCCext HACext) as [IH1 _].
       destruct (IH1 c args Hcorr) as [Gam' [HNE HHC]].
       exists Gam'. split.
-      * (* NEW GAP, same reason: GEval's G_Let carries no ProgBoundName fact. *)
-        eapply NL_Let; [exact HGamx0 | admit | exact HNE].
+      * (* Sec.66: GEval's own G_Let now carries ~ProgBoundName directly (HnbLet). *)
+        eapply NL_Let; [exact HGamx0 | exact HnbLet | exact HNE].
       * exact HHC.
     + intros x brs Hcontra. discriminate Hcontra.
   - (* G_CaseBot *)
@@ -8919,15 +8911,15 @@ Proof.
                    HGam2 HNVT2 HNALbody HWF2 HCC2 HAC2) as [IH1 _].
       destruct (IH1 c args Hcorr) as [Gam1 [HNE HHC]].
       exists Gam1. split.
-      * (* NEW GAP (global-freshness strengthening): GEval's G_CaseConFree
-           carries no ProgBoundName fact about ws. *)
+      * (* Sec.66: GEval's own G_CaseConFree now carries ~ProgBoundName
+           directly (HnbGuess). *)
         eapply NL_Guess.
         -- apply NL_VarSelf. exact Hbx.
         -- exact Hhd.
         -- exact Hlen.
         -- exact HND.
         -- exact HfreshGam.
-        -- admit.
+        -- exact HnbGuess.
         -- exact HNE.
       * exact HHC.
     + intros x brs Heqxbrs. injection Heqxbrs as Heqx Heqbrs. subst x brs.

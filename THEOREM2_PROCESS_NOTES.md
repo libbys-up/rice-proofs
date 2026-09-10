@@ -4988,3 +4988,99 @@ None` gets rewritten to `None <> None` by the very same mechanism, so `reflexivi
 `nth_error`) closes it. Avoid routing the extraction through a separate `assert`/`exists` wrapper whose own
 stated goal repeats the exact compound expression — that just relocates the same rewrite collision one
 level down, with a more confusing error site.
+
+## 66. Wiring `NEval_left_confluence`/`self_confluence` into `theorem2`: a foundational gap found in
+`GEval` itself, fixed for 3 of `theorem2`'s 4 remaining admits; the 4th and the `G_CaseFun` self-confluence
+gap are genuinely deep, left open
+
+**Investigated what "wiring together theorem2" actually requires**, per the user's request. `theorem2` has
+two forms: `curry.v:2229` (the original target, `NEval`/`curry.HeapCorr`-based, plain `Admitted`) and
+`curry_test_leftmost.v` (an `NEval_left`/this-file's-own-`HeapCorr`-based restatement, proven by direct
+induction on `GEval`, with only 4 admits left: two in `G_Fun`, one in `G_Let`, one in `G_CaseConFree`'s
+`NL_Guess` call — all four labeled "NEW GAP (global-freshness strengthening)" — plus one more, unlabeled, in
+`G_CaseFun`'s second conjunct (`admit.`, no comment), which earlier session comments identify as needing
+`NEval_left_self_confluence`.
+
+**First blocker: a dependency-direction problem.** `alpha_renaming_wip.v` (home of `NEval_left_confluence`,
+`NHeapAlpha`, `BlkAlpha`, `mutual_inverse`, `GlobalFreshHeap`, `NoCaptureFinalB`, `HeapBExpr`) `Require`s
+`curry_test_leftmost.v`, not the reverse — so none of that machinery is visible where `theorem2` lives.
+Wiring `self_confluence` into `theorem2`'s `G_CaseFun` case at all requires either moving `theorem2` into
+`alpha_renaming_wip.v` (or a file on top of it) or otherwise working somewhere that imports both — deferred,
+since a second, more fundamental issue surfaced first.
+
+**Second, deeper finding: the three "global-freshness strengthening" admits are not a plumbing gap — they
+trace to a real hole in `GEval`'s own definition in `curry.v`.** `NL_Fun`/`NL_Let`/`NL_Guess` (the Nat-heap
+rules) already require their freshly-chosen name(s) to avoid `ProgBoundName` (any name bound somewhere in
+the program's static text) — that is exactly what makes `GlobalFreshHeap` a real, preserved invariant.
+`GEval`'s matching rules — `G_Fun`'s `s`, `G_Let`'s `x`, `G_CaseConFree`'s `ws` — only required freshness
+against the *current graph* (`G(...) = None`), with nothing stopping a `GEval` derivation from picking a
+graph-fresh name that collides with a program-bound one. For an arbitrary `GEval` derivation,
+`~ProgBoundName P (...)` genuinely isn't derivable from `theorem2`'s hypotheses as they stood — it isn't
+true.
+
+**Fixed by strengthening `GEval` itself**, mirroring `NL_Fun`/`NL_Let`/`NL_Guess` exactly: added
+`(forall y, ~In y ps -> ~ProgBoundName P (s y))` to `G_Fun`, `~ProgBoundName P x` to `G_Let`, and
+`(forall w, In w ws -> ~ProgBoundName P w)` to `G_CaseConFree`, all in `curry.v`. `bound_vars_b`/
+`ProgBoundName` themselves got relocated a second time — from `curry_test_leftmost.v` (where Sec.50-51 had
+already moved them once, ahead of `NEval_left`) into `curry.v` itself, ahead of `GEval`, since they only
+depend on `Prog`/`Blk`/`var` and `curry.v` obviously can't `Require` a file that `Require`s it. Confirmed
+**zero proof-obligation cost**: nothing in this codebase ever *constructs* a `GEval` instance
+(`apply`/`eapply G_Fun` etc. — zero hits anywhere), every proof only *consumes* `GEval` as a hypothesis, so
+strengthening a constructor nobody produces breaks nothing semantically.
+
+**It did break syntax, mechanically, everywhere.** Adding a constructor argument shifts the arity of every
+`induction`/`destruct ... as [pattern]` naming that case. Fixed via the usual compile-error-driven sweep:
+10 occurrences each of the `G_Fun`-shaped, `G_Let`-shaped, and `G_CaseConFree`-shaped pattern (one per
+lemma/theorem that inducts on a raw `GEval` derivation, across `curry.v`'s own `theorem2` and
+`curry_test_leftmost.v`'s many `GEval`-consuming lemmas) needed one more bound name inserted
+(`HnbFun`/`HnbLet`/`HnbGuess`) — done via targeted whole-file string replacement on the exact (verified
+unique) substrings `"Hmatch Hfresh Hrec IH"`, `"HxFresh Hrec IH"`, `"HND Hfresh Hrec IH"`, distinguishing
+these from `NL_Fun`/`NL_Let`/`NL_Guess`'s own already-correctly-shaped patterns (which already carried an
+extra `Hnb`-style name and so don't match those substrings). All four files (`curry.v`,
+`curry_test_leftmost.v`, `alpha_renaming_wip.v`, `failed_attempts.v`) rebuild clean from scratch afterward —
+`alpha_renaming_wip.v` needed no pattern fixes at all, since it only ever matches `NEval_left`'s own
+patterns, not raw `GEval`'s.
+
+**Closed 3 of the 4 freshness admits immediately** using the newly-available `HnbFun`/`HnbLet`/`HnbGuess`
+hypotheses directly as `NL_Fun`'s 6th premise, `NL_Let`'s 2nd, and `NL_Guess`'s 6th (`G_CaseConFree`'s
+call) — no invariant-threading needed at all, since `GEval`'s own premise now hands back exactly the fact
+each site needed. `theorem2`'s own admit count dropped from 4 to 2 for real (verified via a fresh 4-file
+rebuild, `EXIT: 0` throughout).
+
+**The 4th freshness admit (`NL_Fun`'s 5th premise, `Gam1 (s y) = None` — using the *result* heap, not the
+starting one) is genuinely deep, not a plumbing gap, and was deliberately left open rather than forced.**
+Traced by hand: `rename_b s` renames *bound* occurrences too (`BLet x e k => BLet (s x) (rename_e0 s e)
+(rename_b s k)`, confirmed by reading the definition directly, not assumed), so every name `rename_b s
+body` actually binds along its execution is `s z` for some `z` ranging over `body`'s own bound names
+(parameters via substitution, or `body`'s internal lets/cases) — and the running derivation legitimately
+writes to exactly those positions as it executes. The needed fact reduces to: for `y ∉ ps`, `s y` is *not*
+`s z` for any `z` `body` itself binds — which does follow from injectivity + the now-available `~ProgBoundName
+P (s y)` fact IF `z` is itself a `ProgBoundName` (true: `z ∈ bound_vars_b body` makes `ProgBoundName P z`
+hold directly via `P f = Some (ps, body)`). *But* that only protects `s y` from `body`'s own *literal*
+bound names — it does NOT explain why some independently-chosen fresh pick made by a *nested* `NL_Let`/
+`NL_Guess` deeper in the SAME evaluation couldn't coincide with `s y`: both `s y` and that nested pick are
+licensed only to avoid `ProgBoundName`, which doesn't distinguish them from each other. Resolving this for
+real most likely needs either (a) a dedicated "a non-`ProgBoundName` position that starts `None` stays
+`None` across an `NEval_left` run" preservation lemma tracking *which* positions ever get freshly written
+(not just "no `ProgBoundName` position ever does," which is `GlobalFreshHeap`'s existing, insufficient
+direction), or (b) restructuring `theorem2`'s own construction to pick its own well-behaved Nat-heap-side
+renaming and relate it back to whatever `s` the given `GEval` derivation used via `NEval_left_confluence`/
+`self_confluence` itself — i.e., using the freshly-completed confluence machinery to *launder* an
+arbitrary, possibly ill-behaved `s` into one with the needed properties. Either route is comparable in
+scope to the hardest parts of Sec.26-55's own `NL_Fun` confluence argument (which needed multiple sessions
+for an analogous, though not identical, difficulty) — not attempted this session.
+
+**The `G_CaseFun` second-conjunct admit (self-confluence) also remains fully open.** Beyond the file-
+location blocker above, closing it needs: `theorem2`'s entire hypothesis set extended with everything
+`self_confluence` demands (`FunBodyWellScoped`, `ProgBrsUniqWF`/`NoShadowWF`/`NoCaptureWF`, `ClosedHeap`/
+`BrsUniqHeap`/`NoShadowHeap`/`NoCaptureHeap`/`GlobalFreshHeap`/`NoCaptureProgHeap`/`HeapBExpr` on the heap,
+plus `BrsUniqB`/`NoShadowB`/`NoCaptureB`/`NoCaptureProgB`/`NoCaptureFinalB` on the expression) threaded
+through all 12 induction cases — essentially redoing `NEval_left_confluence`'s own invariant-threading work
+on a second theorem — plus a new "canonical witness" lemma (manufacture a concrete `NEval_left` derivation
+of the function call matching `vx`, to pair against the arbitrary given force-derivation via self-
+confluence) and a "transport `ContractLoc` across `NHeapAlpha`" lemma. Not started.
+
+**Status:** `theorem2` (`curry_test_leftmost.v`) now has exactly 2 admits (was 4): `G_Fun`'s `Gam1(s y) =
+None` and `G_CaseFun`'s second conjunct. `curry.v`'s `GEval` is now strengthened (3 new premises,
+`bound_vars_b`/`ProgBoundName` relocated into it); its own `theorem2` is unchanged (still bare `Admitted`,
+not attempted this session). All four files rebuild clean from scratch.
