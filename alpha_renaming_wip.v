@@ -3840,6 +3840,95 @@ Proof. intros x e0. destruct e0; apply NoShadowB_bexpr. Qed.
 Lemma let_content_NoCapture : forall x e0, NoCaptureB (let_content x e0).
 Proof. intros x e0. destruct e0; apply NoCaptureB_bexpr. Qed.
 
+(* Sec.66: NoShadowHeap's own NEval_left-preservation theorem, mirroring
+   NEval_left_BrsUniqHeap_preserved's structure exactly -- every heap-
+   written value is either a bare BExpr (trivially NoShadowB, via
+   NoShadowB_bexpr/let_content_NoShadow) or (NL_Fun's own case) a renamed
+   function body, where the rename is genuinely injective (Hinj), so
+   NoShadowB_rename applies directly -- unlike NL_Select/NL_Guess's own
+   zipsubst rename, which isn't injective in general but doesn't need to
+   be: the substituted branch's own pattern vars (ys/ys1) are disjoint
+   from its own bound_vars_b (NoShadowB_bcase_branch's third conjunct),
+   so zipsubst is the IDENTITY there (zipsubst_notin), and
+   bound_vars_b_rename_id_on_own turns that into bound_vars_b being
+   LITERALLY unchanged, not just re-NoDup'd. *)
+Theorem NEval_left_NoShadowHeap_preserved :
+  forall P F G e G' v, NEval_left P F G e G' v ->
+  ProgNoShadowWF P -> NoShadowHeap G -> NoShadowB e -> NoShadowHeap G' /\ NoShadowB v.
+Proof.
+  intros P F G e G' v H.
+  induction H as
+    [ F0 G0 z c args Hz
+    | F0 G0 z Hz
+    | F0 G0 z Hz
+    | F0 G0 z e0 G1 v0 HzF Hz Hne1 Hne2 Hne3 Hrec IH
+    | F0 G0
+    | F0 G0 c args
+    | F0 G0 G1 f args ps body v0 s HPf Hlen Hinj Hmatch Hfresh Hnb Hrec IH
+    | F0 G0 G1 z e0 k v0 HzFresh Hnb Hrec IH
+    | F0 G0 x1 y1 G1 v0 Hrec IH
+    | F0 G0 z c zs brs ys body G1 v0 G2 Hrec1 IH1 HIn Hlen Hrec2 IH2
+    | F0 G0 z G1 z' c1 ys1 body1 brs G2 v0 ws Hrec1 IH1 Hhd Hlen HND Hfr Hnb Hrec2 IH2
+    ]; intros HProg HNoShadow HeNoShadow.
+  - (* VarCons *) split; [exact HNoShadow | exact (NoShadowB_bexpr (ECon c args))].
+  - (* VarSelf *) split; [exact HNoShadow | exact (NoShadowB_bexpr (EVar z))].
+  - (* VarFree *)
+    split; [ | exact (NoShadowB_bexpr (EVar z))].
+    intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w z) eqn:Heqw.
+    + injection Hwb as Hwb; subst b. exact (NoShadowB_bexpr (EVar z)).
+    + exact (HNoShadow w b Hwb).
+  - (* VarExp *)
+    assert (He0NoShadow : NoShadowB e0) by exact (HNoShadow z e0 Hz).
+    destruct (IH HProg HNoShadow He0NoShadow) as [HNoShadowG1 Hv0NoShadow].
+    split; [ | exact Hv0NoShadow].
+    intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w z) eqn:Heqw.
+    + injection Hwb as Hwb; subst b. exact Hv0NoShadow.
+    + exact (HNoShadowG1 w b Hwb).
+  - (* ValFree *) split; [exact HNoShadow | exact (NoShadowB_bexpr EFree)].
+  - (* ValCon *) split; [exact HNoShadow | exact (NoShadowB_bexpr (ECon c args))].
+  - (* Fun *)
+    assert (HbodyNS : NoShadowB body) by exact (NoDup_app_remove_l ps (bound_vars_b body) (HProg f ps body HPf)).
+    assert (HbodyNS' : NoShadowB (rename_b s body)) by exact (NoShadowB_rename s body HbodyNS Hinj).
+    exact (IH HProg HNoShadow HbodyNS').
+  - (* Let *)
+    assert (HkNoShadow : NoShadowB k) by exact (NoShadowB_let_k z e0 k HeNoShadow).
+    assert (HnewNoShadow : NoShadowHeap (hupd G0 z (let_content z e0))).
+    { intros w b Hwb. unfold hupd in Hwb. destruct (Nat.eqb w z) eqn:Heqw.
+      - injection Hwb as Hwb; subst b. exact (let_content_NoShadow z e0).
+      - exact (HNoShadow w b Hwb). }
+    exact (IH HProg HnewNoShadow HkNoShadow).
+  - (* Or *)
+    apply IH; [exact HProg | exact HNoShadow | exact (NoShadowB_bexpr (EVar x1))].
+  - (* Select *)
+    destruct (IH1 HProg HNoShadow (NoShadowB_bexpr (EVar z))) as [HNoShadowG1 _].
+    destruct (NoShadowB_bcase_branch z brs c ys body HIn HeNoShadow) as [_ [HbodyNS Hdisj]].
+    assert (Hrename : NoShadowB (rename_b (zipsubst ys zs) body)).
+    { assert (Heq : bound_vars_b (rename_b (zipsubst ys zs) body) = bound_vars_b body).
+      { apply bound_vars_b_rename_id_on_own. intros w Hw. apply zipsubst_notin. intro Hc. exact (Hdisj w Hc Hw). }
+      unfold NoShadowB. rewrite Heq. exact HbodyNS. }
+    exact (IH2 HProg HNoShadowG1 Hrename).
+  - (* Guess *)
+    destruct (IH1 HProg HNoShadow (NoShadowB_bexpr (EVar z))) as [HNoShadowG1 _].
+    assert (Hbr1In : In (c1, ys1, body1) brs) by (apply (hd_error_in brs (c1, ys1, body1) Hhd)).
+    set (Hnew := hupd G1 z' (BExpr (ECon c1 ws))).
+    assert (HnewNoShadow : NoShadowHeap (hupd_list Hnew ws (map (fun w => BExpr (EVar w)) ws))).
+    { intros w b Hwb. destruct (in_dec Nat.eq_dec w ws) as [Hwws | Hwnws].
+      - rewrite (hupd_list_map_self ws Hnew w Hwws) in Hwb. injection Hwb as Hwb; subst b.
+        exact (NoShadowB_bexpr (EVar w)).
+      - rewrite (hupd_list_notin ws Hnew _ w Hwnws) in Hwb.
+        unfold Hnew in Hwb. unfold hupd in Hwb.
+        destruct (Nat.eqb w z') eqn:Heqw.
+        + injection Hwb as Hwb; subst b. exact (NoShadowB_bexpr (ECon c1 ws)).
+        + exact (HNoShadowG1 w b Hwb). }
+    destruct (NoShadowB_bcase_branch z brs c1 ys1 body1 Hbr1In HeNoShadow) as [_ [Hbody1NS Hdisj]].
+    assert (Hrename : NoShadowB (rename_b (zipsubst ys1 ws) body1)).
+    { assert (Heq : bound_vars_b (rename_b (zipsubst ys1 ws) body1) = bound_vars_b body1).
+      { apply bound_vars_b_rename_id_on_own. intros w Hw. apply zipsubst_notin. intro Hc. exact (Hdisj w Hc Hw). }
+      unfold NoShadowB. rewrite Heq. exact Hbody1NS. }
+    exact (IH2 HProg HnewNoShadow Hrename).
+Qed.
+
+
 (* ==================================================================== *)
 (* Global freshness (THEOREM2_PROCESS_NOTES.md Sec.50-51): closes NL_Select's *)
 (* own Hinj1 gap. ProgBoundName lives in curry_test_leftmost.v (ahead of      *)

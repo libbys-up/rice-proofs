@@ -7713,17 +7713,46 @@ Proof.
         by (assert (HGamxh' := HGam xh); rewrite HxFresh in HGamxh'; exact HGamxh').
       (* NEW GAP, same reason: GEval's G_Let carries no ProgBoundName fact. *)
       apply NL_Let; [exact HGamxh | admit | exact (Hplug F0 Gamk vk Hforce)].
-  - (* G_CaseBot: body cases on something before reaching a value -- same
-       scope limit the older _to_fwd/_to_con already had; not yet handled *)
-    admit.
+  - (* G_CaseBot: G unchanged, vx = GExpr EBot -- GNode_mirror of that is
+       BExpr EBot, which no NEval_left constructor's own top-level pattern
+       ever matches (NL_ValFree/NL_ValCon are BExpr EFree/BExpr(ECon _ _),
+       every other constructor's own head is EVar/EChoice/EFun/BLet/BCase-
+       shaped), so the replay hypothesis is simply uninhabited. *)
+    split; [reflexivity | split; [exact HNVT | split; [exact HWF |
+      exists Gam; split; [exact HGam | split; [exact HCC | split; [exact HAC | split; [reflexivity |
+        intros F0 Gamk vk Hbot; inversion Hbot]]]]]]].
   - (* G_CaseFwd: ditto *)
     admit.
   - (* G_CaseFun: ditto *)
     admit.
   - (* G_CaseChoice: ditto *)
     admit.
-  - (* G_CaseCon: ditto *)
-    admit.
+  - (* G_CaseCon: xh's own Nat-heap witness is DIRECTLY the matching Con
+       (no forwarding), so NL_VarCons handles the scrutinee force outright
+       -- mirrors theorem2's own (already-Qed'd) G_CaseCon case exactly. *)
+    assert (HGamxh := HGam xh). rewrite Hgx0 in HGamxh.
+    destruct HGamxh as [b [Hb HCE3]].
+    destruct HCE3 as [HCE | [yd [zd [cd [argsd [Hgxfwd _]]]]]].
+    2: { exfalso. rewrite Hgx0 in Hgxfwd. discriminate Hgxfwd. }
+    destruct (CorrE_forced_shape G0 xh b HCE) as
+      [ [c0 [args0 [Hg1 Hb1]]]
+      | [ [Hg1 Hb1]
+        | [ [f1 [args1 [Hg1 Hb1]]]
+          | [ [y1 [y2 [Hg1 Hb1]]]
+            | [ [z1 [Hg1 Hb1]]
+              | [ [Hg1 Hb1]
+                | [ [y1 [Hg1 Hb1]]
+                  | [y1 [z1 [c0 [args0 [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ];
+      rewrite Hgx0 in Hg1; try discriminate Hg1.
+    injection Hg1 as Hg1a Hg1b. subst c0 args0. rewrite Hb1 in Hb.
+    assert (HNALbody : NoAliasLetB (rename_b (zipsubst ys zs) body))
+      by exact (NoAliasLetB_rename (zipsubst ys zs) body (NoAliasLetB_in brs c ys body HIn HNAL)).
+    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom)
+      as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
+    split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
+    exists Gam1. split; [exact HHC1 | split; [exact HCC1 | split; [exact HAC1 | split; [exact Hgx1 | ]]]].
+    intros F0 Gamk vk Hforce.
+    eapply NL_Select; [apply NL_VarCons; exact Hb | exact HIn | exact Hlen | exact (Hplug F0 Gamk vk Hforce)].
   - (* G_CaseConFree: ditto *)
     admit.
 Admitted.

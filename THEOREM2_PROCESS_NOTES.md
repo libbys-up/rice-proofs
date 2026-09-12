@@ -5084,3 +5084,73 @@ confluence) and a "transport `ContractLoc` across `NHeapAlpha`" lemma. Not start
 None` and `G_CaseFun`'s second conjunct. `curry.v`'s `GEval` is now strengthened (3 new premises,
 `bound_vars_b`/`ProgBoundName` relocated into it); its own `theorem2` is unchanged (still bare `Admitted`,
 not attempted this session). All four files rebuild clean from scratch.
+
+## 67. Working gap 2 (`G_CaseFun`'s self-confluence admit): course-corrected the invariant-threading
+strategy, then found that the prerequisite lemma it depends on isn't just incomplete but exposes a real
+soundness question that needs the user's read before going further
+
+**Built `NEval_left_NoShadowHeap_preserved`** (`alpha_renaming_wip.v`, zero admits) as the first piece of
+threading `self_confluence`'s hypothesis set through `theorem2`. Attempting the `NoCaptureHeap` analogue hit
+the same dead-code-collision problem Sec.56 solved for a different invariant (a case branch's substituted
+constructor fields colliding with the branch's own bound names) — and confirmed that collision genuinely
+needs `NoCaptureFinalB`, which is NOT a preservable invariant across an arbitrary `NEval_left` run (it's a
+leaf-only assumption: once evaluation actually reaches and binds one of a term's own bound names, the
+invariant is *supposed* to become false there — that's the whole point of evaluating a let/case). Abandoned
+building general "preserved across an opaque `NEval_left` run" theorems for the other invariants as the
+wrong tool entirely.
+
+**Course-correction:** `theorem2` (and its helper lemmas) build their *own* `NEval_left` derivations by
+induction on `GEval`. Adding the 7 new invariants as extra conjuncts of `theorem2`'s own conclusion means
+each case's own recursive `IH` call hands them back automatically — no external preservation theorem
+needed, only plain "one `hupd`/`hupd_list` extends invariant X" facts at genuine fresh-write points. Much
+smaller surface area than originally planned; `NEval_left_NoShadowHeap_preserved` ended up not needed for
+this path but is kept (true, general, zero-admit).
+
+**Found `theorem2`'s `G_CaseFun` case transitively depends on `NEval_left_let_chain_to_value`, which is
+itself `Admitted` with 6 missing cases** (`G_CaseBot`/`G_CaseFwd`/`G_CaseFun`/`G_CaseChoice`/`G_CaseCon`/
+`G_CaseConFree` — its own comment: "scope limit the older `_to_fwd`/`_to_con` already had"). `theorem2`'s
+own clean admit-count there was masking this. Started completing it (user chose "finish the prerequisite
+first"):
+- `G_CaseBot`: closed outright — `GNode_mirror (GExpr EBot) = BExpr EBot`, and no `NEval_left` constructor's
+  own head pattern is ever `BExpr EBot` (checked all 11), so the replay hypothesis is uninhabited;
+  `inversion` closes it immediately.
+- `G_CaseCon`: closed by mirroring `theorem2`'s own already-Qed'd `G_CaseCon` case exactly (`xh`'s Nat-heap
+  witness is directly the matching `Con`, via `NL_VarCons`, no forwarding needed).
+- `curry_test_leftmost.v`'s admit count in this lemma: 6 → 4. All four files rebuild clean from scratch.
+
+**Found a genuine soundness question working `G_CaseConFree` (the next case), not yet resolved.** The
+lemma's own statement concludes `G1 x = G x` (the tracked location `x` is untouched) unconditionally for any
+`x` with `G x <> None`. But `G_CaseConFree`/`G_CaseChoice`/`G_CaseFun` are the only three `GEval` rules that
+*rewrite* an already-occupied position (`Free`→`Con`, `Choice`→`Fwd`, `EFun`-thunk→its own result,
+respectively) — and nothing in the lemma's hypotheses rules out the tracked `x` *being* that rewritten
+position at some nested step, in which case the "unchanged" conclusion is straightforwardly false. Traced
+why `theorem2`'s own actual call site (`x := x0`, the call site whose content is exactly `EFun f0 args0`) is
+safe from the `Free`/`Choice` versions of this (nothing ever creates a fresh binding with content `EFree`/
+`EChoice` at a position that already held something else — those shapes only ever originate at the moment a
+`G_Let` first creates a position, never by rewriting an existing one — so `x0`'s content, having started as
+`EFun`, can never *become* `Free`/`Choice`-shaped later, ruling out `x0` ever being a `G_CaseConFree`/
+`G_CaseChoice` target). The `G_CaseFun` version of the concern is subtler: could `x0` coincide with a
+*nested* `G_CaseFun`'s own scrutinee (i.e., could the call being unwound reference itself, directly or via
+its own arguments, so that some deeper step re-forces `x0` and rewrites it before `theorem2`'s own outer
+`G_CaseFun` step gets to)? Argued no, for `theorem2`'s specific usage: a graph location's ID is only ever
+created fresh by `G_Let`, at which point its own would-be arguments must already be bound to *earlier*
+locations — `x0` cannot be its own argument, since it doesn't exist yet when its argument list is fixed —
+combined with `G_Fun`'s own fresh-renaming premise (`s`'s image on non-parameters must be `G`-fresh, so
+never `x0` either, since `x0` is occupied), this rules out `rename_b s body` ever referencing `x0` anywhere.
+**This argument is sound for `theorem2`'s actual call site, but it is not encoded in
+`NEval_left_let_chain_to_value`'s own hypothesis list** — the lemma, stated generally over an arbitrary `x`,
+is not actually true as written (a `G_CaseConFree`/`G_CaseChoice` step could rewrite an `x` whose content
+happens to start as `Free`/`Choice`-shaped, which the current hypotheses don't exclude). Fixing the
+*lemma's own statement* cleanly (rather than hand-waving from the call site) needs an explicit hypothesis
+along the lines of "`x`'s content is not `Free`/`Choice`-shaped" for the first two rewrites, and something
+closer to "`x` isn't referenced anywhere in `e`'s own domain of variables" for the `G_CaseFun` one (a
+`ClosedHeap`-style non-membership fact, not yet built out). Did not push further before checking with the
+user, since this touches whether `theorem2`'s *already-believed-complete* `G_CaseFun` first conjunct is
+actually resting on a sound argument or a coincidence of its one call site.
+
+**Status:** `NEval_left_let_chain_to_value` has 4 admits left (`G_CaseFwd`/`G_CaseFun`/`G_CaseChoice`/
+`G_CaseConFree`). The latter three need the shape-protection hypothesis above (not yet added to the
+lemma's statement); `G_CaseFwd` doesn't rewrite anything and should be straightforward once resumed
+(mirrors `theorem2`'s own `G_CaseFwd` case's alias-forcing pattern). Tasks #2-6 (invariant threading,
+canonical-witness, `ContractLoc` transport, closing the `G_CaseFun` admit itself) are all still pending,
+now correctly understood to sit behind this prerequisite. All four files rebuild clean from scratch.
