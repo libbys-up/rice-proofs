@@ -192,6 +192,29 @@ Fixpoint zipsubst (ys zs : list var) : ren :=
   | _, _ => fun w => w
   end.
 
+Lemma zipsubst_notin : forall ys zs y, ~ In y ys -> zipsubst ys zs y = y.
+Proof.
+  induction ys as [| y0 ys' IH]; intros zs y Hnin; destruct zs as [| z0 zs'].
+  - reflexivity.
+  - reflexivity.
+  - reflexivity.
+  - simpl. destruct (Nat.eqb y y0) eqn:Heq.
+    + exfalso. apply Nat.eqb_eq in Heq. apply Hnin. left. exact (eq_sym Heq).
+    + apply IH. intro H. apply Hnin. right. exact H.
+Qed.
+
+Lemma zipsubst_in : forall ys zs, length ys = length zs -> forall y, In y ys -> In (zipsubst ys zs y) zs.
+Proof.
+  induction ys as [| y0 ys' IH]; intros zs Hlen y Hy.
+  - destruct Hy.
+  - destruct zs as [| z0 zs']; simpl in Hlen; [discriminate | ].
+    simpl in Hy. destruct Hy as [Hy | Hy].
+    + subst y0. simpl. rewrite Nat.eqb_refl. left. reflexivity.
+    + simpl. destruct (Nat.eqb y y0) eqn:Heq.
+      * left. reflexivity.
+      * right. apply IH; [injection Hlen as Hlen; exact Hlen | exact Hy].
+Qed.
+
 (* ------------------------------------------------------------------ *)
 (* 3. Heaps                                                             *)
 (* ------------------------------------------------------------------ *)
@@ -232,6 +255,79 @@ Fixpoint bound_vars_b (b : Blk) : list var :=
 
 Definition ProgBoundName (P : Prog) (x : var) : Prop :=
   exists f ps body, P f = Some (ps, body) /\ (In x ps \/ In x (bound_vars_b body)).
+
+(* vars_of_e0/vars_of_b (relocated here from alpha_renaming_wip.v, same
+   reason as bound_vars_b/ProgBoundName above -- see
+   THEOREM2_PROCESS_NOTES.md Sec.67): every syntactic variable POSITION
+   rename_b/rename_e0 touch, bound and free alike -- needed by
+   NEval_left_let_chain_to_value's own new "x isn't referenced anywhere in
+   e" hypothesis, which curry_test_leftmost.v needs before this file can
+   see it. *)
+Definition vars_of_e0 (e : Expr0) : list var :=
+  match e with
+  | EVar x => x :: nil
+  | EBot => nil
+  | EFree => nil
+  | EChoice x y => x :: y :: nil
+  | EFun f args => args
+  | ECon c args => args
+  end.
+
+Fixpoint vars_of_b (b : Blk) : list var :=
+  match b with
+  | BLet x e k => x :: vars_of_e0 e ++ vars_of_b k
+  | BCase x brs =>
+      x :: fold_right (fun p acc => match p with (c, ps, bd) => ps ++ vars_of_b bd ++ acc end) nil brs
+  | BExpr e => vars_of_e0 e
+  end.
+
+Lemma vars_of_e0_rename : forall rho e, vars_of_e0 (rename_e0 rho e) = map rho (vars_of_e0 e).
+Proof. intros rho e. destruct e as [x | | | x y | f args | c args]; reflexivity. Qed.
+
+Lemma vars_of_b_rename_bound :
+  forall n b, blk_size b < n -> forall s, vars_of_b (rename_b s b) = map s (vars_of_b b).
+Proof.
+  induction n as [n IHn] using (well_founded_induction lt_wf).
+  intros b Hsize s.
+  destruct b as [x e k | x brs | e].
+  - simpl in *.
+    assert (Hn : blk_size k + 1 < n) by lia.
+    assert (Hm : blk_size k < blk_size k + 1) by lia.
+    rewrite (vars_of_e0_rename s e). rewrite map_app.
+    f_equal. f_equal. exact (IHn (blk_size k + 1) Hn k Hm s).
+  - simpl in *.
+    f_equal.
+    induction brs as [| [[c ys] bd] brs' IHbrs].
+    + reflexivity.
+    + simpl in Hsize |- *.
+      assert (Hbd : blk_size bd + 1 < n) by lia.
+      assert (Hm : blk_size bd < blk_size bd + 1) by lia.
+      assert (Hrest : S (fold_right (fun p acc => blk_size (match p with (_,_,bd0) => bd0 end) + acc) 0 brs') < n)
+        by lia.
+      rewrite (IHn (blk_size bd + 1) Hbd bd Hm s).
+      rewrite map_app, map_app.
+      f_equal. f_equal.
+      apply IHbrs. exact Hrest.
+  - simpl. exact (vars_of_e0_rename s e).
+Qed.
+
+Lemma vars_of_b_rename : forall s b, vars_of_b (rename_b s b) = map s (vars_of_b b).
+Proof. intros s b. exact (vars_of_b_rename_bound (S (blk_size b)) b (Nat.lt_succ_diag_r _) s). Qed.
+
+(* A branch's own pattern list AND its own body's vars are both part of the
+   whole BCase's vars_of_b. *)
+Lemma vars_of_b_bcase_branch :
+  forall x brs c ys bd, In (c, ys, bd) brs ->
+  forall w, In w ys \/ In w (vars_of_b bd) -> In w (vars_of_b (BCase x brs)).
+Proof.
+  intros x brs c ys bd Hin w Hw.
+  simpl. right. induction brs as [| [[c' ys'] bd'] brs' IHbrs].
+  - destruct Hin.
+  - destruct Hin as [Heq | Hin].
+    + injection Heq as Hc Hys Hbd. subst c' ys' bd'.
+      apply in_or_app. destruct Hw as [Hw | Hw]; [left; exact Hw | right; apply in_or_app; left; exact Hw].
+    + apply in_or_app. right. apply in_or_app. right. apply IHbrs. exact Hin.
+Qed.
 
 (* ------------------------------------------------------------------ *)
 (* 4. The graph semantics (lsfa24.tex, Figures 8 & 9).                  *)

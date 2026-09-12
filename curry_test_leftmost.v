@@ -7629,6 +7629,8 @@ Lemma NEval_left_let_chain_to_value :
   forall Gam, HeapCorr G Gam -> NoVarThunk G -> NoAliasLetB e ->
     WellFoundedFwd G -> ChainConsistent G Gam -> AliasConsistent G Gam ->
   forall x, G x <> None ->
+  (forall b0, G x = Some b0 -> b0 <> GExpr EFree /\ (forall y z, b0 <> GExpr (EChoice y z))) ->
+  ~ In x (vars_of_b e) ->
   G1 x = G x /\ NoVarThunk G1 /\ WellFoundedFwd G1 /\
   exists Gam1, HeapCorr G1 Gam1 /\ ChainConsistent G1 Gam1 /\ AliasConsistent G1 Gam1 /\ Gam1 x = Gam x /\
     forall F0 Gamk vk, NEval_left P F0 Gam1 (GNode_mirror vx) Gamk vk -> NEval_left P F0 Gam e Gamk vk.
@@ -7648,7 +7650,7 @@ Proof.
     | G0 xh yh zh brs G1' v1 Hgx0 Hrec IH
     | G0 xh c zs brs ys body G1' v1 Hgx0 HIn Hlen Hrec IH
     | G0 xh c1 ys1 body1 brs G1' v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
-    ]; intros Gam HGam HNVT HNAL HWF HCC HAC x Hxdom.
+    ]; intros Gam HGam HNVT HNAL HWF HCC HAC x Hxdom Hxshape Hxref.
   - (* G_Bot *)
     split; [reflexivity | split; [exact HNVT | split; [exact HWF |
       exists Gam; split; [exact HGam | split; [exact HCC | split; [exact HAC | split; [reflexivity |
@@ -7672,7 +7674,22 @@ Proof.
   - (* G_Fun *)
     assert (HNALbody : NoAliasLetB (rename_b s body))
       by (apply NoAliasLetB_rename; exact (HPWF f ps body HPf)).
-    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom)
+    simpl in Hxref.
+    assert (Hwargs : forall w, In w ps -> In (s w) args).
+    { intros w Hw.
+      destruct (List.In_nth_error ps w Hw) as [i Hi].
+      destruct (nth_error args i) as [a | ] eqn:Ea.
+      - assert (Hsw := Hmatch i w a Hi Ea). rewrite Hsw. exact (nth_error_In args i Ea).
+      - exfalso.
+        assert (Hlt : i < length ps) by (apply nth_error_Some; rewrite Hi; discriminate).
+        rewrite Hlen in Hlt. exact ((proj2 (nth_error_Some args i) Hlt) Ea). }
+    assert (HxrefBody : ~ In x (vars_of_b (rename_b s body))).
+    { rewrite vars_of_b_rename. intro Hin. apply in_map_iff in Hin. destruct Hin as [w [Hsw Hw]].
+      destruct (in_dec Nat.eq_dec w ps) as [Hwps | Hwps].
+      - apply Hxref. rewrite <- Hsw. exact (Hwargs w Hwps).
+      - assert (HG0sw : G0 (s w) = None) by exact (Hfresh w Hwps).
+        rewrite Hsw in HG0sw. exact (Hxdom HG0sw). }
+    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom Hxshape HxrefBody)
       as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
     split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
     exists Gam1. split; [exact HHC1 | split; [exact HCC1 | split; [exact HAC1 | split; [exact Hgx1 | ]]]].
@@ -7701,7 +7718,13 @@ Proof.
       by (eapply AliasConsistent_extend; [exact HAC | exact HWF | exact HxFresh]).
     assert (Hxdom_ext : hupd G0 xh (GExpr eh) x <> None).
     { rewrite (hupd_neq G0 xh (GExpr eh) x Hxz). exact Hxdom. }
-    destruct (IH (hupd Gam xh (let_content xh eh)) HGam_ext HNVT_ext HNALk HWF_ext HCC_ext HAC_ext x Hxdom_ext)
+    assert (Hxshape_ext : forall b0, hupd G0 xh (GExpr eh) x = Some b0 ->
+              b0 <> GExpr EFree /\ (forall y z, b0 <> GExpr (EChoice y z))).
+    { intros b0 Hb0. rewrite (hupd_neq G0 xh (GExpr eh) x Hxz) in Hb0. exact (Hxshape b0 Hb0). }
+    assert (HxrefK : ~ In x (vars_of_b k)).
+    { intro Hin. apply Hxref. simpl. right. apply in_or_app. right. exact Hin. }
+    destruct (IH (hupd Gam xh (let_content xh eh)) HGam_ext HNVT_ext HNALk HWF_ext HCC_ext HAC_ext
+                 x Hxdom_ext Hxshape_ext HxrefK)
       as [Hxeq' [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
     assert (Hxeq : G1' x = G0 x).
     { rewrite Hxeq'. rewrite (hupd_neq G0 xh (GExpr eh) x Hxz). reflexivity. }
@@ -7747,7 +7770,20 @@ Proof.
     injection Hg1 as Hg1a Hg1b. subst c0 args0. rewrite Hb1 in Hb.
     assert (HNALbody : NoAliasLetB (rename_b (zipsubst ys zs) body))
       by exact (NoAliasLetB_rename (zipsubst ys zs) body (NoAliasLetB_in brs c ys body HIn HNAL)).
-    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom)
+    (* NEW GAP (Sec.67/68): x's syntactic non-membership in e (Hxref) says
+       nothing about zs -- xh's own ALREADY-EXISTING constructor fields, a
+       HEAP value, not part of e's own syntax at all. Ruling out x among zs
+       needs a ClosedHeap/GlobalFreshHeap-style "x unreachable via any
+       heap-stored value" invariant, not yet built. *)
+    assert (HxNotInZs : ~ In x zs) by admit.
+    assert (HxrefBody : ~ In x (vars_of_b (rename_b (zipsubst ys zs) body))).
+    { rewrite vars_of_b_rename. intro Hin. apply in_map_iff in Hin. destruct Hin as [w [Hsw Hw]].
+      destruct (in_dec Nat.eq_dec w ys) as [Hwys | Hwys].
+      - apply HxNotInZs. rewrite <- Hsw. exact (zipsubst_in ys zs Hlen w Hwys).
+      - assert (Hzid : zipsubst ys zs w = w) by exact (zipsubst_notin ys zs w Hwys).
+        rewrite Hzid in Hsw. subst w.
+        apply Hxref. exact (vars_of_b_bcase_branch xh brs c ys body HIn x (or_intror Hw)). }
+    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom Hxshape HxrefBody)
       as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
     split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
     exists Gam1. split; [exact HHC1 | split; [exact HCC1 | split; [exact HAC1 | split; [exact Hgx1 | ]]]].
@@ -8404,8 +8440,20 @@ Proof.
           injection Hg1 as Hg1a Hg1b. subst f1 args1. rewrite Hb1 in Hb. exact Hb.
         - rewrite Hgx0 in Hgxfwd. discriminate Hgxfwd. }
       assert (Hxdom : G0 x0 <> None) by congruence.
+      assert (Hxshape0 : forall b0, G0 x0 = Some b0 ->
+                b0 <> GExpr EFree /\ (forall y z, b0 <> GExpr (EChoice y z))).
+      { intros b0 Hb0. rewrite Hgx0 in Hb0. injection Hb0 as Hb0. subst b0.
+        split; [discriminate | intros y z Hcontra; discriminate Hcontra]. }
+      (* NEW GAP (Sec.67/68): x0 (the function-call's own location) is never
+         its OWN argument -- it's freshly created by whatever G_Let first
+         wrote EFun f0 args0 there, and args0 can only reference bindings
+         that already existed BEFORE x0 did. That argument isn't formalized
+         anywhere yet (theorem2 tracks no "a value's own creation postdates
+         its own arguments" provenance invariant), so this is admitted for
+         now rather than assumed silently. *)
+      assert (Hxref0 : ~ In x0 (vars_of_b (BExpr (EFun f0 args0)))) by admit.
       destruct (NEval_left_let_chain_to_value P HPWF G0 (BExpr (EFun f0 args0)) G1 vx Hrec1
-                  Gam HGam HNVT I HWF HCC HAC x0 Hxdom)
+                  Gam HGam HNVT I HWF HCC HAC x0 Hxdom Hxshape0 Hxref0)
         as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
       assert (Hg1x0 : G1 x0 = Some (GExpr (EFun f0 args0))) by (rewrite Hxeq; exact Hgx0).
       destruct vx as [e0 | y0'].

@@ -5154,3 +5154,47 @@ lemma's statement); `G_CaseFwd` doesn't rewrite anything and should be straightf
 (mirrors `theorem2`'s own `G_CaseFwd` case's alias-forcing pattern). Tasks #2-6 (invariant threading,
 canonical-witness, `ContractLoc` transport, closing the `G_CaseFun` admit itself) are all still pending,
 now correctly understood to sit behind this prerequisite. All four files rebuild clean from scratch.
+
+## 68. Same session, continued: fixed the lemma's statement (per the user's "add both hypotheses"
+choice), found the fix itself needed a THIRD piece not anticipated, and landed on a clean, isolated,
+single-named remaining gap instead of an open-ended one
+
+**Added the two hypotheses to `NEval_left_let_chain_to_value`:** `(forall b0, G x = Some b0 -> b0 <>
+GExpr EFree /\ (forall y z, b0 <> GExpr (EChoice y z)))` ("`x`'s content isn't `Free`/`Choice`-shaped") and
+`~ In x (vars_of_b e)` ("`x` isn't referenced anywhere in `e`'s own syntax"). Relocated `vars_of_e0`/
+`vars_of_b` (+ their `rename` commutation lemmas), `vars_of_b_bcase_branch`, and `zipsubst_notin`/
+`zipsubst_in` from `alpha_renaming_wip.v` into `curry.v` (same reason as Sec.67's `bound_vars_b`/
+`ProgBoundName`/`GlobalFreshHeap`-adjacent relocations: `curry_test_leftmost.v` needs them and can't
+`Require` the file that currently holds them). Threaded the two new hypotheses through `G_Fun` and `G_Let`
+cleanly and completely (zero admits in either) — `G_Fun`'s own case needed a small new fact,
+`In w ps -> In (s w) args` (via `nth_error`/`Hmatch`), to rule out `x` reappearing through a parameter
+substitution.
+
+**Found, while finishing `G_CaseCon`, that the syntactic hypothesis alone doesn't cover everything:**
+`Hxref` (`~In x (vars_of_b e)`) protects against `x` reappearing through anything `e`'s own SYNTAX
+mentions, but `G_CaseCon`'s own zipsubst step substitutes in `zs` -- the scrutinee's already-existing
+constructor fields, a HEAP VALUE fetched from `xh`'s own graph slot, not part of `e`'s syntax at all. Ruling
+out `x` among `zs` needs a `ClosedHeap`/`GlobalFreshHeap`-style "`x` is unreachable via any value the
+current heap stores" invariant -- structurally analogous to `GlobalFreshHeap` (which protects the whole
+`ProgBoundName` set from ever being written) but keyed to a single tracked location instead of a static
+program-wide set, and not yet built. The same gap resurfaces, in a different guise, at `theorem2`'s own call
+site: supplying `Hxref` there needs `~In x0 args0` ("the function-call location isn't its own argument"),
+true by a provenance argument (`x0` is freshly created by whatever `G_Let` first wrote it, and `args0`
+can only reference bindings that already existed before `x0` did) that nothing in `theorem2` currently
+formalizes (no "a value's own creation postdates its own arguments" invariant is tracked anywhere).
+
+**Isolated both to single, clearly-named `admit`s rather than reverting or improvising a patch:**
+`HxNotInZs : ~ In x zs` in `NEval_left_let_chain_to_value`'s own `G_CaseCon` case, and `Hxref0 : ~In x0
+(vars_of_b (BExpr (EFun f0 args0)))` at `theorem2`'s call site. Both admits are the SAME underlying missing
+invariant wearing two faces, so building it once (a `GlobalFreshHeap`-style "no heap-stored value ever
+references this location" fact, threaded and preserved the same way `GlobalFreshHeap` itself is) should
+close both at once. This is now a well-scoped, single, named piece of future work rather than an
+open-ended one -- unlike Sec.67's finding, which was "the lemma isn't true as stated," this one is "the fix
+needs one more ingredient we can name precisely."
+
+**Status:** `NEval_left_let_chain_to_value` has 5 admits (`G_CaseFwd`/`G_CaseFun`/`G_CaseChoice`/
+`G_CaseConFree` unstarted, plus the new isolated `HxNotInZs` in the now-otherwise-complete `G_CaseCon`).
+`G_Bot`/`G_Free`/`G_Con`/`G_Choice`/`G_Var`/`G_Fun`/`G_Let`/`G_CaseBot` are fully admit-free under the
+corrected, honest statement. `theorem2` gained one new isolated admit (`Hxref0`) at its `G_CaseFun` call
+site, tracked the same way. All four files rebuild clean from scratch; `NEval_left_confluence`/
+`NEval_left_self_confluence` re-verified zero-axiom.
