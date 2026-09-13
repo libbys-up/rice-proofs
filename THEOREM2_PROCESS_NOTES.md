@@ -5198,3 +5198,59 @@ needs one more ingredient we can name precisely."
 corrected, honest statement. `theorem2` gained one new isolated admit (`Hxref0`) at its `G_CaseFun` call
 site, tracked the same way. All four files rebuild clean from scratch; `NEval_left_confluence`/
 `NEval_left_self_confluence` re-verified zero-axiom.
+
+## 69. Same session, continued: investigated the re-entrancy question directly, confirmed the approach is
+sound, and built the reachability/acyclicity invariant that closes it -- `HxNotInZs` is now a real proof,
+not an admit
+
+**Investigated whether the scenario from Sec.68 (some nested evaluation re-touching a location `t` while
+it's already mid-force) is actually reachable.** Traced it via creation order: for `t` to be reachable
+from one of its own arguments `y`, `y`'s own value would have to reference `t` (so `t` must exist before
+`y`'s value is built) while `y` must also exist before `t` does (to be one of `t`'s own arguments, fixed at
+`t`'s own creation) — both can't hold at once. **Confirmed: a call location can never be reachable from its
+own arguments.** (The earlier "sharing" example that looked alarming was a mix-up — it showed one call's
+result shared into a *different*, later call's arguments, which never threatens that later call itself.)
+This is a real argument, but it's about *creation order*, which isn't part of `GEval`'s type (a pure
+relation between start/end states, no build history) — so, like the `ProgBoundName` gap, it has to become
+an explicit, assumed invariant rather than something derived from `GEval`'s bare definition. Cost: still
+free, since nothing in this codebase constructs a `GEval` instance.
+
+**Built the infrastructure in `curry.v`** (placed right after `Graph`/`GNode`, since it needs `GNode`):
+`vars_of_gnode` (a graph value's own referenced vars), `GraphClosed` (`ClosedHeap`'s analogue for `Graph`),
+`GraphReaches` (inductive multi-hop chase: direct step + transitive closure), `AcyclicGraph` (`forall p, ~
+GraphReaches G p p`), plus two small structural lemmas: `GraphReaches_hupd_fresh_notin` (a fresh key has no
+incoming edges under `GraphClosed`, so reachability into/out of anything else is unaffected by writing it)
+and `GraphReaches_domain` (a location with no stored value can't start any hop).
+
+**Replaced the purely-syntactic `~In x (vars_of_b e)` hypothesis with a stronger, semantic one**:
+`forall w, In w (vars_of_b e) -> w <> x /\ ~ GraphReaches G w x` (`Hreach2`) — "nothing `e` currently
+mentions is, or can reach, `x`". This subsumes the old hypothesis (`w <> x` is the first conjunct) and is
+exactly strong enough to close `G_CaseCon`'s own `zs` gap directly: `xh` is *itself* part of `e`'s own
+syntax (the scrutinee), so `Hreach2` applied there already gives `~GraphReaches G0 xh x`; `x ∈ zs` would be
+exactly the edge `xh -> x`, an immediate contradiction — no separate acyclicity lookup needed at that
+point, `Hreach2` alone carries it. Threaded cleanly through `G_Fun` (the parameter-substitution split
+already built for the old `Hxref` extends verbatim, using `GraphReaches_domain` for the fresh-name half)
+and `G_CaseCon` (fully closed, zero admits, replacing `HxNotInZs`'s old placeholder with a real proof).
+
+**`G_Let`'s own threading hit a genuine, separate, smaller gap and was admitted rather than forced**:
+`GraphClosed`'s preservation across the `hupd` needs `eh`'s own referenced vars to already be defined in
+`G0` — true of any real `let x = e in k`, but (exactly like the `G_Let` freshness gaps Sec.66 already fixed
+by strengthening `G_Let` itself) `GEval`'s bare `G_Let` premise doesn't require it. Fixing this properly
+means either strengthening `G_Let` again (a third `curry.v`-wide arity sweep, not done here to keep this
+pass scoped) or finding another argument. Admitted as `HGraphClosedExt`/`Hreach2K`, clearly named, rather
+than chased further this session.
+
+**`theorem2`'s own `Hxref0` admit is now two smaller, precisely-named admits** (`HGraphClosed0`,
+`HAcyclicX0`) instead of one vague one — `theorem2` itself doesn't carry `GraphClosed`/`AcyclicGraph` as
+top-level invariants yet (that's `theorem2`'s own restatement, Task #3's scope); once it does, this call
+site's own argument becomes the exact same direct `GraphReaches_step` self-loop contradiction that just
+closed `G_CaseCon` for real.
+
+**Status:** `NEval_left_let_chain_to_value`'s admit count: `G_Bot`/`G_Free`/`G_Con`/`G_Choice`/`G_Var`/
+`G_Fun`/`G_CaseBot`/`G_CaseCon` fully admit-free; `G_Let` has 2 admits (`HGraphClosedExt`, `Hreach2K`, both
+reducing to the same `G_Let`-strengthening gap); `G_CaseFwd`/`G_CaseFun`/`G_CaseChoice`/`G_CaseConFree`
+still unstarted (4 admits, unchanged in count from Sec.68 but their eventual proofs should now reuse this
+same `Hreach2`/`GraphReaches` machinery cleanly, per `G_Fun`/`G_CaseCon`'s own pattern). `theorem2` has 3
+admits total: `HGraphClosed0`/`HAcyclicX0` (new, precisely-scoped) plus the pre-existing `G_CaseFun`
+second-conjunct admit (task #6's own target, untouched this pass). All four files rebuild clean from
+scratch; `NEval_left_confluence`/`NEval_left_self_confluence` re-verified zero-axiom.

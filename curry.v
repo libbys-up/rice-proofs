@@ -339,6 +339,67 @@ Inductive GNode :=
 
 Definition Graph := heap GNode.
 
+(* Sec.68-69: a location's own creation always postdates everything its
+   own value references (a real graph-reduction heap is built up
+   incrementally -- every new key's own RHS can only name bindings
+   already in scope) -- so an unevaluated call can never be reachable
+   from its own arguments; forcing it can never re-enter itself via a
+   value shared in from elsewhere. GEval's own bare definition doesn't
+   encode this (it's a pure relation between start/end states, no
+   "creation order" in its type at all) -- same situation as the
+   ProgBoundName gap, so it becomes an explicit, assumed invariant
+   instead: GraphReaches is the multi-hop "value at p references q"
+   chase, and NEval_left_let_chain_to_value's own remaining admits both
+   reduce to needing acyclicity at one location, established this way. *)
+Definition vars_of_gnode (g : GNode) : list var :=
+  match g with
+  | GExpr e0 => vars_of_e0 e0
+  | GFwd y => y :: nil
+  end.
+
+Definition GraphClosed (G : Graph) : Prop :=
+  forall z g, G z = Some g -> forall w, In w (vars_of_gnode g) -> G w <> None.
+
+Inductive GraphReaches (G : Graph) : var -> var -> Prop :=
+| GraphReaches_step : forall p q g, G p = Some g -> In q (vars_of_gnode g) -> GraphReaches G p q
+| GraphReaches_trans : forall p q r, GraphReaches G p q -> GraphReaches G q r -> GraphReaches G p r.
+
+Definition AcyclicGraph (G : Graph) : Prop := forall p, ~ GraphReaches G p p.
+
+(* The key structural fact making Hacyclic/Hreach2 threadable through a
+   FRESH write (G_Let's hupd, G_CaseConFree's hupd_list): a fresh key z
+   (G z = None) has NO incoming edges at all in G, given GraphClosed G --
+   any EXISTING value's own references are already-defined (GraphClosed),
+   hence never z. So a path landing at some q <> z, starting from some
+   p <> z, in the EXTENDED graph never actually needs to pass through z --
+   it's already entirely a path in the OLD graph. *)
+Lemma GraphReaches_hupd_fresh_notin :
+  forall G z v, G z = None -> GraphClosed G ->
+  forall p, p <> z -> forall q, GraphReaches (hupd G z v) p q -> q <> z /\ GraphReaches G p q.
+Proof.
+  intros G z v Hz Hclosed p Hpz q Hreach.
+  remember (hupd G z v) as G' eqn:HG'.
+  induction Hreach as [p0 q0 g Hp0 Hq0 | p0 q0 r0 Hpq IHpq Hqr IHqr].
+  - subst G'. unfold hupd in Hp0. destruct (Nat.eqb p0 z) eqn:Heq.
+    + apply Nat.eqb_eq in Heq; subst p0. exfalso. exact (Hpz eq_refl).
+    + assert (Hq0z : q0 <> z).
+      { intro Heqz; subst q0. assert (Hcz : G z <> None) by exact (Hclosed p0 g Hp0 z Hq0). exact (Hcz Hz). }
+      split; [exact Hq0z | exact (GraphReaches_step G p0 q0 g Hp0 Hq0)].
+  - subst G'. destruct (IHpq Hpz) as [Hq0z HreachG_pq].
+    destruct (IHqr Hq0z) as [Hr0z HreachG_qr].
+    split; [exact Hr0z | exact (GraphReaches_trans G p0 q0 r0 HreachG_pq HreachG_qr)].
+Qed.
+
+(* A location with no outgoing edge yet (G p = None) can't be the START of
+   any GraphReaches hop -- used to rule out reaching anything AT ALL from
+   a position that's fresh in the CURRENT graph. *)
+Lemma GraphReaches_domain : forall G p q, GraphReaches G p q -> G p <> None.
+Proof.
+  intros G p q H. induction H as [p0 q0 g Hp0 Hq0 | p0 q0 r0 Hpq IHpq Hqr IHqr].
+  - rewrite Hp0. discriminate.
+  - exact IHpq.
+Qed.
+
 (* NOTE ON THE STACK.  Figures 8-9 thread a backtracking stack S        *)
 (* through the head-normal-form judgement, but *only ever push* onto    *)
 (* it (nothing in Fig. 8/9 inspects or pops S; only the separate        *)

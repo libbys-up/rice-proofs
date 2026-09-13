@@ -7628,9 +7628,9 @@ Lemma NEval_left_let_chain_to_value :
   forall G e G1 vx, GEval P G e G1 vx ->
   forall Gam, HeapCorr G Gam -> NoVarThunk G -> NoAliasLetB e ->
     WellFoundedFwd G -> ChainConsistent G Gam -> AliasConsistent G Gam ->
-  forall x, G x <> None ->
+  forall x, G x <> None -> GraphClosed G ->
   (forall b0, G x = Some b0 -> b0 <> GExpr EFree /\ (forall y z, b0 <> GExpr (EChoice y z))) ->
-  ~ In x (vars_of_b e) ->
+  (forall w, In w (vars_of_b e) -> w <> x /\ ~ GraphReaches G w x) ->
   G1 x = G x /\ NoVarThunk G1 /\ WellFoundedFwd G1 /\
   exists Gam1, HeapCorr G1 Gam1 /\ ChainConsistent G1 Gam1 /\ AliasConsistent G1 Gam1 /\ Gam1 x = Gam x /\
     forall F0 Gamk vk, NEval_left P F0 Gam1 (GNode_mirror vx) Gamk vk -> NEval_left P F0 Gam e Gamk vk.
@@ -7650,7 +7650,7 @@ Proof.
     | G0 xh yh zh brs G1' v1 Hgx0 Hrec IH
     | G0 xh c zs brs ys body G1' v1 Hgx0 HIn Hlen Hrec IH
     | G0 xh c1 ys1 body1 brs G1' v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
-    ]; intros Gam HGam HNVT HNAL HWF HCC HAC x Hxdom Hxshape Hxref.
+    ]; intros Gam HGam HNVT HNAL HWF HCC HAC x Hxdom HGraphClosed Hxshape Hreach2.
   - (* G_Bot *)
     split; [reflexivity | split; [exact HNVT | split; [exact HWF |
       exists Gam; split; [exact HGam | split; [exact HCC | split; [exact HAC | split; [reflexivity |
@@ -7674,7 +7674,7 @@ Proof.
   - (* G_Fun *)
     assert (HNALbody : NoAliasLetB (rename_b s body))
       by (apply NoAliasLetB_rename; exact (HPWF f ps body HPf)).
-    simpl in Hxref.
+    simpl in Hreach2.
     assert (Hwargs : forall w, In w ps -> In (s w) args).
     { intros w Hw.
       destruct (List.In_nth_error ps w Hw) as [i Hi].
@@ -7683,13 +7683,15 @@ Proof.
       - exfalso.
         assert (Hlt : i < length ps) by (apply nth_error_Some; rewrite Hi; discriminate).
         rewrite Hlen in Hlt. exact ((proj2 (nth_error_Some args i) Hlt) Ea). }
-    assert (HxrefBody : ~ In x (vars_of_b (rename_b s body))).
-    { rewrite vars_of_b_rename. intro Hin. apply in_map_iff in Hin. destruct Hin as [w [Hsw Hw]].
+    assert (Hreach2Body : forall w', In w' (vars_of_b (rename_b s body)) -> w' <> x /\ ~ GraphReaches G0 w' x).
+    { intros w' Hin. rewrite vars_of_b_rename in Hin. apply in_map_iff in Hin. destruct Hin as [w [Hsw Hw]].
       destruct (in_dec Nat.eq_dec w ps) as [Hwps | Hwps].
-      - apply Hxref. rewrite <- Hsw. exact (Hwargs w Hwps).
+      - rewrite <- Hsw. exact (Hreach2 (s w) (Hwargs w Hwps)).
       - assert (HG0sw : G0 (s w) = None) by exact (Hfresh w Hwps).
-        rewrite Hsw in HG0sw. exact (Hxdom HG0sw). }
-    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom Hxshape HxrefBody)
+        rewrite <- Hsw. split.
+        + intro Heq. rewrite Heq in HG0sw. exact (Hxdom HG0sw).
+        + intro Hr. exact (GraphReaches_domain G0 (s w) x Hr HG0sw). }
+    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom HGraphClosed Hxshape Hreach2Body)
       as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
     split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
     exists Gam1. split; [exact HHC1 | split; [exact HCC1 | split; [exact HAC1 | split; [exact Hgx1 | ]]]].
@@ -7721,10 +7723,22 @@ Proof.
     assert (Hxshape_ext : forall b0, hupd G0 xh (GExpr eh) x = Some b0 ->
               b0 <> GExpr EFree /\ (forall y z, b0 <> GExpr (EChoice y z))).
     { intros b0 Hb0. rewrite (hupd_neq G0 xh (GExpr eh) x Hxz) in Hb0. exact (Hxshape b0 Hb0). }
-    assert (HxrefK : ~ In x (vars_of_b k)).
-    { intro Hin. apply Hxref. simpl. right. apply in_or_app. right. exact Hin. }
+    (* NEW GAP (Sec.69): GraphClosed's own preservation across this hupd
+       needs eh's own referenced vars to already be defined in G0 -- true
+       of any real `let x = e in k` (e's own free vars are already bound),
+       but GEval's bare G_Let premise doesn't require it (same situation
+       as the G_Let freshness gaps Sec.66 already fixed by strengthening
+       GEval itself -- not done here, to avoid a second curry.v-wide
+       arity sweep mid-investigation). Threading Hreach2 through this same
+       hupd hits the same gap (xh's own single outgoing edge, into eh's
+       fields, needs those fields already reach-protected) -- admitted as
+       one gap rather than two, since fixing GraphClosed's own gap first
+       would let this one go through the same way G_Fun's own case did. *)
+    assert (HGraphClosedExt : GraphClosed (hupd G0 xh (GExpr eh))) by admit.
+    assert (Hreach2K : forall w', In w' (vars_of_b k) -> w' <> x /\ ~ GraphReaches (hupd G0 xh (GExpr eh)) w' x)
+      by admit.
     destruct (IH (hupd Gam xh (let_content xh eh)) HGam_ext HNVT_ext HNALk HWF_ext HCC_ext HAC_ext
-                 x Hxdom_ext Hxshape_ext HxrefK)
+                 x Hxdom_ext HGraphClosedExt Hxshape_ext Hreach2K)
       as [Hxeq' [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
     assert (Hxeq : G1' x = G0 x).
     { rewrite Hxeq'. rewrite (hupd_neq G0 xh (GExpr eh) x Hxz). reflexivity. }
@@ -7770,20 +7784,30 @@ Proof.
     injection Hg1 as Hg1a Hg1b. subst c0 args0. rewrite Hb1 in Hb.
     assert (HNALbody : NoAliasLetB (rename_b (zipsubst ys zs) body))
       by exact (NoAliasLetB_rename (zipsubst ys zs) body (NoAliasLetB_in brs c ys body HIn HNAL)).
-    (* NEW GAP (Sec.67/68): x's syntactic non-membership in e (Hxref) says
-       nothing about zs -- xh's own ALREADY-EXISTING constructor fields, a
-       HEAP value, not part of e's own syntax at all. Ruling out x among zs
-       needs a ClosedHeap/GlobalFreshHeap-style "x unreachable via any
-       heap-stored value" invariant, not yet built. *)
-    assert (HxNotInZs : ~ In x zs) by admit.
-    assert (HxrefBody : ~ In x (vars_of_b (rename_b (zipsubst ys zs) body))).
-    { rewrite vars_of_b_rename. intro Hin. apply in_map_iff in Hin. destruct Hin as [w [Hsw Hw]].
+    (* Sec.69: xh IS part of e's own syntax directly (BCase's own scrutinee
+       position), so Hreach2 applied there already gives ~GraphReaches G0 xh
+       x -- and x ∈ zs would be exactly one such edge (xh's own stored
+       value's own field), a direct contradiction. No separate reachability
+       argument needed beyond Hreach2 itself. *)
+    assert (HxhIn : In xh (vars_of_b (BCase xh brs))) by (left; reflexivity).
+    destruct (Hreach2 xh HxhIn) as [_ HnrXh].
+    assert (HxNotInZs : ~ In x zs).
+    { intro Hin. apply HnrXh. exact (GraphReaches_step G0 xh x (GExpr (ECon c zs)) Hgx0 Hin). }
+    assert (Hreach2Body : forall w', In w' (vars_of_b (rename_b (zipsubst ys zs) body)) ->
+              w' <> x /\ ~ GraphReaches G0 w' x).
+    { intros w' Hin. rewrite vars_of_b_rename in Hin. apply in_map_iff in Hin. destruct Hin as [w [Hsw Hw]].
       destruct (in_dec Nat.eq_dec w ys) as [Hwys | Hwys].
-      - apply HxNotInZs. rewrite <- Hsw. exact (zipsubst_in ys zs Hlen w Hwys).
+      - rewrite <- Hsw.
+        assert (Hinzs : In (zipsubst ys zs w) zs) by exact (zipsubst_in ys zs Hlen w Hwys).
+        split.
+        + intro Heq; rewrite Heq in Hinzs. exact (HxNotInZs Hinzs).
+        + intro Hr. apply HnrXh.
+          exact (GraphReaches_trans G0 xh (zipsubst ys zs w) x
+                   (GraphReaches_step G0 xh (zipsubst ys zs w) (GExpr (ECon c zs)) Hgx0 Hinzs) Hr).
       - assert (Hzid : zipsubst ys zs w = w) by exact (zipsubst_notin ys zs w Hwys).
-        rewrite Hzid in Hsw. subst w.
-        apply Hxref. exact (vars_of_b_bcase_branch xh brs c ys body HIn x (or_intror Hw)). }
-    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom Hxshape HxrefBody)
+        rewrite <- Hsw, Hzid.
+        exact (Hreach2 w (vars_of_b_bcase_branch xh brs c ys body HIn w (or_intror Hw))). }
+    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom HGraphClosed Hxshape Hreach2Body)
       as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
     split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
     exists Gam1. split; [exact HHC1 | split; [exact HCC1 | split; [exact HAC1 | split; [exact Hgx1 | ]]]].
@@ -8444,16 +8468,28 @@ Proof.
                 b0 <> GExpr EFree /\ (forall y z, b0 <> GExpr (EChoice y z))).
       { intros b0 Hb0. rewrite Hgx0 in Hb0. injection Hb0 as Hb0. subst b0.
         split; [discriminate | intros y z Hcontra; discriminate Hcontra]. }
-      (* NEW GAP (Sec.67/68): x0 (the function-call's own location) is never
-         its OWN argument -- it's freshly created by whatever G_Let first
-         wrote EFun f0 args0 there, and args0 can only reference bindings
-         that already existed BEFORE x0 did. That argument isn't formalized
-         anywhere yet (theorem2 tracks no "a value's own creation postdates
-         its own arguments" provenance invariant), so this is admitted for
-         now rather than assumed silently. *)
-      assert (Hxref0 : ~ In x0 (vars_of_b (BExpr (EFun f0 args0)))) by admit.
+      (* Sec.69: x0 (the function-call's own location) is never reachable
+         from its own arguments -- it's freshly created by whatever G_Let
+         first wrote EFun f0 args0 there, and args0 can only reference
+         bindings that already existed BEFORE x0 did, so nothing reachable
+         from them can loop back to x0 (that would require some argument's
+         own value to both predate and postdate x0's creation). Formalized
+         via GraphClosed/AcyclicGraph (Sec.69); theorem2 doesn't carry
+         either as a top-level invariant yet (Task #3's own scope), so
+         this is admitted here rather than threaded through the whole
+         induction prematurely -- once theorem2 carries GraphClosed G0 and
+         AcyclicGraph G0, this follows exactly like NEval_left_let_chain_
+         to_value's own G_CaseCon case now does (a direct GraphReaches_step
+         self-loop contradiction, no admit needed). *)
+      assert (HGraphClosed0 : GraphClosed G0) by admit.
+      assert (Hxreach0 : forall w, In w (vars_of_b (BExpr (EFun f0 args0))) -> w <> x0 /\ ~ GraphReaches G0 w x0).
+      { assert (HAcyclicX0 : ~ GraphReaches G0 x0 x0) by admit.
+        intros w Hw. simpl in Hw. split.
+        - intro Heq; subst w. apply HAcyclicX0. exact (GraphReaches_step G0 x0 x0 (GExpr (EFun f0 args0)) Hgx0 Hw).
+        - intro Hr. apply HAcyclicX0.
+          exact (GraphReaches_trans G0 x0 w x0 (GraphReaches_step G0 x0 w (GExpr (EFun f0 args0)) Hgx0 Hw) Hr). }
       destruct (NEval_left_let_chain_to_value P HPWF G0 (BExpr (EFun f0 args0)) G1 vx Hrec1
-                  Gam HGam HNVT I HWF HCC HAC x0 Hxdom Hxshape0 Hxref0)
+                  Gam HGam HNVT I HWF HCC HAC x0 Hxdom HGraphClosed0 Hxshape0 Hxreach0)
         as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
       assert (Hg1x0 : G1 x0 = Some (GExpr (EFun f0 args0))) by (rewrite Hxeq; exact Hgx0).
       destruct vx as [e0 | y0'].
