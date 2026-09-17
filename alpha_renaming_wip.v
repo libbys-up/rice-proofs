@@ -1972,6 +1972,67 @@ Qed.
 Definition ClosedHeap (G : NHeap) : Prop :=
   forall z b, G z = Some b -> forall w, In w (vars_of_b b) -> G w <> None.
 
+(* Bridge lemma (Task #2/#3 prep, THEOREM2_PROCESS_NOTES.md Sec.73): lets
+   theorem2's own restatement carry GraphClosed G (curry.v) as its ONE new
+   graph-side invariant and derive ClosedHeap Gam (the Nat-heap side
+   self_confluence actually needs) at the point of use, rather than
+   threading a SEPARATE ClosedHeap invariant through all 12 cases from
+   scratch. Holds pointwise, no induction/acyclicity needed: HeapCorr's own
+   definition already gives "G z defined -> Gam z defined" at every
+   location independently, so it's enough to relate b's own vars back to
+   SOME graph location GraphClosed already covers. CorrE's seven shapes all
+   satisfy vars_of_b b = vars_of_gnode (G p) exactly (CorrE_Con/Fun/Choice/
+   VarThunk/FwdHere) or have no vars at all (CorrE_Bot), except CorrE_Free's
+   own self-loop (b = EVar p), trivially defined since Gam p = Some b is the
+   premise. CorrE3's second (achieved-via-VarChase) disjunct needs one more
+   step: VarChase's own witness b is either the achieved Con itself
+   (VChase_Here, so vars_of_b b = args, covered by GraphClosed at the
+   achieved location zt) or a single alias hop (VChase_Hop), whose own
+   target is Gam-defined by VarChase's own next constructor, no matter how
+   deep the chase continues from there. *)
+Lemma VarChase_first_step :
+  forall Gam p c args, VarChase Gam p (BExpr (ECon c args)) ->
+  Gam p = Some (BExpr (ECon c args)) \/ (exists y, Gam p = Some (BExpr (EVar y)) /\ Gam y <> None).
+Proof.
+  intros Gam p c args H.
+  destruct H as [w0 b0 Hb0 Hself | w0 w0' e0 Hw0 Hne Hrec].
+  - left. exact Hb0.
+  - right. exists w0'. split; [exact Hw0 | ].
+    destruct Hrec as [w1 b1 Hb1 _ | w1 w1' e1 Hw1 _ _]; congruence.
+Qed.
+
+Lemma GraphClosed_implies_ClosedHeap :
+  forall G Gam, GraphClosed G -> HeapCorr G Gam -> ClosedHeap Gam.
+Proof.
+  intros G Gam Hgc Hhc p b Hpb w Hw.
+  assert (HGamp := Hhc p).
+  destruct (G p) as [g | ] eqn:Hgp; [ | rewrite HGamp in Hpb; discriminate Hpb].
+  destruct HGamp as [b' [Hb' HCE3]].
+  rewrite Hpb in Hb'. injection Hb' as Hb'. subst b'.
+  assert (Hlookup : forall w0, G w0 <> None -> Gam w0 <> None).
+  { intros w0 Hw0. assert (HGamw0 := Hhc w0). destruct (G w0) as [gw0 | ] eqn:Egw0.
+    - destruct HGamw0 as [bw0 [Hbw0 _]]. rewrite Hbw0. discriminate.
+    - exfalso. exact (Hw0 eq_refl). }
+  destruct HCE3 as [HCE | [y0 [zt [c [args [Hgpfwd [Hcl [Hgzt Hvc]]]]]]]].
+  - destruct HCE as [p0 c0 args0 Hgp0 | p0 Hgp0 | p0 f0 args0 Hgp0
+                    | p0 y0 z0 Hgp0 | p0 z0 Hgp0 | p0 Hgp0 | p0 y0 Hgp0
+                    | p0 y0 z0 c0 args0 Hgp0 Hcl0 Hgz0];
+      simpl in Hw.
+    + apply Hlookup. exact (Hgc p0 (GExpr (ECon c0 args0)) Hgp0 w Hw).
+    + destruct Hw as [Hw | []]. subst w. rewrite Hpb. discriminate.
+    + apply Hlookup. exact (Hgc p0 (GExpr (EFun f0 args0)) Hgp0 w Hw).
+    + apply Hlookup. exact (Hgc p0 (GExpr (EChoice y0 z0)) Hgp0 w Hw).
+    + apply Hlookup. exact (Hgc p0 (GExpr (EVar z0)) Hgp0 w Hw).
+    + destruct Hw.
+    + apply Hlookup. exact (Hgc p0 (GFwd y0) Hgp0 w Hw).
+    + apply Hlookup. exact (Hgc z0 (GExpr (ECon c0 args0)) Hgz0 w Hw).
+  - destruct (VarChase_first_step Gam p c args Hvc) as [Heq | [y [Heq Hgamy]]].
+    + rewrite Hpb in Heq. injection Heq as Heq. subst b. simpl in Hw.
+      apply Hlookup. exact (Hgc zt (GExpr (ECon c args)) Hgzt w Hw).
+    + rewrite Hpb in Heq. injection Heq as Heq. subst b. simpl in Hw.
+      destruct Hw as [Hw | []]. subst w. exact Hgamy.
+Qed.
+
 (* ==================================================================== *)
 (* PIECE 6: a genuine free-variable analysis (bound-set-aware, unlike     *)
 (* vars_of_b) plus program-level well-scopedness, needed to close the     *)
