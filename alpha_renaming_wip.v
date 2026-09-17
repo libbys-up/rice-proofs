@@ -3979,6 +3979,118 @@ Proof.
   apply H. apply (bound_vars_b_bcase_branch x brs c ys bd Hin). right. exact Hy.
 Qed.
 
+(* ==================================================================== *)
+(* Task #2 (THEOREM2_PROCESS_NOTES.md Sec.73): standalone hupd/hupd_list
+   extend lemmas for theorem2's own future restatement (Task #3), so its
+   12-case induction can call these directly rather than re-deriving the
+   same facts inline at every case the way NEval_left_closed_preserved/
+   NEval_left_BrsUniqHeap_preserved/NEval_left_NoShadowHeap_preserved/etc.
+   do for NEval_left's OWN forcing.  BrsUniqHeap/NoShadowHeap/NoCaptureHeap/
+   NoCaptureProgHeap turn out UNCONDITIONAL: every value theorem2 (or
+   NEval_left) ever WRITES into a Nat-heap is BExpr-shaped (a bare
+   expression, never a BLet/BCase -- let_content/NL_Guess's own writes are
+   the only two shapes that ever occur), and BrsUniqB/NoShadowB/NoCaptureB/
+   NoCaptureProgB are all trivially true at any BExpr (no bound variables to
+   violate any of them, matching let_content_BrsUniq/_NoShadow/_NoCapture/
+   NoCaptureProgB_bexpr's own observations above) -- so these extend-by-one/
+   extend-by-list lemmas need no side condition on the WRITTEN value at all.
+   Only GlobalFreshHeap genuinely needs one: the fresh key itself must avoid
+   the program's own bound names (theorem2's G_Let/G_CaseConFree already
+   carry exactly this, via Sec.66's global-freshness strengthening).
+   ClosedHeap needs no lemma here at all -- GraphClosed_implies_ClosedHeap
+   above lets theorem2 carry GraphClosed G instead and derive ClosedHeap Gam
+   at the point of use. *)
+Lemma BrsUniqHeap_hupd_bexpr :
+  forall G z e, BrsUniqHeap G -> BrsUniqHeap (hupd G z (BExpr e)).
+Proof.
+  intros G z e H w b Hwb. destruct (Nat.eq_dec w z) as [Heq | Hneq].
+  - subst w. unfold hupd in Hwb. rewrite Nat.eqb_refl in Hwb. injection Hwb as Hwb. subst b. exact I.
+  - rewrite (hupd_neq G z (BExpr e) w Hneq) in Hwb. exact (H w b Hwb).
+Qed.
+
+Lemma BrsUniqHeap_hupd_list_evar :
+  forall G ws, BrsUniqHeap G -> BrsUniqHeap (hupd_list G ws (map (fun w => BExpr (EVar w)) ws)).
+Proof.
+  intros G ws H w b Hwb. destruct (in_dec Nat.eq_dec w ws) as [Hin | Hnin].
+  - rewrite (hupd_list_map_self ws G w Hin) in Hwb. injection Hwb as Hwb. subst b. exact I.
+  - rewrite (hupd_list_notin ws G (map (fun w0 => BExpr (EVar w0)) ws) w Hnin) in Hwb. exact (H w b Hwb).
+Qed.
+
+Lemma NoShadowHeap_hupd_bexpr :
+  forall G z e, NoShadowHeap G -> NoShadowHeap (hupd G z (BExpr e)).
+Proof.
+  intros G z e H w b Hwb. destruct (Nat.eq_dec w z) as [Heq | Hneq].
+  - subst w. unfold hupd in Hwb. rewrite Nat.eqb_refl in Hwb. injection Hwb as Hwb. subst b.
+    exact (NoShadowB_bexpr e).
+  - rewrite (hupd_neq G z (BExpr e) w Hneq) in Hwb. exact (H w b Hwb).
+Qed.
+
+Lemma NoShadowHeap_hupd_list_evar :
+  forall G ws, NoShadowHeap G -> NoShadowHeap (hupd_list G ws (map (fun w => BExpr (EVar w)) ws)).
+Proof.
+  intros G ws H w b Hwb. destruct (in_dec Nat.eq_dec w ws) as [Hin | Hnin].
+  - rewrite (hupd_list_map_self ws G w Hin) in Hwb. injection Hwb as Hwb. subst b.
+    exact (NoShadowB_bexpr (EVar w)).
+  - rewrite (hupd_list_notin ws G (map (fun w0 => BExpr (EVar w0)) ws) w Hnin) in Hwb. exact (H w b Hwb).
+Qed.
+
+Lemma NoCaptureHeap_hupd_bexpr :
+  forall G z e, NoCaptureHeap G -> NoCaptureHeap (hupd G z (BExpr e)).
+Proof.
+  intros G z e H w b Hwb. destruct (Nat.eq_dec w z) as [Heq | Hneq].
+  - subst w. unfold hupd in Hwb. rewrite Nat.eqb_refl in Hwb. injection Hwb as Hwb. subst b.
+    exact (NoCaptureB_bexpr e).
+  - rewrite (hupd_neq G z (BExpr e) w Hneq) in Hwb. exact (H w b Hwb).
+Qed.
+
+Lemma NoCaptureHeap_hupd_list_evar :
+  forall G ws, NoCaptureHeap G -> NoCaptureHeap (hupd_list G ws (map (fun w => BExpr (EVar w)) ws)).
+Proof.
+  intros G ws H w b Hwb. destruct (in_dec Nat.eq_dec w ws) as [Hin | Hnin].
+  - rewrite (hupd_list_map_self ws G w Hin) in Hwb. injection Hwb as Hwb. subst b.
+    exact (NoCaptureB_bexpr (EVar w)).
+  - rewrite (hupd_list_notin ws G (map (fun w0 => BExpr (EVar w0)) ws) w Hnin) in Hwb. exact (H w b Hwb).
+Qed.
+
+Lemma NoCaptureProgHeap_hupd_bexpr :
+  forall P G z e, NoCaptureProgHeap P G -> NoCaptureProgHeap P (hupd G z (BExpr e)).
+Proof.
+  intros P G z e H w b Hwb. destruct (Nat.eq_dec w z) as [Heq | Hneq].
+  - subst w. unfold hupd in Hwb. rewrite Nat.eqb_refl in Hwb. injection Hwb as Hwb. subst b.
+    exact (NoCaptureProgB_bexpr P e).
+  - rewrite (hupd_neq G z (BExpr e) w Hneq) in Hwb. exact (H w b Hwb).
+Qed.
+
+Lemma NoCaptureProgHeap_hupd_list_evar :
+  forall P G ws, NoCaptureProgHeap P G -> NoCaptureProgHeap P (hupd_list G ws (map (fun w => BExpr (EVar w)) ws)).
+Proof.
+  intros P G ws H w b Hwb. destruct (in_dec Nat.eq_dec w ws) as [Hin | Hnin].
+  - rewrite (hupd_list_map_self ws G w Hin) in Hwb. injection Hwb as Hwb. subst b.
+    exact (NoCaptureProgB_bexpr P (EVar w)).
+  - rewrite (hupd_list_notin ws G (map (fun w0 => BExpr (EVar w0)) ws) w Hnin) in Hwb. exact (H w b Hwb).
+Qed.
+
+Lemma GlobalFreshHeap_hupd_fresh :
+  forall P G z v, GlobalFreshHeap P G -> ~ ProgBoundName P z -> GlobalFreshHeap P (hupd G z v).
+Proof.
+  intros P G z v H Hz x Hx. destruct (Nat.eq_dec x z) as [Heq | Hneq].
+  - subst x. exfalso. exact (Hz Hx).
+  - rewrite (hupd_neq G z v x Hneq). exact (H x Hx).
+Qed.
+
+Lemma GlobalFreshHeap_hupd_list_fresh :
+  forall P G ws vs, GlobalFreshHeap P G -> (forall w, In w ws -> ~ ProgBoundName P w) ->
+  GlobalFreshHeap P (hupd_list G ws vs).
+Proof.
+  intros P G ws. induction ws as [| z ws' IH]; intros vs H Hfresh.
+  - simpl. exact H.
+  - destruct vs as [| v vs']; simpl.
+    + exact H.
+    + apply (GlobalFreshHeap_hupd_fresh P (hupd_list G ws' vs') z v).
+      * exact (IH vs' H (fun w Hw => Hfresh w (or_intror Hw))).
+      * exact (Hfresh z (or_introl eq_refl)).
+Qed.
+
 (* Mirrors NEval_left_closed_preserved case for case; the ClosedHeap/free-
    closedness bookkeeping in each branch is IDENTICAL to that theorem's own
    (duplicated rather than invoked, since each case's own recursive IH call
