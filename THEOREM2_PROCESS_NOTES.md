@@ -5344,3 +5344,70 @@ guard and built on `HeapCorr2` rather than `HeapCorr`).
 fully unstarted), `G_CaseConFree` (1, fully unstarted). `G_Bot`/`G_Free`/`G_Con`/`G_Choice`/`G_Var`/`G_Fun`/
 `G_CaseBot`/`G_CaseCon` remain fully admit-free. All four files rebuild clean from scratch;
 `NEval_left_confluence`/`NEval_left_self_confluence` re-verified zero-axiom.
+
+## 72. Same session, continued: closed `G_CaseConFree` fully, and diagnosed why `G_CaseFun` doesn't shrink
+to a partial construction
+
+**`G_CaseConFree` (`x`'s bare `EFree` rewritten to `ECon c1 ws`, each field freshly `free`) closes with zero
+admits.** Its own recursive step evaluates over an *edge-increasing* rewrite (`EFree`'s 0 edges become
+`ECon c1 ws`'s `ws`-many), the opposite direction from `G_CaseChoice`'s edge-decrease, so
+`GraphReaches_hupd_subset` doesn't apply. Built three new small lemmas in `curry.v` instead:
+`hupd_list_map_const_self` (a freshly-extended key's own value is exactly the constant it was mapped to),
+`GraphReaches_confined_to_ws` (once `xh` and every `w ∈ ws` are leaves pointing only within `{xh} ∪ ws`,
+anything reachable *from* that set stays inside `ws`), and `GraphReaches_hupd_list_free_leaves` (the main
+transport lemma: reachability in the new graph from a point outside `{xh} ∪ ws` either lands in `ws`, lands
+on `xh`, or was already reachability in the *old* graph). `Hreach2Body` for the recursive `IH` call then
+splits on whether a body-variable (after `zipsubst`) lands in `{xh} ∪ ws` (impossible to reach `x`, since
+`x ∉ ws` and `x ≠ xh` are both already known, so `GraphReaches_confined_to_ws` would force `x ∈ ws`,
+contradiction) or genuinely elsewhere (reduces to `Hreach2` on the *old* graph via the transport lemma). Hit
+one bug worth flagging again: `set (G'' := ...) in *` followed by `induction` re-expands `G''` back to its
+raw unfolded form inside the freshly-generated hypothesis, so `unfold G' in H` must come *before* any
+`rewrite` targeting that hypothesis, not after — the reverse order fails with a unification error that looks
+unrelated. HeapCorr/NoVarThunk/WellFoundedFwd/ChainConsistent/AliasConsistent bookkeeping mirrors
+`theorem2`'s own already-Qed'd `G_CaseConFree` case exactly (`HeapCorr_update_free` +
+`HeapCorr_extend_free_list`, etc.); the final `Hplug` wrap uses `NL_VarSelf` (self-loop scrutinee, since a
+bare `EFree`'s Nat-heap witness is `EVar xh` pointing at itself) then `NL_Guess`.
+
+**`G_CaseFun` investigated in depth, then left as ONE clearly-scoped admit rather than a partially-built,
+multi-admit construction.** The overall shape is clear and largely already drafted in `theorem2`'s own
+G_CaseFun case (added earlier this session, itself carrying three "TEMPORARY (Sec.70 in-progress)" admits at
+its own `HforceX0` constructions): call `IH1` (this lemma, recursively) on `Hrec1` to evaluate the call
+itself, split on the seven syntactic shapes the graph result `vx0` can take, then call `IH2` on `Hrec2` for
+the case-continuation over the updated graph. Threaded a new `NoBareFreeOrChoiceProgWF P` hypothesis through
+this lemma's own signature (needed to rule out `vx0 = EFree`/`EChoice`, via the existing, already-Qed'd
+`GEval_result_not_free_or_choice`) — relocated that lemma's whole supporting block (`NoBareFreeOrChoiceB`
+through `GEval_result_not_free_or_choice` itself) to before this lemma's own definition, since it originally
+lived only just above `theorem2`. This one hypothesis addition was mechanical (closed over automatically by
+`IH1`/`IH2` without needing to touch any other case) and required updating exactly one call site
+(`theorem2`'s own invocation, now passing `HNBFC`).
+
+Two deeper obligations surfaced along the way that genuinely don't shrink by building more surrounding
+structure first, unlike every other admit closed this session:
+
+1. **`xh`'s own slot surviving `Hrec1` unchanged** (needed before `HeapCorr_update_from_fun` can even fire)
+   needs "`xh` is never reachable from its own call arguments" — an *acyclicity* fact, not a `GraphClosed`
+   one. `curry.v`'s own Sec.68-69 comment already flags this "creation order" invariant as assumed, not
+   derived, and `theorem2`'s own `G_CaseFun` case admits the identical fact today (`HGraphClosed0`/
+   `HAcyclicX0`).
+2. **`IH2`'s own `Hreach2` premise is about `hupd G1' xh vx0`, not `G0`** — meaning `Hreach2` (this lemma's
+   hypothesis, stated over `G0`) needs transporting not just across the `xh`-rewrite (plausibly an extension
+   of this session's own `GraphReaches_confined_to_ws`-style machinery) but *first* across the entire,
+   arbitrary evolution `G0 → G1'` that evaluating the call's own body performs. That evolution can extend
+   the graph anywhere via nested lets/cases inside the callee, and nothing proven anywhere yet bounds what a
+   location newly reachable in `G1'` could be relative to `G0`. Establishing such a bound is a
+   reachability-*preservation* conclusion that would need to be added to this lemma's own statement and
+   proven for every already-closed case too, not just this one — i.e. it's squarely Task #3-6's own
+   remaining scope (`alpha_renaming_wip.v`'s TaskList), not a narrower, separable fact.
+
+Both gaps are instances of the same missing invariant (`AcyclicGraph`, carried nowhere yet), so admitting
+several narrower-looking facts scattered through a half-built case would not actually reduce how much
+future work remains — it would just relocate the same open piece. Left as a single, thoroughly-commented
+admit instead, pointing at Task #3-6 for the real closure path.
+
+**Status:** `NEval_left_let_chain_to_value` now has 6 total admits: `G_Let` (2, Sec.69, unchanged),
+`G_CaseFwd` (2, Sec.70, unchanged), `G_CaseChoice` (1, Sec.71, unchanged), `G_CaseFun` (1, newly analyzed —
+was a bare unstarted placeholder, now a single documented admit tied directly to Task #3-6).
+`G_CaseConFree` closed this session (was 1 admit, now 0). `G_Bot`/`G_Free`/`G_Con`/`G_Choice`/`G_Var`/
+`G_Fun`/`G_CaseBot`/`G_CaseCon`/`G_CaseConFree` are fully admit-free. All four files rebuild clean from
+scratch; `NEval_left_confluence`/`NEval_left_self_confluence` re-verified zero-axiom
+(`Print Assumptions` → "Closed under the global context" for both).

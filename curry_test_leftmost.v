@@ -7634,6 +7634,137 @@ Proof.
       exact (HAC p q Hpq w Hpw Hwq).
 Qed.
 
+
+(* Mirrors curry.v's own NoBareChoiceB exactly, but ALSO excludes a bare,
+   un-let-bound `free` at a tail position -- matching the same real-syntax
+   fact NoBareChoiceB already captures for `?`: Curry's own surface syntax
+   has no way to write a free variable except via `let x = free in ...`
+   (`let_content`'s own case, and G_Let/NL_Let's shared treatment of it as
+   an opaque heap value, is the ONLY legitimate use), so a restricted-
+   FlatCurry program actually produced by translating real Curry source
+   never has `free` sitting bare at a function body's own tail, a
+   let-continuation, or a case-branch body -- exactly the same restriction
+   NoBareChoiceB already imposes for `?`, just for BOTH shapes at once
+   (both allowed ONLY as a let-binding's own RHS). *)
+Fixpoint NoBareFreeOrChoiceB (b : Blk) : Prop :=
+  match b with
+  | BLet x e k => NoBareFreeOrChoiceB k
+  | BCase x brs =>
+      fold_right (fun p acc => NoBareFreeOrChoiceB (match p with (_, _, bd) => bd end) /\ acc) True brs
+  | BExpr e => match e with EChoice _ _ => False | EFree => False | _ => True end
+  end.
+
+Lemma NoBareFreeOrChoiceB_in :
+  forall brs c ys bd, In (c, ys, bd) brs ->
+  fold_right (fun (p : cname * list var * Blk) acc =>
+                NoBareFreeOrChoiceB (match p with (_, _, bd0) => bd0 end) /\ acc) True brs ->
+  NoBareFreeOrChoiceB bd.
+Proof.
+  induction brs as [| [[c0 ys0] bd0] brs' IH]; intros c ys bd Hin Hnbc.
+  - destruct Hin.
+  - destruct Hin as [Heq | Hin].
+    + injection Heq as Heq1 Heq2 Heq3; subst c0 ys0 bd0. exact (proj1 Hnbc).
+    + exact (IH c ys bd Hin (proj2 Hnbc)).
+Qed.
+
+Lemma NoBareFreeOrChoiceB_rename_bound :
+  forall n b, blk_size b < n -> forall s, NoBareFreeOrChoiceB b -> NoBareFreeOrChoiceB (rename_b s b).
+Proof.
+  induction n as [n IHn] using (well_founded_induction lt_wf).
+  intros b Hsize s Hnbc.
+  destruct b as [x e k | x brs | e].
+  - simpl in *.
+    assert (Hn : blk_size k + 1 < n) by lia.
+    assert (Hm : blk_size k < blk_size k + 1) by lia.
+    exact (IHn (blk_size k + 1) Hn k Hm s Hnbc).
+  - simpl in *.
+    induction brs as [| [[c ys] bd] brs' IHbrs].
+    + exact I.
+    + simpl in Hsize.
+      assert (Hbd : blk_size bd + 1 < n) by lia.
+      assert (Hm : blk_size bd < blk_size bd + 1) by lia.
+      assert (Hrest : S (fold_right (fun p acc => blk_size (match p with (_,_,bd0) => bd0 end) + acc) 0 brs') < n)
+        by lia.
+      split.
+      * exact (IHn (blk_size bd + 1) Hbd bd Hm s (proj1 Hnbc)).
+      * apply IHbrs; [exact Hrest | exact (proj2 Hnbc)].
+  - simpl in *. destruct e; simpl; try exact I; try exact Hnbc; destruct Hnbc.
+Qed.
+
+Lemma NoBareFreeOrChoiceB_rename :
+  forall s b, NoBareFreeOrChoiceB b -> NoBareFreeOrChoiceB (rename_b s b).
+Proof.
+  intros s b H.
+  exact (NoBareFreeOrChoiceB_rename_bound (S (blk_size b)) b (Nat.lt_succ_diag_r _) s H).
+Qed.
+
+Definition NoBareFreeOrChoiceProgWF (P : Prog) : Prop :=
+  forall f ps body, P f = Some (ps, body) -> NoBareFreeOrChoiceB body.
+
+(* The payoff: given the program-wide restriction above, GEval's own result
+   can NEVER be a bare, direct Free or Choice node -- provable by a PLAIN
+   structural induction on GEval itself, no scope restriction needed at all
+   (unlike NEval_left_let_chain_to_value, which has to actually CONSTRUCT a
+   Nat-heap derivation and gets stuck on the six case-tail GEval rules; this
+   lemma only needs to track a SHAPE fact through them, and NoBareFreeOrChoiceB
+   restricted to a BCase doesn't even depend on the scrutinee, so every
+   BCase-to-BCase step -- G_CaseFwd/G_CaseChoice/G_CaseFun's own second
+   premise -- reuses the SAME hypothesis unchanged). *)
+Lemma GEval_result_not_free_or_choice :
+  forall P, NoBareFreeOrChoiceProgWF P ->
+  forall G e G1 vx, GEval P G e G1 vx -> NoBareFreeOrChoiceB e ->
+  vx <> GExpr EFree /\ (forall y z, vx <> GExpr (EChoice y z)).
+Proof.
+  intros P HPWF2 G e G1 vx H.
+  induction H as
+    [ G0
+    | G0
+    | G0 c0 args0
+    | G0 xh yh
+    | G0 xh
+    | G0 G1' f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1' xh eh k v1 HxFresh HnbLet Hrec IH
+    | G0 xh brs Hgx0
+    | G0 xh yh brs G1' v1 Hgx0 Hrec IH
+    | G0 xh f args brs G1' vx0 G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
+    | G0 xh yh zh brs G1' v1 Hgx0 Hrec IH
+    | G0 xh c zs brs ys body G1' v1 Hgx0 HIn Hlen Hrec IH
+    | G0 xh c1 ys1 body1 brs G1' v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
+    ]; intro Hnbfc.
+  - (* G_Bot *) split; [discriminate | intros y z Hcontra; discriminate Hcontra].
+  - (* G_Free *) simpl in Hnbfc. destruct Hnbfc.
+  - (* G_Con *) split; [discriminate | intros y z Hcontra; discriminate Hcontra].
+  - (* G_Choice *) simpl in Hnbfc. destruct Hnbfc.
+  - (* G_Var *) split; [discriminate | intros y z Hcontra; discriminate Hcontra].
+  - (* G_Fun *)
+    assert (Hnbfcbody : NoBareFreeOrChoiceB (rename_b s body))
+      by (apply NoBareFreeOrChoiceB_rename; exact (HPWF2 f ps body HPf)).
+    exact (IH Hnbfcbody).
+  - (* G_Let *) exact (IH Hnbfc).
+  - (* G_CaseBot *) split; [discriminate | intros y z Hcontra; discriminate Hcontra].
+  - (* G_CaseFwd: same brs0, scrutinee-independent, reuse Hnbfc directly *)
+    exact (IH Hnbfc).
+  - (* G_CaseFun: Hrec2's own brs is the SAME brs, reuse Hnbfc directly (Hrec1/IH1 unused) *)
+    exact (IH2 Hnbfc).
+  - (* G_CaseChoice: same brs0, reuse Hnbfc directly *)
+    exact (IH Hnbfc).
+  - (* G_CaseCon *)
+    assert (Hnbfcbrs : NoBareFreeOrChoiceB body)
+      by exact (NoBareFreeOrChoiceB_in brs c ys body HIn Hnbfc).
+    assert (Hnbfcbody : NoBareFreeOrChoiceB (rename_b (zipsubst ys zs) body))
+      by (apply NoBareFreeOrChoiceB_rename; exact Hnbfcbrs).
+    exact (IH Hnbfcbody).
+  - (* G_CaseConFree *)
+    assert (HInhd : In (c1, ys1, body1) brs).
+    { destruct brs as [| p brs']; [discriminate Hhd | ].
+      injection Hhd as Hhd. subst p. left. reflexivity. }
+    assert (Hnbfcbrs : NoBareFreeOrChoiceB body1)
+      by exact (NoBareFreeOrChoiceB_in brs c1 ys1 body1 HInhd Hnbfc).
+    assert (Hnbfcbody : NoBareFreeOrChoiceB (rename_b (zipsubst ys1 ws) body1))
+      by (apply NoBareFreeOrChoiceB_rename; exact Hnbfcbrs).
+    exact (IH Hnbfcbody).
+Qed.
+
 (* Generalizes the older, HeapCorr2-based NEval_left_let_chain_to_fwd/_to_con
    (lines ~3696/3775 above) two ways at once: ported to the CURRENT
    HeapCorr/CorrE3, and unified across ALL FIVE possible GEval results
@@ -7651,7 +7782,7 @@ Qed.
    match exactly the scope the older _to_fwd/_to_con already had (see their
    own comments); closing them is a separate, further piece of work. *)
 Lemma NEval_left_let_chain_to_value :
-  forall P, NoAliasLetProgWF P ->
+  forall P, NoAliasLetProgWF P -> NoBareFreeOrChoiceProgWF P ->
   forall G e G1 vx, GEval P G e G1 vx ->
   forall Gam, HeapCorr G Gam -> NoVarThunk G -> NoAliasLetB e ->
     WellFoundedFwd G -> ChainConsistent G Gam -> AliasConsistent G Gam ->
@@ -7664,7 +7795,7 @@ Lemma NEval_left_let_chain_to_value :
     forall Gamk vk, NEval_left P F0 Gam1 (GNode_mirror vx) Gamk vk -> HeapCorr G1 Gamk ->
       exists Gamk', NEval_left P F0 Gam e Gamk' vk /\ HeapCorr G1 Gamk'.
 Proof.
-  intros P HPWF G e G1 vx H.
+  intros P HPWF HNBFC G e G1 vx H.
   induction H as
     [ G0
     | G0
@@ -7913,7 +8044,55 @@ Proof.
          shape unconstrained" disjunct -- a rarer case than the two above,
          not yet worked out; isolated the same way. *)
       admit.
-  - (* G_CaseFun: ditto *)
+  - (* G_CaseFun: by far the deepest remaining case -- deliberately left as
+       ONE isolated admit rather than a partially-built, multi-admit
+       construction, since its core difficulty doesn't shrink no matter how
+       much surrounding structure gets built (see the analysis below).
+
+       The shape of the argument is otherwise clear, and largely already
+       drafted in theorem2's own G_CaseFun case above (which needs
+       NEval_left_let_chain_to_value -- i.e. THIS lemma, recursively -- for
+       its own Hrec1 sub-derivation, then its own IH2 for Hrec2): apply IH1
+       to Hrec1 at x itself (Hreach2Args below, built the same way
+       G_CaseCon/G_CaseFwd/G_Fun build their own analogous facts, closes
+       this cleanly -- no admit needed for THIS part), split on vx0's seven
+       syntactic shapes (Var/Fun impossible via GEval_never_var_or_fun; Bot
+       forces v1=Bot, contradicting a Con result; Free/Choice need
+       NoBareFreeOrChoiceProgWF, now threaded through above specifically for
+       this), and for the two live shapes (Con, Fwd y0') update xh's own
+       slot via HeapCorr_update_from_fun (already Qed'd) before applying IH2.
+
+       Two genuinely new obligations block finishing this, neither of which
+       shrinks by building more of the surrounding case first:
+
+       1. xh's OWN slot surviving Hrec1 (G1' xh = G0 xh, needed before
+          HeapCorr_update_from_fun can even apply) requires "xh is never
+          reachable from its own arguments" -- an acyclicity fact, not a
+          GraphClosed one. This lemma only carries GraphClosed, not
+          AcyclicGraph (curry.v's own Sec.68-69 comment already flags this
+          as an assumed-not-derived invariant); theorem2's own G_CaseFun
+          case admits the identical fact (HGraphClosed0/HAcyclicX0 there).
+
+       2. IH2's own Hreach2 premise needs facts about (hupd G1' xh vx0), not
+          G0 -- meaning Hreach2 (this lemma's own hypothesis, stated about
+          G0) has to be transported not just across the xh-rewrite (a task
+          the new GraphReaches_confined_to_ws/GraphReaches_hupd_list_free_
+          leaves-style machinery could plausibly extend to) but FIRST across
+          the entire, arbitrary evolution G0 -> G1' that evaluating the
+          call's own body performs -- an arbitrary GEval sub-derivation that
+          can extend the graph anywhere via nested lets/cases. Nothing
+          currently proven bounds what G1' can newly reach from a given
+          location relative to G0; establishing that bound is exactly
+          Task #3-6's own remaining scope (a reachability-preservation
+          conclusion would need to be added to THIS lemma's own statement,
+          proven for every already-closed case too, not just this one).
+
+       Both gaps are instances of the same missing "creation order" /
+       acyclicity invariant theorem2 itself hasn't threaded through its main
+       induction yet -- closing them here first would just relocate, not
+       reduce, that work. Deferring to when AcyclicGraph is carried as a
+       real invariant (Task #3-6) rather than admitting three or four
+       separate narrower facts that all reduce to the same open piece. *)
     admit.
   - (* G_CaseChoice: xh's own content is a bare EChoice; the graph rewrites it
        to GFwd yh and recurses. We introduce the SAME artificial Nat-heap
@@ -8292,136 +8471,6 @@ Proof.
       * exact HNE.
     + exact HHCk'.
 Admitted.
-
-(* Mirrors curry.v's own NoBareChoiceB exactly, but ALSO excludes a bare,
-   un-let-bound `free` at a tail position -- matching the same real-syntax
-   fact NoBareChoiceB already captures for `?`: Curry's own surface syntax
-   has no way to write a free variable except via `let x = free in ...`
-   (`let_content`'s own case, and G_Let/NL_Let's shared treatment of it as
-   an opaque heap value, is the ONLY legitimate use), so a restricted-
-   FlatCurry program actually produced by translating real Curry source
-   never has `free` sitting bare at a function body's own tail, a
-   let-continuation, or a case-branch body -- exactly the same restriction
-   NoBareChoiceB already imposes for `?`, just for BOTH shapes at once
-   (both allowed ONLY as a let-binding's own RHS). *)
-Fixpoint NoBareFreeOrChoiceB (b : Blk) : Prop :=
-  match b with
-  | BLet x e k => NoBareFreeOrChoiceB k
-  | BCase x brs =>
-      fold_right (fun p acc => NoBareFreeOrChoiceB (match p with (_, _, bd) => bd end) /\ acc) True brs
-  | BExpr e => match e with EChoice _ _ => False | EFree => False | _ => True end
-  end.
-
-Lemma NoBareFreeOrChoiceB_in :
-  forall brs c ys bd, In (c, ys, bd) brs ->
-  fold_right (fun (p : cname * list var * Blk) acc =>
-                NoBareFreeOrChoiceB (match p with (_, _, bd0) => bd0 end) /\ acc) True brs ->
-  NoBareFreeOrChoiceB bd.
-Proof.
-  induction brs as [| [[c0 ys0] bd0] brs' IH]; intros c ys bd Hin Hnbc.
-  - destruct Hin.
-  - destruct Hin as [Heq | Hin].
-    + injection Heq as Heq1 Heq2 Heq3; subst c0 ys0 bd0. exact (proj1 Hnbc).
-    + exact (IH c ys bd Hin (proj2 Hnbc)).
-Qed.
-
-Lemma NoBareFreeOrChoiceB_rename_bound :
-  forall n b, blk_size b < n -> forall s, NoBareFreeOrChoiceB b -> NoBareFreeOrChoiceB (rename_b s b).
-Proof.
-  induction n as [n IHn] using (well_founded_induction lt_wf).
-  intros b Hsize s Hnbc.
-  destruct b as [x e k | x brs | e].
-  - simpl in *.
-    assert (Hn : blk_size k + 1 < n) by lia.
-    assert (Hm : blk_size k < blk_size k + 1) by lia.
-    exact (IHn (blk_size k + 1) Hn k Hm s Hnbc).
-  - simpl in *.
-    induction brs as [| [[c ys] bd] brs' IHbrs].
-    + exact I.
-    + simpl in Hsize.
-      assert (Hbd : blk_size bd + 1 < n) by lia.
-      assert (Hm : blk_size bd < blk_size bd + 1) by lia.
-      assert (Hrest : S (fold_right (fun p acc => blk_size (match p with (_,_,bd0) => bd0 end) + acc) 0 brs') < n)
-        by lia.
-      split.
-      * exact (IHn (blk_size bd + 1) Hbd bd Hm s (proj1 Hnbc)).
-      * apply IHbrs; [exact Hrest | exact (proj2 Hnbc)].
-  - simpl in *. destruct e; simpl; try exact I; try exact Hnbc; destruct Hnbc.
-Qed.
-
-Lemma NoBareFreeOrChoiceB_rename :
-  forall s b, NoBareFreeOrChoiceB b -> NoBareFreeOrChoiceB (rename_b s b).
-Proof.
-  intros s b H.
-  exact (NoBareFreeOrChoiceB_rename_bound (S (blk_size b)) b (Nat.lt_succ_diag_r _) s H).
-Qed.
-
-Definition NoBareFreeOrChoiceProgWF (P : Prog) : Prop :=
-  forall f ps body, P f = Some (ps, body) -> NoBareFreeOrChoiceB body.
-
-(* The payoff: given the program-wide restriction above, GEval's own result
-   can NEVER be a bare, direct Free or Choice node -- provable by a PLAIN
-   structural induction on GEval itself, no scope restriction needed at all
-   (unlike NEval_left_let_chain_to_value, which has to actually CONSTRUCT a
-   Nat-heap derivation and gets stuck on the six case-tail GEval rules; this
-   lemma only needs to track a SHAPE fact through them, and NoBareFreeOrChoiceB
-   restricted to a BCase doesn't even depend on the scrutinee, so every
-   BCase-to-BCase step -- G_CaseFwd/G_CaseChoice/G_CaseFun's own second
-   premise -- reuses the SAME hypothesis unchanged). *)
-Lemma GEval_result_not_free_or_choice :
-  forall P, NoBareFreeOrChoiceProgWF P ->
-  forall G e G1 vx, GEval P G e G1 vx -> NoBareFreeOrChoiceB e ->
-  vx <> GExpr EFree /\ (forall y z, vx <> GExpr (EChoice y z)).
-Proof.
-  intros P HPWF2 G e G1 vx H.
-  induction H as
-    [ G0
-    | G0
-    | G0 c0 args0
-    | G0 xh yh
-    | G0 xh
-    | G0 G1' f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
-    | G0 G1' xh eh k v1 HxFresh HnbLet Hrec IH
-    | G0 xh brs Hgx0
-    | G0 xh yh brs G1' v1 Hgx0 Hrec IH
-    | G0 xh f args brs G1' vx0 G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
-    | G0 xh yh zh brs G1' v1 Hgx0 Hrec IH
-    | G0 xh c zs brs ys body G1' v1 Hgx0 HIn Hlen Hrec IH
-    | G0 xh c1 ys1 body1 brs G1' v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
-    ]; intro Hnbfc.
-  - (* G_Bot *) split; [discriminate | intros y z Hcontra; discriminate Hcontra].
-  - (* G_Free *) simpl in Hnbfc. destruct Hnbfc.
-  - (* G_Con *) split; [discriminate | intros y z Hcontra; discriminate Hcontra].
-  - (* G_Choice *) simpl in Hnbfc. destruct Hnbfc.
-  - (* G_Var *) split; [discriminate | intros y z Hcontra; discriminate Hcontra].
-  - (* G_Fun *)
-    assert (Hnbfcbody : NoBareFreeOrChoiceB (rename_b s body))
-      by (apply NoBareFreeOrChoiceB_rename; exact (HPWF2 f ps body HPf)).
-    exact (IH Hnbfcbody).
-  - (* G_Let *) exact (IH Hnbfc).
-  - (* G_CaseBot *) split; [discriminate | intros y z Hcontra; discriminate Hcontra].
-  - (* G_CaseFwd: same brs0, scrutinee-independent, reuse Hnbfc directly *)
-    exact (IH Hnbfc).
-  - (* G_CaseFun: Hrec2's own brs is the SAME brs, reuse Hnbfc directly (Hrec1/IH1 unused) *)
-    exact (IH2 Hnbfc).
-  - (* G_CaseChoice: same brs0, reuse Hnbfc directly *)
-    exact (IH Hnbfc).
-  - (* G_CaseCon *)
-    assert (Hnbfcbrs : NoBareFreeOrChoiceB body)
-      by exact (NoBareFreeOrChoiceB_in brs c ys body HIn Hnbfc).
-    assert (Hnbfcbody : NoBareFreeOrChoiceB (rename_b (zipsubst ys zs) body))
-      by (apply NoBareFreeOrChoiceB_rename; exact Hnbfcbrs).
-    exact (IH Hnbfcbody).
-  - (* G_CaseConFree *)
-    assert (HInhd : In (c1, ys1, body1) brs).
-    { destruct brs as [| p brs']; [discriminate Hhd | ].
-      injection Hhd as Hhd. subst p. left. reflexivity. }
-    assert (Hnbfcbrs : NoBareFreeOrChoiceB body1)
-      by exact (NoBareFreeOrChoiceB_in brs c1 ys1 body1 HInhd Hnbfc).
-    assert (Hnbfcbody : NoBareFreeOrChoiceB (rename_b (zipsubst ys1 ws) body1))
-      by (apply NoBareFreeOrChoiceB_rename; exact Hnbfcbrs).
-    exact (IH Hnbfcbody).
-Qed.
 
 Theorem theorem2 :
   forall P, NoAliasLetProgWF P -> NoBareFreeOrChoiceProgWF P ->
@@ -8964,7 +9013,7 @@ Proof.
         - intro Heq; subst w. apply HAcyclicX0. exact (GraphReaches_step G0 x0 x0 (GExpr (EFun f0 args0)) Hgx0 Hw).
         - intro Hr. apply HAcyclicX0.
           exact (GraphReaches_trans G0 x0 w x0 (GraphReaches_step G0 x0 w (GExpr (EFun f0 args0)) Hgx0 Hw) Hr). }
-      destruct (NEval_left_let_chain_to_value P HPWF G0 (BExpr (EFun f0 args0)) G1 vx Hrec1
+      destruct (NEval_left_let_chain_to_value P HPWF HNBFC G0 (BExpr (EFun f0 args0)) G1 vx Hrec1
                   Gam HGam HNVT I HWF HCC HAC x0 Hxdom HGraphClosed0 Hxshape0 Hxreach0)
         as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
       assert (Hg1x0 : G1 x0 = Some (GExpr (EFun f0 args0))) by (rewrite Hxeq; exact Hgx0).
