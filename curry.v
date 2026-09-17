@@ -1432,6 +1432,75 @@ Proof.
   - intro Heq; apply Hnin; left; congruence.
 Qed.
 
+Lemma hupd_list_map_const_self :
+  forall {A} (ws : list var) (v : A) (h : heap A) w, In w ws -> hupd_list h ws (map (fun _ => v) ws) w = Some v.
+Proof.
+  induction ws as [| x ws' IH]; intros v h w Hw.
+  - destruct Hw.
+  - simpl. unfold hupd. destruct (Nat.eqb w x) eqn:Heq.
+    + apply Nat.eqb_eq in Heq; subst w; reflexivity.
+    + apply IH. destruct Hw as [Hw | Hw].
+      * exfalso. rewrite Hw in Heq. rewrite Nat.eqb_refl in Heq. discriminate Heq.
+      * exact Hw.
+Qed.
+
+(* A location whose own value's fields are all fresh, EFree-valued leaves
+   (G_CaseConFree/G_CaseGuess's own shared "allocate ws, mark them free"
+   pattern) can only ever reach INTO that same leaf set -- the leaves
+   themselves have no outgoing edges at all (EFree has none), so nothing
+   past the first hop is reachable. *)
+Lemma GraphReaches_confined_to_ws :
+  forall G' x c1 ws, G' x = Some (GExpr (ECon c1 ws)) -> (forall w, In w ws -> G' w = Some (GExpr EFree)) ->
+  forall p r, GraphReaches G' p r -> (p = x \/ In p ws) -> In r ws.
+Proof.
+  intros G' x c1 ws Hgx Hgws p r H.
+  induction H as [p0 q0 g Hp0 Hq0 | p0 q0 r0 Hpq IHpq Hqr IHqr]; intro Hp.
+  - destruct Hp as [Heq | Hin].
+    + subst p0. rewrite Hgx in Hp0. injection Hp0 as Hp0; subst g. exact Hq0.
+    + rewrite (Hgws p0 Hin) in Hp0. injection Hp0 as Hp0; subst g. simpl in Hq0. destruct Hq0.
+  - exact (IHqr (or_intror (IHpq Hp))).
+Qed.
+
+(* GraphReaches_hupd_subset's own "fresh leaves" analogue for hupd_list:
+   G_CaseConFree rewrites x from EFree (0 edges) to ECon c1 ws (edges =
+   ws), an INCREASE, not a subset -- but every new target is itself a
+   fresh, now-EFree leaf (0 further edges), so nothing reachable through
+   the new edges ever escapes ws. Used to transport Hreach2's own facts
+   (stated over the OLD graph) across this rewrite. *)
+Lemma GraphReaches_hupd_list_free_leaves :
+  forall G x c1 ws, G x = Some (GExpr EFree) -> (forall w, In w ws -> G w = None) ->
+  forall p q, GraphReaches (hupd_list (hupd G x (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws)) p q ->
+  p <> x -> ~ In p ws ->
+  q = x \/ In q ws \/ GraphReaches G p q.
+Proof.
+  intros G x c1 ws Hgx Hgws p q H.
+  assert (Hxnotws : ~ In x ws) by (intro Hin; rewrite (Hgws x Hin) in Hgx; discriminate Hgx).
+  set (G' := hupd_list (hupd G x (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws)) in H.
+  assert (Hgx' : G' x = Some (GExpr (ECon c1 ws))).
+  { unfold G'. rewrite (hupd_list_notin ws (map (fun _ => GExpr EFree) ws) (hupd G x (GExpr (ECon c1 ws))) x Hxnotws).
+    unfold hupd; rewrite Nat.eqb_refl; reflexivity. }
+  assert (Hgws' : forall w, In w ws -> G' w = Some (GExpr EFree)).
+  { intros w Hw. unfold G'. exact (hupd_list_map_const_self ws (GExpr EFree) (hupd G x (GExpr (ECon c1 ws))) w Hw). }
+  induction H as [p0 q0 g Hp0 Hq0 | p0 q0 r0 Hpq IHpq Hqr IHqr]; intros Hpx Hpws.
+  - unfold G' in Hp0.
+    rewrite (hupd_list_notin ws (map (fun _ => GExpr EFree) ws) (hupd G x (GExpr (ECon c1 ws))) p0 Hpws) in Hp0.
+    rewrite (hupd_neq G x (GExpr (ECon c1 ws)) p0 Hpx) in Hp0.
+    destruct (Nat.eq_dec q0 x) as [Heqx | Hneqx]; [left; exact Heqx | ].
+    destruct (in_dec Nat.eq_dec q0 ws) as [Hinws | Hninws]; [right; left; exact Hinws | ].
+    right; right. exact (GraphReaches_step G p0 q0 g Hp0 Hq0).
+  - destruct (IHpq Hpx Hpws) as [Heqm | [Hinm | HGm]].
+    + subst q0. right; left. exact (GraphReaches_confined_to_ws G' x c1 ws Hgx' Hgws' x r0 Hqr (or_introl eq_refl)).
+    + right; left. exact (GraphReaches_confined_to_ws G' x c1 ws Hgx' Hgws' q0 r0 Hqr (or_intror Hinm)).
+    + destruct (Nat.eq_dec q0 x) as [Heqm | Hnem].
+      * subst q0. right; left. exact (GraphReaches_confined_to_ws G' x c1 ws Hgx' Hgws' x r0 Hqr (or_introl eq_refl)).
+      * destruct (in_dec Nat.eq_dec q0 ws) as [Hmws | Hmws].
+        -- right; left. exact (GraphReaches_confined_to_ws G' x c1 ws Hgx' Hgws' q0 r0 Hqr (or_intror Hmws)).
+        -- destruct (IHqr Hnem Hmws) as [Heq2 | [Hin2 | HG2]].
+           ++ left; exact Heq2.
+           ++ right; left; exact Hin2.
+           ++ right; right; exact (GraphReaches_trans G p0 q0 r0 HGm HG2).
+Qed.
+
 (* Pulling a SINGLE update at a location outside the list `xs` out to      *)
 (* either side of a `hupd_list` over `xs` gives the same heap.  Needed to  *)
 (* re-order "install x's shortcut memo" against "narrow the fresh guess    *)
