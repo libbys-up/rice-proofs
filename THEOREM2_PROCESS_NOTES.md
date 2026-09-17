@@ -5411,3 +5411,54 @@ was a bare unstarted placeholder, now a single documented admit tied directly to
 `G_Fun`/`G_CaseBot`/`G_CaseCon`/`G_CaseConFree` are fully admit-free. All four files rebuild clean from
 scratch; `NEval_left_confluence`/`NEval_left_self_confluence` re-verified zero-axiom
 (`Print Assumptions` → "Closed under the global context" for both).
+
+## 73. Same session, continued: started Task #2/#3 (threading `NEval_left_self_confluence`'s own hypothesis
+set into `theorem2`) — one key bridge lemma plus the mechanical extend lemmas, both fully Qed'd
+
+**Context:** `theorem2`'s own remaining admit (`G_CaseFun`'s second, `ContractLoc`-matching conjunct) needs
+`NEval_left_self_confluence` to reconcile two independently-chosen `NEval_left` derivations of the same
+function-call body (one from `theorem2`'s own first-conjunct construction via
+`NEval_left_let_chain_to_value`, one from inverting the second conjunct's own scrutinee-force). That
+corollary carries eleven of its own hypotheses (`FunBodyWellScoped`, `ProgBrsUniqWF`, `ProgNoShadowWF`,
+`ProgNoCaptureWF`, `ClosedHeap`, `BrsUniqHeap`, `NoShadowHeap`, `NoCaptureHeap`, `GlobalFreshHeap`,
+`NoCaptureProgHeap`, `HeapBExpr`, plus `e`-level `BrsUniqB`/`NoShadowB`/`NoCaptureB`/`NoCaptureProgB`/
+`NoCaptureFinalB`), none of which `theorem2` currently threads — restating `theorem2` to carry and maintain
+all of them across its own 12-case induction is Task #3, the large remaining piece.
+
+**`GraphClosed_implies_ClosedHeap` (the key leverage point):** rather than threading `ClosedHeap Gam` (the
+Nat-heap invariant `self_confluence` needs) through `theorem2`'s own induction from scratch, built a direct
+bridge from `GraphClosed G` (the graph-side invariant `NEval_left_let_chain_to_value` already carries) via
+`HeapCorr`. Holds pointwise, no induction or acyclicity needed: `HeapCorr`'s own definition already gives
+"`G` location defined implies `Gam` location defined" independently at every location, so it's enough to
+relate a Nat-heap value's own referenced variables back to *some* graph location `GraphClosed` already
+covers. `CorrE`'s eight shapes each satisfy `vars_of_b b = vars_of_gnode (G p)` exactly, have no vars at all
+(`CorrE_Bot`), or self-loop trivially (`CorrE_Free`); `CorrE3`'s achieved-via-`VarChase` disjunct needs one
+more step, factored into a small standalone helper (`VarChase_first_step`) after an inline `destruct Hvc`
+hit a genuine index-unification wrinkle worth remembering: destructing a `VarChase` hypothesis whose
+target-expression index is a *compound* term (not a bare variable) in a context that already has an
+unrelated hypothesis of the same `Gam`/point shape can pick up that unrelated hypothesis's own binder name
+instead of specializing to the compound term — fixed by proving the inversion as its own lemma with a fresh,
+universally-quantified target instead of matching in place. This means `theorem2`'s restatement only needs
+to add `GraphClosed G` as its one new graph-side invariant, mirroring `NEval_left_let_chain_to_value`'s own
+Sec.67-69 threading, and derive `ClosedHeap Gam` at the point of use.
+
+**Ten mechanical extend lemmas, Task #2 complete:** `BrsUniqHeap`/`NoShadowHeap`/`NoCaptureHeap`/
+`NoCaptureProgHeap` each turned out to need a *hupd-by-BExpr* and *hupd\_list-by-EVar-list* variant with NO
+side condition on the written value at all — every value `theorem2` (or `NEval_left`) ever writes into a
+Nat-heap is `BExpr`-shaped (`let_content`'s and `NL_Guess`'s own writes are the only two shapes that occur
+anywhere in the codebase), and each of these four properties is unconditionally true at any bare `BExpr`
+(mirrors `let_content_BrsUniq`/`_NoShadow`/`_NoCapture`/`NoCaptureProgB_bexpr`'s own observations, already in
+the file). `GlobalFreshHeap` gets a genuine pair requiring the new key(s) to avoid the program's own bound
+names — trivial given the `~ProgBoundName` premises `G_Let`/`G_CaseConFree` already carry from Sec.66's own
+global-freshness strengthening. `ClosedHeap` needs no lemma here at all, superseded by the bridge above.
+
+**Status:** Task #2 done. Task #3 (the actual restatement) remains — genuinely the largest piece left:
+`theorem2`'s 700-line, 12-case induction needs `GraphClosed G` plus the eleven `self_confluence` hypotheses
+threaded through every case (most of the per-case work should be short, now that the extend lemmas exist and
+`GraphClosed`'s own threading already has a template in `NEval_left_let_chain_to_value`; the two cases likely
+to need real new argument are `G_Let`, for the same "`e`'s own free vars already graph-defined" fact
+`FunBodyWellScoped` is expected to resolve — see `NEval_left_closed_preserved`'s own `NL_Let` case for the
+exact template — and `G_Fun`/`G_CaseFun`, which need `FunBodyWellScoped` applied to rule the call's own args
+already-defined). Tasks #4-6 (the canonical-witness lemma, the `ContractLoc`-transport-across-`NHeapAlpha`
+lemma, and wiring it all into `G_CaseFun`'s admit) are unstarted and depend on Task #3 landing first. All
+four files rebuild clean from scratch.
