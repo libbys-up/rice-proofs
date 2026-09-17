@@ -5254,3 +5254,61 @@ same `Hreach2`/`GraphReaches` machinery cleanly, per `G_Fun`/`G_CaseCon`'s own p
 admits total: `HGraphClosed0`/`HAcyclicX0` (new, precisely-scoped) plus the pre-existing `G_CaseFun`
 second-conjunct admit (task #6's own target, untouched this pass). All four files rebuild clean from
 scratch; `NEval_left_confluence`/`NEval_left_self_confluence` re-verified zero-axiom.
+
+## 70. Same session, continued: weakened `Hplug`'s conclusion for real (adding a `HeapCorr`-transfer
+clause, not a bare existential), isolated the resulting `theorem2` breakage, and closed most of `G_CaseFwd`
+using the shared alias-transfer machinery the user asked to factor out
+
+**Finished the design from Sec.69's pause.** A bare existential (`exists Gamk', NEval_left ... Gamk' vk`)
+compiled for the lemma itself but broke `theorem2`'s own already-`Qed`'d "vx = ECon" branch, which needs to
+re-derive `HeapCorr G1 Gamk'` downstream and can't from nothing. Fixed by carrying a `HeapCorr`-transfer
+clause through `Hplug` explicitly: `HeapCorr G1 Gamk -> exists Gamk', NEval_left ... Gamk' vk /\ HeapCorr G1
+Gamk'` — mirroring `HeapCorr_fwd_transfer_fwdhere_con`'s own conclusion shape exactly, and letting the
+caller re-derive `HeapCorr` for whatever heap it actually gets back. `G_Fun`/`G_Let`/`G_CaseCon` all adapt
+trivially (thread the extra hypothesis and conjunct straight through, since none of them ever produce a
+`Gamk'` different from `Gamk` in the first place).
+
+**A second gap surfaced immediately: the guard list `F0`.** Wrapping a force of `yh` into a force of `xh`
+(`G_CaseFwd`'s whole point) needs `NL_VarExp`, which requires `~In xh F0` — not given for an arbitrary,
+caller-supplied `F0`. Added `(forall w, In w F0 -> w = x)` as a further `Hplug` premise: `theorem2`'s own
+call sites only ever supply `F0 ∈ {nil, [x]}` in practice, so this is exactly true there, and combined with
+`Hreach2` (`xh <> x`, already established since `xh` is part of `e`'s own syntax) it gives `~In xh F0`
+directly. Threaded the same way as the `HeapCorr` clause.
+
+**`theorem2`'s own 3 broken call sites (the "vx=ECon" branch and both `HforceX0` constructions in the
+"vx=GFwd y0'" branch) were isolated as clearly-labeled temporary admits** rather than fixed immediately,
+per the user's explicit request to finish the lemma's own 6 missing cases first — `theorem2`'s own
+integration is deliberately deferred, not forgotten.
+
+**Built two new, reusable generalizations** (mirroring this file's own established `_weaken_force_y` →
+`_weaken_force_y_F` pattern): `NEval_left_alias_persists_through_force_F` and confirmed
+`NEval_left_alias_or_con_persists`/`NEval_left_shortcut_alias` were *already* `F`-general (no new lemma
+needed there) — these three, together, are exactly the "shared machinery" the user asked about, and are
+now reused directly rather than re-derived per case.
+
+**Closed `G_CaseFwd`'s two common sub-cases in full**, mirroring `theorem2`'s own `G_CaseFwd` case structure
+(clean alias vs. already-achieved, via `CorrE_forced_shape`'s 7th/8th disjuncts) but generalized to an
+arbitrary result `vk` instead of a fixed `Con` target:
+- **Clean alias + Select-shape**: `NEval_left_shortcut_alias` builds the wrapped branch-body derivation;
+  `NEval_left_alias_weaken_force_y_F` + `NL_VarExp` build the wrapped scrutinee-force; the `HeapCorr`
+  transfer reuses the exact `VarChase`/`HeapCorr_con_to_contractloc`/`HeapCorr_update_achieved` chain
+  `HeapCorr_fwd_transfer_fwdhere_con` already uses internally.
+- **Already-achieved + Select-shape**: `ChainConsistent` forces `yh`'s own slot to the same achieved value,
+  so `yh`'s own scrutinee-force is the trivial `NL_VarCons` case with `Gmid = Gam` — no transport needed at
+  all, `xh` forces directly via `NL_VarCons` too.
+
+**Two sub-cases remain admitted, isolated and named:**
+- **Clean alias + Guess-shape** (`yh`'s own force reaches a free-variable self-loop, not a `Con`): needs a
+  graph-level `ContractLoc` fact ("`yh`'s own forward chain terminates at the guessed `x'`") this lemma has
+  no way to derive — `theorem2`'s own analogous branch gets it from its *second* (`ContractLoc`-matching)
+  conjunct, which this lemma has no counterpart of at all.
+- **`CorrE3`'s own third disjunct** ("`xh` already achieves via a `VarChase`, `Gam xh`'s own immediate shape
+  left unconstrained") — a rarer shape than the two handled, not yet worked out.
+
+**Status:** `NEval_left_let_chain_to_value` admit count: `G_Bot`/`G_Free`/`G_Con`/`G_Choice`/`G_Var`/
+`G_Fun`/`G_CaseBot`/`G_CaseCon` fully admit-free; `G_Let` has its 2 pre-existing isolated admits (Sec.69,
+unchanged); `G_CaseFwd` now has exactly 2 isolated admits (down from being entirely unstarted);
+`G_CaseFun`/`G_CaseChoice`/`G_CaseConFree` still fully unstarted. `theorem2` has 3 new temporary admits at
+its own (previously-`Qed`'d) `G_CaseFun` call sites, explicitly deferred per the user's own prioritization.
+All four files rebuild clean from scratch; `NEval_left_confluence`/`NEval_left_self_confluence` re-verified
+zero-axiom.

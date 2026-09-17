@@ -1577,6 +1577,33 @@ Proof.
     rewrite (hupd_neq G1 y v x Hxy). exact HG1x.
 Qed.
 
+(* Generalization of NEval_left_alias_persists_through_force from a nil
+   starting guard to an ARBITRARY starting guard F0 -- same reason as
+   NEval_left_alias_weaken_force_y_F's own generalization: needed so this
+   works while forcing y from underneath a guard already carrying other
+   in-progress locations, not just from a completely empty guard. *)
+Lemma NEval_left_alias_persists_through_force_F :
+  forall P x y F0, x <> y ->
+  forall Gam Gmid v, NEval_left P F0 Gam (BExpr (EVar y)) Gmid v ->
+  Gam x = Some (BExpr (EVar y)) ->
+  Gmid x = Some (BExpr (EVar y)).
+Proof.
+  intros P x y F0 Hxy Gam Gmid v H Hgx.
+  destruct (NEval_left_evar_shape P F0 Gam y Gmid v H) as
+    [ [Hcase1 [HeqG _]]
+    | [ [Hcase2 [HeqG _]]
+      | [ [Hcase3 [HeqG _]]
+        | [_ [e0 [G1 [Hz [Hne1 [Hne2 [Hne3 [Hrec HeqG]]]]]]]] ] ] ].
+  - subst Gmid. exact Hgx.
+  - subst Gmid. exact Hgx.
+  - subst Gmid. rewrite (hupd_neq Gam y (BExpr (EVar y)) x Hxy). exact Hgx.
+  - subst Gmid.
+    assert (HG1x : G1 x = Some (BExpr (EVar y)))
+      by (exact (proj1 (NEval_left_alias_frozen P x y Hxy e0 Hne1 Hne2 Hne3 (y :: F0)
+                   Gam e0 G1 v Hrec (or_introl eq_refl) Hgx Hz))).
+    rewrite (hupd_neq G1 y v x Hxy). exact HG1x.
+Qed.
+
 Lemma HeapCorr2_pointwise :
   forall G Gam Gam', HeapCorr2 G Gam -> (forall w, Gam' w = Gam w) -> HeapCorr2 G Gam'.
 Proof.
@@ -7633,7 +7660,9 @@ Lemma NEval_left_let_chain_to_value :
   (forall w, In w (vars_of_b e) -> w <> x /\ ~ GraphReaches G w x) ->
   G1 x = G x /\ NoVarThunk G1 /\ WellFoundedFwd G1 /\
   exists Gam1, HeapCorr G1 Gam1 /\ ChainConsistent G1 Gam1 /\ AliasConsistent G1 Gam1 /\ Gam1 x = Gam x /\
-    forall F0 Gamk vk, NEval_left P F0 Gam1 (GNode_mirror vx) Gamk vk -> NEval_left P F0 Gam e Gamk vk.
+    forall F0, (forall w, In w F0 -> w = x) ->
+    forall Gamk vk, NEval_left P F0 Gam1 (GNode_mirror vx) Gamk vk -> HeapCorr G1 Gamk ->
+      exists Gamk', NEval_left P F0 Gam e Gamk' vk /\ HeapCorr G1 Gamk'.
 Proof.
   intros P HPWF G e G1 vx H.
   induction H as
@@ -7654,23 +7683,23 @@ Proof.
   - (* G_Bot *)
     split; [reflexivity | split; [exact HNVT | split; [exact HWF |
       exists Gam; split; [exact HGam | split; [exact HCC | split; [exact HAC | split; [reflexivity |
-        intros F0 Gamk vk H0; exact H0]]]]]]].
+        intros F0 HF0 Gamk vk H0 HHCk; exists Gamk; split; [exact H0 | exact HHCk]]]]]]]].
   - (* G_Free *)
     split; [reflexivity | split; [exact HNVT | split; [exact HWF |
       exists Gam; split; [exact HGam | split; [exact HCC | split; [exact HAC | split; [reflexivity |
-        intros F0 Gamk vk H0; exact H0]]]]]]].
+        intros F0 HF0 Gamk vk H0 HHCk; exists Gamk; split; [exact H0 | exact HHCk]]]]]]]].
   - (* G_Con *)
     split; [reflexivity | split; [exact HNVT | split; [exact HWF |
       exists Gam; split; [exact HGam | split; [exact HCC | split; [exact HAC | split; [reflexivity |
-        intros F0 Gamk vk H0; exact H0]]]]]]].
+        intros F0 HF0 Gamk vk H0 HHCk; exists Gamk; split; [exact H0 | exact HHCk]]]]]]]].
   - (* G_Choice *)
     split; [reflexivity | split; [exact HNVT | split; [exact HWF |
       exists Gam; split; [exact HGam | split; [exact HCC | split; [exact HAC | split; [reflexivity |
-        intros F0 Gamk vk H0; exact H0]]]]]]].
+        intros F0 HF0 Gamk vk H0 HHCk; exists Gamk; split; [exact H0 | exact HHCk]]]]]]]].
   - (* G_Var *)
     split; [reflexivity | split; [exact HNVT | split; [exact HWF |
       exists Gam; split; [exact HGam | split; [exact HCC | split; [exact HAC | split; [reflexivity |
-        intros F0 Gamk vk H0; exact H0]]]]]]].
+        intros F0 HF0 Gamk vk H0 HHCk; exists Gamk; split; [exact H0 | exact HHCk]]]]]]]].
   - (* G_Fun *)
     assert (HNALbody : NoAliasLetB (rename_b s body))
       by (apply NoAliasLetB_rename; exact (HPWF f ps body HPf)).
@@ -7695,15 +7724,16 @@ Proof.
       as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
     split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
     exists Gam1. split; [exact HHC1 | split; [exact HCC1 | split; [exact HAC1 | split; [exact Hgx1 | ]]]].
-    intros F0 Gamk vk Hforce.
+    intros F0 HF0 Gamk vk Hforce HHCk.
     assert (HfreshGam : forall y0, ~ In y0 ps -> Gam (s y0) = None).
     { intros y0 Hin. specialize (Hfresh y0 Hin).
       assert (HGamsy0 := HGam (s y0)). rewrite Hfresh in HGamsy0. exact HGamsy0. }
     (* NEW GAP (global-freshness strengthening): GEval's G_Fun carries no
        ProgBoundName fact about s, and (Sec.55) the old G(s y)=None fact is
        no longer enough either (need G1(s y)=None). *)
-    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | admit | admit | ].
-    exact (Hplug F0 Gamk vk Hforce).
+    destruct (Hplug F0 HF0 Gamk vk Hforce HHCk) as [Gamk' [HNE HHCk']].
+    exists Gamk'. split; [ | exact HHCk'].
+    eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | admit | admit | exact HNE].
   - (* G_Let *)
     destruct HNAL as [Hne0 HNALk].
     assert (Hxz : x <> xh).
@@ -7745,11 +7775,13 @@ Proof.
     split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
     exists Gam1. split; [exact HHC1 | split; [exact HCC1 | split; [exact HAC1 | split; [ | ]]]].
     + rewrite Hgx1. rewrite (hupd_neq Gam xh (let_content xh eh) x Hxz). reflexivity.
-    + intros F0 Gamk vk Hforce.
+    + intros F0 HF0 Gamk vk Hforce HHCk.
       assert (HGamxh : Gam xh = None)
         by (assert (HGamxh' := HGam xh); rewrite HxFresh in HGamxh'; exact HGamxh').
       (* NEW GAP, same reason: GEval's G_Let carries no ProgBoundName fact. *)
-      apply NL_Let; [exact HGamxh | admit | exact (Hplug F0 Gamk vk Hforce)].
+      destruct (Hplug F0 HF0 Gamk vk Hforce HHCk) as [Gamk' [HNE HHCk']].
+      exists Gamk'. split; [ | exact HHCk'].
+      apply NL_Let; [exact HGamxh | admit | exact HNE].
   - (* G_CaseBot: G unchanged, vx = GExpr EBot -- GNode_mirror of that is
        BExpr EBot, which no NEval_left constructor's own top-level pattern
        ever matches (NL_ValFree/NL_ValCon are BExpr EFree/BExpr(ECon _ _),
@@ -7757,9 +7789,130 @@ Proof.
        shaped), so the replay hypothesis is simply uninhabited. *)
     split; [reflexivity | split; [exact HNVT | split; [exact HWF |
       exists Gam; split; [exact HGam | split; [exact HCC | split; [exact HAC | split; [reflexivity |
-        intros F0 Gamk vk Hbot; inversion Hbot]]]]]]].
-  - (* G_CaseFwd: ditto *)
-    admit.
+        intros F0 HF0 Gamk vk Hbot HHCk; inversion Hbot]]]]]]].
+  - (* G_CaseFwd: xh's own graph content forwards to yh -- via HeapCorr's own
+       CorrE3, Gam's own value at xh is either a "clean" alias EVar yh or
+       already independently achieved to a Con directly; wrap whichever
+       force of yh IH's own Hplug hands back into a force of xh via the
+       shared NEval_left_shortcut_alias machinery, mirroring theorem2's own
+       G_CaseFwd case but for a GENERIC result vk, not a fixed Con target. *)
+    assert (Hxhyh : xh <> yh).
+    { intro Heqxy; subst yh.
+      destruct (GEval_case_gives_ContractLoc P G0 xh brs G1' v1
+                  (G_CaseFwd P G0 xh xh brs G1' v1 Hgx0 Hrec)) as [w Hcl].
+      exact (ContractLoc_no_selfFwd G0 xh w Hcl Hgx0). }
+    assert (HxhIn : In xh (vars_of_b (BCase xh brs))) by (left; reflexivity).
+    destruct (Hreach2 xh HxhIn) as [Hxhx HnrXh].
+    assert (HGRxhyh : GraphReaches G0 xh yh)
+      by exact (GraphReaches_step G0 xh yh (GFwd yh) Hgx0 (or_introl eq_refl)).
+    assert (Hyhx : yh <> x) by (intro Heq; subst yh; exact (HnrXh HGRxhyh)).
+    assert (HnrYh : ~ GraphReaches G0 yh x)
+      by (intro Hr; apply HnrXh; exact (GraphReaches_trans G0 xh yh x HGRxhyh Hr)).
+    assert (Hreach2yh : forall w, In w (vars_of_b (BCase yh brs)) -> w <> x /\ ~ GraphReaches G0 w x).
+    { intros w Hin. simpl in Hin. destruct Hin as [Heq | Hin].
+      - subst w. split; [exact Hyhx | exact HnrYh].
+      - apply Hreach2. simpl. right. exact Hin. }
+    destruct (IH Gam HGam HNVT HNAL HWF HCC HAC x Hxdom HGraphClosed Hxshape Hreach2yh)
+      as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
+    split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
+    exists Gam1. split; [exact HHC1 | split; [exact HCC1 | split; [exact HAC1 | split; [exact Hgx1 | ]]]].
+    intros F0 HF0 Gamk vk Hforce HHCk.
+    destruct (Hplug F0 HF0 Gamk vk Hforce HHCk) as [Gamk1 [HNEyh HHCk1]].
+    assert (HxhF0 : ~ In xh F0) by (intro Hin; exact (Hxhx (HF0 xh Hin))).
+    assert (HyhF0 : ~ In yh F0) by (intro Hin; exact (Hyhx (HF0 yh Hin))).
+    assert (HGamxh := HGam xh). rewrite Hgx0 in HGamxh.
+    destruct HGamxh as [b [Hb HCE3]].
+    destruct HCE3 as [HCE | [yd [zd [cd [argsd [Hgxfwd [Hcld [Hzd HVCd]]]]]]]].
+    + destruct (CorrE_forced_shape G0 xh b HCE) as
+        [ [c0 [args0 [Hg1 Hb1]]]
+        | [ [Hg1 Hb1]
+          | [ [f1 [args1 [Hg1 Hb1]]]
+            | [ [y1 [y2 [Hg1 Hb1]]]
+              | [ [z1 [Hg1 Hb1]]
+                | [ [Hg1 Hb1]
+                  | [ [y1 [Hg1 Hb1]]
+                    | [y1 [z1 [c0 [args0 [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ];
+        rewrite Hgx0 in Hg1; try discriminate Hg1.
+      * (* CorrE_FwdHere: Gam xh = EVar yh exactly, the "clean" alias case *)
+        injection Hg1 as Hg1. subst y1. subst b.
+        destruct (NEval_left_bcase_shape P F0 Gam yh brs Gamk1 vk HNEyh) as
+          [ [c [zs [ys [body [Gmid [Hforceyh [HIn [Hlen Hbranch]]]]]]]]
+          | [x' [Gmid [c1' [ys1 [body1 [ws [Hforceyh [Hhd [Hlenws [HNDws [Hfrws [Hnbws Hbranch]]]]]]]]]]]] ].
+        -- (* Select shape: yh's own force reaches a Con directly *)
+           assert (HGmidxh : Gmid xh = Some (BExpr (EVar yh)))
+             by exact (NEval_left_alias_persists_through_force_F P xh yh F0 Hxhyh Gam Gmid
+                         (BExpr (ECon c zs)) Hforceyh Hb).
+           assert (Hgmidyh : Gmid yh = Some (BExpr (ECon c zs)))
+             by exact (NEval_left_own_slot P F0 Gam yh Gmid (BExpr (ECon c zs)) Hforceyh).
+           destruct (NEval_left_shortcut_alias P xh yh c zs Hxhyh F0 Gmid
+                       (rename_b (zipsubst ys zs) body) Gamk1 vk Hbranch
+                       (or_introl HGmidxh) Hgmidyh) as [Gamk1' [HbranchF Heqf]].
+           assert (HforceX0 : NEval_left P F0 Gam (BExpr (EVar xh)) (hupd Gmid xh (BExpr (ECon c zs)))
+                                 (BExpr (ECon c zs))).
+           { eapply NL_VarExp.
+             - exact HxhF0.
+             - exact Hb.
+             - intros cc argscc Hcontra; discriminate Hcontra.
+             - intro Hcontra; injection Hcontra as Hcontra; exact (Hxhyh (eq_sym Hcontra)).
+             - intro Hcontra; discriminate Hcontra.
+             - exact (NEval_left_alias_weaken_force_y_F P xh yh F0 Hxhyh HxhF0 HyhF0 Gam Gmid
+                        (BExpr (ECon c zs)) Hforceyh Hb). }
+           exists Gamk1'. split.
+           ++ eapply NL_Select; [exact HforceX0 | exact HIn | exact Hlen | exact HbranchF].
+           ++ (* HeapCorr transfer: xh's own achieved shortcut is HeapCorr-safe,
+                 mirroring HeapCorr_fwd_transfer_fwdhere_con's own final clause. *)
+              destruct (NEval_left_alias_or_con_persists P xh yh c zs Hxhyh F0 Gmid
+                          (rename_b (zipsubst ys zs) body) Gamk1 vk Hbranch
+                          (or_introl HGmidxh) Hgmidyh) as [HxAfter Hcy].
+              assert (Hchase_x : VarChase Gamk1 xh (BExpr (ECon c zs))).
+              { destruct HxAfter as [Hxe | Hxe].
+                - eapply VChase_Hop; [exact Hxe | exact (not_eq_sym Hxhyh) |
+                    apply VChase_Here; [exact Hcy | intros w' Hcontra; discriminate Hcontra] ].
+                - apply VChase_Here; [exact Hxe | intros w' Hcontra; discriminate Hcontra]. }
+              assert (HG1'xhfwd : G1' xh = Some (GFwd yh))
+                by exact (GEval_fwd_permanent P G0 (BCase yh brs) G1' v1 Hrec xh yh Hgx0).
+              destruct (HeapCorr_con_to_contractloc G1' Gamk1 yh c zs HHCk1 Hcy) as [ytgt [Hcl1' Hz1']].
+              assert (HHCk1' : HeapCorr G1' (hupd Gamk1 xh (BExpr (ECon c zs))))
+                by exact (HeapCorr_update_achieved G1' Gamk1 xh yh ytgt c zs HHCk1 HG1'xhfwd Hcl1' Hz1' Hchase_x).
+              eapply HeapCorr_pointwise; [exact HHCk1' | exact Heqf].
+        -- (* Guess shape: yh's own force reaches a free-variable self-loop --
+              needs a graph-level ContractLoc fact (yh's own forward chain
+              terminates at the guessed x') this lemma doesn't otherwise
+              track; theorem2's own analogous branch gets it from its OWN
+              second (ContractLoc-matching) conjunct, which this lemma has
+              no counterpart of. Isolated rather than forced. *)
+           admit.
+      * (* CorrE_FwdAchievedCon: Gam xh already achieved directly to a Con --
+           ChainConsistent forces Gam yh to the SAME value, so yh's own
+           scrutinee-force must be the trivial NL_VarCons case, with NO
+           transport needed at all (xh and yh already agree on Gamk1 itself). *)
+        injection Hg1 as Hg1. subst y1. subst b.
+        assert (Hgamyh : Gam yh = Some (BExpr (ECon c0 args0)))
+          by exact (HCC xh yh Hgx0 c0 args0 Hb).
+        destruct (NEval_left_bcase_shape P F0 Gam yh brs Gamk1 vk HNEyh) as
+          [ [c [zs [ys [body [Gmid [Hforceyh [HIn [Hlen Hbranch]]]]]]]]
+          | [x' [Gmid [c1' [ys1 [body1 [ws [Hforceyh [Hhd [Hlenws [HNDws [Hfrws [Hnbws Hbranch]]]]]]]]]]]] ].
+        -- destruct (NEval_left_evar_shape P F0 Gam yh Gmid (BExpr (ECon c zs)) Hforceyh) as
+             [ [Hcase1 [HeqGmid _]]
+             | [ [Hcase2 [_ Heqv]]
+               | [ [Hcase3 [_ Heqv]]
+                 | [_ [e1 [G1x [Hz1' [Hne1 [_ [_ [_ HeqGmid]]]]]]]] ] ] ]; try discriminate Heqv.
+           ++ rewrite Hgamyh in Hcase1. injection Hcase1 as Heqc Heqzs. subst c zs Gmid.
+              exists Gamk1. split.
+              ** eapply NL_Select; [apply NL_VarCons; exact Hb | exact HIn | exact Hlen | exact Hbranch].
+              ** exact HHCk1.
+           ++ exfalso. rewrite Hgamyh in Hz1'. injection Hz1' as Hz1'. exact (Hne1 c0 args0 (eq_sym Hz1')).
+        -- exfalso.
+           destruct (NEval_left_evar_shape P F0 Gam yh Gmid (BExpr (EVar x')) Hforceyh) as
+             [ [Hcase1 _] | [ [Hcase2 _] | [ [Hcase3 _] | [_ [e1 [G1x [Hz1' [Hne1 _]]]]]]]].
+           ++ rewrite Hgamyh in Hcase1; discriminate Hcase1.
+           ++ rewrite Hgamyh in Hcase2; discriminate Hcase2.
+           ++ rewrite Hgamyh in Hcase3; discriminate Hcase3.
+           ++ rewrite Hgamyh in Hz1'. injection Hz1' as Hz1'. exact (Hne1 c0 args0 (eq_sym Hz1')).
+    + (* CorrE3's own "already achieved via a VarChase, b's own immediate
+         shape unconstrained" disjunct -- a rarer case than the two above,
+         not yet worked out; isolated the same way. *)
+      admit.
   - (* G_CaseFun: ditto *)
     admit.
   - (* G_CaseChoice: ditto *)
@@ -7811,8 +7964,10 @@ Proof.
       as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
     split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
     exists Gam1. split; [exact HHC1 | split; [exact HCC1 | split; [exact HAC1 | split; [exact Hgx1 | ]]]].
-    intros F0 Gamk vk Hforce.
-    eapply NL_Select; [apply NL_VarCons; exact Hb | exact HIn | exact Hlen | exact (Hplug F0 Gamk vk Hforce)].
+    intros F0 HF0 Gamk vk Hforce HHCk.
+    destruct (Hplug F0 HF0 Gamk vk Hforce HHCk) as [Gamk' [HNE HHCk']].
+    exists Gamk'. split; [ | exact HHCk'].
+    eapply NL_Select; [apply NL_VarCons; exact Hb | exact HIn | exact Hlen | exact HNE].
   - (* G_CaseConFree: ditto *)
     admit.
 Admitted.
@@ -8543,7 +8698,12 @@ Proof.
              - intros cc argscc Hcontra; discriminate Hcontra.
              - intro Hcontra; discriminate Hcontra.
              - intro Hcontra; discriminate Hcontra.
-             - exact (Hplug (x0 :: nil) Gam1 (BExpr (ECon c1 args1)) (NL_ValCon P (x0 :: nil) Gam1 c1 args1)). }
+             - (* TEMPORARY (Sec.70 in-progress): Hplug's own weakening (Sec.69/70)
+                  means this no longer hands back Gam1 literally -- needs the same
+                  heap-transport argument the GFwd y0' branch below already builds.
+                  Isolated here, admitted, while NEval_left_let_chain_to_value's own
+                  remaining cases are finished first; not yet revisited. *)
+               admit. }
            assert (Hxeqc1 : (hupd Gam1 x0 (BExpr (ECon c1 args1))) x0 = Some (BExpr (ECon c1 args1)))
              by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
            destruct (NEval_left_bcase_shape P nil (hupd Gam1 x0 (BExpr (ECon c1 args1))) x0 brs0 Gam2
@@ -8647,7 +8807,9 @@ Proof.
                 - intros cc argscc Hcontra; discriminate Hcontra.
                 - intro Hcontra; discriminate Hcontra.
                 - intro Hcontra; discriminate Hcontra.
-                - exact (Hplug (x0 :: nil) Gam2' (BExpr (ECon c' zs)) Hforce0'). }
+                - (* TEMPORARY (Sec.70 in-progress): see the isolated admit at the
+                     vx=ECon branch above -- same reason, deferred the same way. *)
+                  admit. }
               (* Gmid ALREADY has x0 memoized to Con c' zs directly (Hforce0's own
                  scrutinee WAS x0 itself, unlike G_CaseChoice's analogous branch,
                  where the scrutinee was y0 and x0 remained a lazy alias needing a
@@ -8711,7 +8873,9 @@ Proof.
                 - intros cc argscc Hcontra; discriminate Hcontra.
                 - intro Hcontra; discriminate Hcontra.
                 - intro Hcontra; discriminate Hcontra.
-                - exact (Hplug (x0 :: nil) Gam2' (BExpr (EVar x')) Hforce0'). }
+                - (* TEMPORARY (Sec.70 in-progress): see the isolated admit at the
+                     vx=ECon branch above -- same reason, deferred the same way. *)
+                  admit. }
               assert (Heqheap : forall w, hupd Gam2' x0 (BExpr (EVar x')) w = Gmid w).
               { intro w. destruct (Nat.eq_dec w x0) as [Heqwx0 | Hnewx0].
                 - subst w. unfold hupd; rewrite Nat.eqb_refl.
