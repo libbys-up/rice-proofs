@@ -5312,3 +5312,35 @@ unchanged); `G_CaseFwd` now has exactly 2 isolated admits (down from being entir
 its own (previously-`Qed`'d) `G_CaseFun` call sites, explicitly deferred per the user's own prioritization.
 All four files rebuild clean from scratch; `NEval_left_confluence`/`NEval_left_self_confluence` re-verified
 zero-axiom.
+
+## 71. Same session, continued: closed `G_CaseChoice`'s Select-shape sub-case, reusing the exact same
+alias-transfer recipe `G_CaseFwd` just established
+
+**Built two more small, general, reusable graph lemmas in `curry.v`**: `GraphReaches_pointwise`
+(reachability only depends on the graph's own pointwise content) and `GraphReaches_hupd_subset` (rewriting
+one key to a value whose own references are a *subset* of its old value's can only shrink what's reachable
+through it) — needed because `G_CaseChoice`'s own recursive step evaluates over `hupd G0 xh (GFwd yh)`, not
+`G0` itself, so `Hreach2`'s own facts (stated over `G0`) need transporting to the new graph before feeding
+`IH`. `GFwd yh`'s own edges (`{yh}`) are a subset of `EChoice yh zh`'s (`{yh, zh}`), so this transports
+cleanly using nothing case-specific.
+
+**`G_CaseChoice`'s own construction mirrors `theorem2`'s own G_CaseChoice case almost exactly**, generalized
+to an arbitrary `vk`: introduce the same artificial Nat-heap alias `hupd Gam xh (BExpr (EVar yh))` to feed
+`IH` (mirroring the graph's own `hupd G0 xh (GFwd yh)` rewrite), then reconcile the alias-based force back
+to the real `Gam` (where `xh` is genuinely `EChoice yh zh`) via `NEval_left_alias_weaken_force_y_F` +
+`NEval_left_frame_guarded` (swapping `xh`'s value in the derivation back to the real one) + `NL_Or` (since
+forcing a bare `EChoice` delegates to forcing its first operand) + the same
+`NEval_left_shortcut_alias`/`NEval_left_pointwise_heap` chain `G_CaseFwd`'s own clean-alias case already
+used for the branch-body reconciliation and `HeapCorr` transfer. No new alias-transfer machinery needed at
+all — exactly the payoff from factoring it out in Sec.70.
+
+**Guess-shape remains admitted**, for the same reason as `G_CaseFwd`'s own Guess-shape gap: needs a
+graph-level `ContractLoc` fact this lemma has no way to derive on its own (`theorem2`'s own analogous branch
+gets it from a different, entangled construction — `NEval_left_choice_as_alias_bcase`, fixed at a `nil`
+guard and built on `HeapCorr2` rather than `HeapCorr`).
+
+**Status:** `NEval_left_let_chain_to_value` now has 7 total admits: `G_Let` (2, Sec.69, unchanged),
+`G_CaseFwd` (2, Sec.70, unchanged), `G_CaseChoice` (1, new — down from fully unstarted), `G_CaseFun` (1,
+fully unstarted), `G_CaseConFree` (1, fully unstarted). `G_Bot`/`G_Free`/`G_Con`/`G_Choice`/`G_Var`/`G_Fun`/
+`G_CaseBot`/`G_CaseCon` remain fully admit-free. All four files rebuild clean from scratch;
+`NEval_left_confluence`/`NEval_left_self_confluence` re-verified zero-axiom.

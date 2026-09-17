@@ -400,6 +400,38 @@ Proof.
   - exact IHpq.
 Qed.
 
+(* GraphReaches only cares about the graph's own POINTWISE content. *)
+Lemma GraphReaches_pointwise :
+  forall G1 G2, (forall w, G1 w = G2 w) -> forall p q, GraphReaches G1 p q -> GraphReaches G2 p q.
+Proof.
+  intros G1 G2 Heq p q H.
+  induction H as [p0 q0 g Hp0 Hq0 | p0 q0 r0 Hpq IHpq Hqr IHqr].
+  - exact (GraphReaches_step G2 p0 q0 g (eq_trans (eq_sym (Heq p0)) Hp0) Hq0).
+  - exact (GraphReaches_trans G2 p0 q0 r0 IHpq IHqr).
+Qed.
+
+(* A restricted (subset-of-edges) rewrite at ONE key can only ever shrink
+   what's reachable through it -- used at G_CaseChoice, where the graph
+   moves from x holding EChoice y z (edges {y,z}) to GFwd y (edges {y}). *)
+Lemma GraphReaches_hupd_subset :
+  forall G z v v', (forall q, In q (vars_of_gnode v') -> In q (vars_of_gnode v)) ->
+  forall p q, GraphReaches (hupd G z v') p q -> GraphReaches (hupd G z v) p q.
+Proof.
+  intros G z v v' Hsub p q H.
+  remember (hupd G z v') as G' eqn:HG'.
+  induction H as [p0 q0 g Hp0 Hq0 | p0 q0 r0 Hpq IHpq Hqr IHqr].
+  - subst G'. unfold hupd in Hp0. destruct (Nat.eqb p0 z) eqn:Heq.
+    + injection Hp0 as Hp0; subst g.
+      apply Nat.eqb_eq in Heq; subst p0.
+      apply (GraphReaches_step (hupd G z v) z q0 v).
+      * unfold hupd; rewrite Nat.eqb_refl; reflexivity.
+      * exact (Hsub q0 Hq0).
+    + apply (GraphReaches_step (hupd G z v) p0 q0 g).
+      * unfold hupd; rewrite Heq. exact Hp0.
+      * exact Hq0.
+  - subst G'. exact (GraphReaches_trans (hupd G z v) p0 q0 r0 IHpq IHqr).
+Qed.
+
 (* NOTE ON THE STACK.  Figures 8-9 thread a backtracking stack S        *)
 (* through the head-normal-form judgement, but *only ever push* onto    *)
 (* it (nothing in Fig. 8/9 inspects or pops S; only the separate        *)
