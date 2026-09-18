@@ -5517,3 +5517,47 @@ once `GraphClosed` is available at the `self_confluence` call site, via Sec.73's
 ones (`BrsUniqB e`/`NoShadowB e`/`NoCaptureB e`/`NoCaptureProgB P e`/`NoCaptureFinalB` for both results — not
 yet attempted). All four files rebuild clean; `NEval_left_confluence`/`NEval_left_self_confluence`
 re-verified zero-axiom.
+
+## 75. Same session, continued: resolved Sec.74's cascade — all six Nat-heap invariants now threaded
+through both `NEval_left_let_chain_to_value` and `theorem2_restated`
+
+**Copied `NEval_left_let_chain_to_value` itself into `alpha_renaming_wip.v`** as
+`NEval_left_let_chain_to_value_restated`, for the identical reason `theorem2_restated` lives there:
+`NHeapTrivialWF`/`NHeapProgWF` are defined in this file, after `curry_test_leftmost.v`, so a lemma living in
+that earlier file can never see them. Threaded both bundles through its hypothesis list AND — the key fix —
+its own conclusion, so `Gam1` (the Nat-heap witness the lemma's own existential produces) now carries them
+too, closing the gap Sec.74 hit (`theorem2_restated`'s own `G_CaseFun` case needing them for `Gam1` with no
+way to get there from outside). Hit the exact same two file-collision classes the `theorem2_restated` copy
+hit before it (`VarChase_first_step` naming, `hupd_list_notin` argument-order ambiguity for `Graph`-typed
+uses) — confirms these are a systematic hazard of copying `GEval`-side code across this dependency boundary,
+worth checking for on any future copy, not one-off bugs.
+
+**Threaded `NHeapTrivialWF Gam`/`NHeapProgWF P Gam` through all 12 cases of both lemmas.** Three shapes of
+argument recurred:
+- **Trivial pass-through** (`Gam` itself unchanged): `G_Fun`, `G_CaseFwd`, `G_CaseCon` in both lemmas.
+- **Genuine extend** (`Gam` rewritten or extended by one `BExpr`-shaped write, or an alias like `BExpr (EVar
+  y)`): `G_Let` (fresh key, `~ProgBoundName` comes from the constructor's own premise directly) and
+  `G_CaseChoice` (an *existing*, non-fresh key gets rewritten — `G_CaseChoice`'s own `GEval` rule carries no
+  freshness premise at all, so `~ProgBoundName P x0` has to be derived a different way: contrapositive on
+  `NHeapProgWF`'s own `GlobalFreshHeap` half, using `Gam x0 <> None` from the location's own known content).
+  The same `GlobalFreshHeap`-contrapositive trick recurs at every location that's rewritten rather than
+  freshly created (`G_CaseFun`'s own `x0`, both `HforceX0` branches).
+- **Two-step extend** (`hupd` then `hupd_list`): `G_CaseConFree` in both lemmas, and `G_CaseFun`'s call into
+  `NEval_left_let_chain_to_value_restated` itself.
+
+**`G_CaseFun` (in `theorem2_restated`) now calls `NEval_left_let_chain_to_value_restated`** instead of the
+original, getting `NHeapTrivialWF Gam1`/`NHeapProgWF P Gam1` directly from its own conclusion, then extending
+them once more (one `hupd`-by-`BExpr`, deriving `~ProgBoundName P x0` via the same `GlobalFreshHeap`
+contrapositive) for each of `IH2`'s two live `vx`-shape branches (achieved `ECon`, achieved `GFwd`).
+
+**Status:** `theorem2_restated` now carries all eleven of `self_confluence`'s own hypotheses: the four
+program-level ones (`FunBodyWellScoped`/`ProgBrsUniqWF`/`ProgNoShadowWF`/`ProgNoCaptureWF`, trivial to
+thread), `GraphClosed` (bridging to `ClosedHeap` via Sec.73's lemma), and now all six Nat-heap ones via the
+two bundles (`NHeapTrivialWF` = `BrsUniqHeap`/`NoShadowHeap`/`NoCaptureHeap`/`HeapBExpr`; `NHeapProgWF` =
+`GlobalFreshHeap`/`NoCaptureProgHeap`). `NEval_left_let_chain_to_value_restated` has 6 admits (the same ones
+its original always had — `G_Let`'s Sec.69 gap ×2, `G_CaseFwd`'s Sec.70 gap ×2, `G_CaseChoice`'s Guess-shape
+gap, `G_CaseFun`'s single documented admit), none newly introduced by this pass. `theorem2_restated` has 5
+(unchanged from Sec.74). Remaining for Task #3: the `e`-level hypotheses (`BrsUniqB e`/`NoShadowB e`/
+`NoCaptureB e`/`NoCaptureProgB P e`/`NoCaptureFinalB` for both results) — the last piece before `self_
+confluence` can actually be invoked (Task #6). All four files rebuild clean; `NEval_left_confluence`/
+`NEval_left_self_confluence` re-verified zero-axiom.
