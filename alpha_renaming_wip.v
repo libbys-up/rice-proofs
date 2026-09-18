@@ -4091,6 +4091,75 @@ Proof.
       * exact (Hfresh z (or_introl eq_refl)).
 Qed.
 
+(* HeapBExpr's own extend lemmas, same style as Task #2's other five --
+   unconditional, since every written value (BExpr-shaped by construction)
+   trivially witnesses HeapBExpr's own existential. *)
+Lemma HeapBExpr_hupd_bexpr :
+  forall G z e, HeapBExpr G -> HeapBExpr (hupd G z (BExpr e)).
+Proof.
+  intros G z e H w b Hwb. destruct (Nat.eq_dec w z) as [Heq | Hneq].
+  - subst w. unfold hupd in Hwb. rewrite Nat.eqb_refl in Hwb. injection Hwb as Hwb. subst b.
+    exists e. reflexivity.
+  - rewrite (hupd_neq G z (BExpr e) w Hneq) in Hwb. exact (H w b Hwb).
+Qed.
+
+Lemma HeapBExpr_hupd_list_evar :
+  forall G ws, HeapBExpr G -> HeapBExpr (hupd_list G ws (map (fun w => BExpr (EVar w)) ws)).
+Proof.
+  intros G ws H w b Hwb. destruct (in_dec Nat.eq_dec w ws) as [Hin | Hnin].
+  - rewrite (hupd_list_map_self ws G w Hin) in Hwb. injection Hwb as Hwb. subst b.
+    exists (EVar w). reflexivity.
+  - rewrite (hupd_list_notin ws G (map (fun w0 => BExpr (EVar w0)) ws) w Hnin) in Hwb. exact (H w b Hwb).
+Qed.
+
+(* Bundles for theorem2_restated's own threading (Task #3): rather than
+   carrying all six of BrsUniqHeap/NoShadowHeap/NoCaptureHeap/HeapBExpr/
+   GlobalFreshHeap/NoCaptureProgHeap as separate hypotheses through all 12
+   cases (identical extend reasoning at every site), group the four that
+   need no program parameter into NHeapTrivialWF and the two that do into
+   NHeapProgWF -- self_confluence's own separate hypotheses are recovered
+   trivially via proj1/proj2 at its one call site. *)
+Definition NHeapTrivialWF (Gam : NHeap) : Prop :=
+  BrsUniqHeap Gam /\ NoShadowHeap Gam /\ NoCaptureHeap Gam /\ HeapBExpr Gam.
+
+Definition NHeapProgWF (P : Prog) (Gam : NHeap) : Prop :=
+  GlobalFreshHeap P Gam /\ NoCaptureProgHeap P Gam.
+
+Lemma NHeapTrivialWF_hupd_bexpr :
+  forall Gam z e, NHeapTrivialWF Gam -> NHeapTrivialWF (hupd Gam z (BExpr e)).
+Proof.
+  intros Gam z e [H1 [H2 [H3 H4]]].
+  split; [exact (BrsUniqHeap_hupd_bexpr Gam z e H1) | ].
+  split; [exact (NoShadowHeap_hupd_bexpr Gam z e H2) | ].
+  split; [exact (NoCaptureHeap_hupd_bexpr Gam z e H3) | exact (HeapBExpr_hupd_bexpr Gam z e H4)].
+Qed.
+
+Lemma NHeapTrivialWF_hupd_list_evar :
+  forall Gam ws, NHeapTrivialWF Gam -> NHeapTrivialWF (hupd_list Gam ws (map (fun w => BExpr (EVar w)) ws)).
+Proof.
+  intros Gam ws [H1 [H2 [H3 H4]]].
+  split; [exact (BrsUniqHeap_hupd_list_evar Gam ws H1) | ].
+  split; [exact (NoShadowHeap_hupd_list_evar Gam ws H2) | ].
+  split; [exact (NoCaptureHeap_hupd_list_evar Gam ws H3) | exact (HeapBExpr_hupd_list_evar Gam ws H4)].
+Qed.
+
+Lemma NHeapProgWF_hupd_fresh :
+  forall P Gam z e, NHeapProgWF P Gam -> ~ ProgBoundName P z -> NHeapProgWF P (hupd Gam z (BExpr e)).
+Proof.
+  intros P Gam z e [H1 H2] Hz.
+  split; [exact (GlobalFreshHeap_hupd_fresh P Gam z (BExpr e) H1 Hz) | exact (NoCaptureProgHeap_hupd_bexpr P Gam z e H2)].
+Qed.
+
+Lemma NHeapProgWF_hupd_list_fresh :
+  forall P Gam ws, NHeapProgWF P Gam -> (forall w, In w ws -> ~ ProgBoundName P w) ->
+  NHeapProgWF P (hupd_list Gam ws (map (fun w => BExpr (EVar w)) ws)).
+Proof.
+  intros P Gam ws [H1 H2] Hfresh.
+  split.
+  - exact (GlobalFreshHeap_hupd_list_fresh P Gam ws (map (fun w => BExpr (EVar w)) ws) H1 Hfresh).
+  - exact (NoCaptureProgHeap_hupd_list_evar P Gam ws H2).
+Qed.
+
 (* Mirrors NEval_left_closed_preserved case for case; the ClosedHeap/free-
    closedness bookkeeping in each branch is IDENTICAL to that theorem's own
    (duplicated rather than invoked, since each case's own recursive IH call
@@ -6607,6 +6676,7 @@ Qed.
 
 Theorem theorem2_restated :
   forall P, NoAliasLetProgWF P -> NoBareFreeOrChoiceProgWF P -> FunBodyWellScoped P ->
+    ProgBrsUniqWF P -> ProgNoShadowWF P -> ProgNoCaptureWF P ->
   forall G e G' v, GEval P G e G' v ->
   forall Gam, HeapCorr G Gam -> NoVarThunk G -> NoAliasLetB e ->
     WellFoundedFwd G -> ChainConsistent G Gam -> AliasConsistent G Gam ->
@@ -6618,7 +6688,7 @@ Theorem theorem2_restated :
      forall F Gmid x', NEval_left P F Gam (BExpr (EVar x)) Gmid (BExpr (EVar x')) ->
      ContractLoc G' x x').
 Proof.
-  intros P HPWF HNBFC HScoped G e G' v H.
+  intros P HPWF HNBFC HScoped HProgBrsUniq HProgNoShadow HProgNoCapture G e G' v H.
   induction H as
     [ G0                                                                (* G_Bot *)
     | G0                                                                (* G_Free *)
