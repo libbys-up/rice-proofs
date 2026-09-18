@@ -5462,3 +5462,58 @@ exact template — and `G_Fun`/`G_CaseFun`, which need `FunBodyWellScoped` appli
 already-defined). Tasks #4-6 (the canonical-witness lemma, the `ContractLoc`-transport-across-`NHeapAlpha`
 lemma, and wiring it all into `G_CaseFun`'s admit) are unstarted and depend on Task #3 landing first. All
 four files rebuild clean from scratch.
+
+## 74. Same session, continued: `theorem2_restated` actually built (Task #3, first half) — `GraphClosed`
+threaded through all 12 cases, `HGraphClosed0`'s admit closed for real
+
+**Copied `theorem2` verbatim into `alpha_renaming_wip.v` as `theorem2_restated`** (the only place that can see
+`ClosedHeap`/`BrsUniqHeap`/`NoShadowHeap`/`NoCaptureHeap`/`GlobalFreshHeap`/`NoCaptureProgHeap`/`HeapBExpr`/
+`NEval_left_self_confluence`, all defined there, after `curry_test_leftmost.v`). The verbatim copy compiled
+almost immediately, after fixing two name collisions the copy exposed: `VarChase_first_step` (this session's
+own Sec.73 helper, renamed to `_con` — `curry_test_leftmost.v` already had a more general lemma of the same
+name the copied proof needs) and `hupd_list_notin` (`alpha_renaming_wip.v`'s own `NHeap`-specific version
+shadows `curry.v`'s polymorphic one for `Graph`-typed uses once both are in scope — fixed via explicit
+`curry.hupd_list_notin` qualification at the one call site that needed the polymorphic version).
+
+**Added `FunBodyWellScoped P` and `GraphClosed G` (plus `forall w, In w (free_vars_b e), G w <> None`) to
+`theorem2_restated`'s own signature and threaded both through all 12 cases**, mirroring
+`NEval_left_closed_preserved`'s own case-by-case structure. Two new standalone lemmas support this:
+`GEval_domain_mono` (GEval only ever grows the graph's domain, mirrors `NEval_left_domain_mono`) and
+`GEval_closed_preserved` (GEval preserves `GraphClosed` given `FunBodyWellScoped` — built case for case,
+adapting `NEval_left_closed_preserved`'s own NL_Fun/NL_Let/NL_Select/NL_Guess logic for G_Fun/G_Let/
+G_CaseCon/G_CaseConFree respectively, plus new short arguments for G_CaseFwd/G_CaseChoice (no `NEval_left`
+analogue, since `GEval` keeps a live `BCase` around after resolving one hop) and G_CaseFun (chains
+`GEval_domain_mono` across `Hrec1` before `Hrec2` can use it — notably an *easier* need than the acyclicity
+gap the same case hit inside `NEval_left_let_chain_to_value`, since `GraphClosed` only cares that the NEW
+value's own references are defined, never what the OLD value at that slot was — so no "does `x0` survive
+`Hrec1`" fact is needed here at all, unlike that lemma's own still-admitted G_CaseFun case).
+
+**This closes `theorem2`'s own `HGraphClosed0` admit for real** (previously admitted since theorem2 carried
+no graph-closedness invariant at all) — `theorem2_restated` now has 5 admits (down from 6): `HAcyclicX0`
+(still genuinely open, unrelated to this fix), the three `Hplug`-shape "TEMPORARY" admits (Sec.70), and the
+actual gap-2 target (`G_CaseFun`'s `ContractLoc`-matching second conjunct). Needed one small generic addition
+to `curry.v`: `hupd_preserves_some_gen` (any heap value type, not just `NHeap`).
+
+**Started on the remaining six `self_confluence` hypotheses (`BrsUniqHeap`/`NoShadowHeap`/`NoCaptureHeap`/
+`HeapBExpr`/`GlobalFreshHeap`/`NoCaptureProgHeap`) and found a genuine cascade.** Built `HeapBExpr`'s own
+extend lemmas (completing all six at the individual level, alongside Sec.73's five), then bundled them into
+two combined invariants — `NHeapTrivialWF` (the four unconditional-on-any-`BExpr`-write ones) and
+`NHeapProgWF` (the two needing a fresh-name premise) — to avoid threading six separate hypotheses through 12
+cases. Wiring the bundles in broke at `G_CaseFun`'s own `IH2` calls: they need `NHeapTrivialWF`/`NHeapProgWF`
+for `Gam1`, the Nat-heap witness `NEval_left_let_chain_to_value`'s own conclusion produces *existentially* —
+but that lemma's conclusion never exposes the actual `NEval_left` derivation that built `Gam1`, so there's no
+way to transport these two bundles onto it from the caller's side. Closing this needs restating
+`NEval_left_let_chain_to_value` itself first, threading the same two bundles through its own 8-case
+induction (the same kind of work Task #1 already did there for `NoShadowHeap`/`NoCaptureHeap` specifically,
+just generalized to all six + bundled). Reverted the wiring (kept the two bundle lemmas, since the next
+session still needs them) to leave `theorem2_restated` compiling cleanly with only `FunBodyWellScoped`/
+`GraphClosed` threaded, rather than mid-cascade.
+
+**Status:** `theorem2_restated` carries `NoAliasLetProgWF`/`NoBareFreeOrChoiceProgWF`/`FunBodyWellScoped`/
+`ProgBrsUniqWF`/`ProgNoShadowWF`/`ProgNoCaptureWF` (program-level, trivial to thread) plus `GraphClosed G`
+(threaded for real, case by case) of `self_confluence`'s eleven hypotheses. Remaining for Task #3: the six
+Nat-heap ones (blocked on restating `NEval_left_let_chain_to_value`, per above), `ClosedHeap` itself (free
+once `GraphClosed` is available at the `self_confluence` call site, via Sec.73's bridge), and the `e`-level
+ones (`BrsUniqB e`/`NoShadowB e`/`NoCaptureB e`/`NoCaptureProgB P e`/`NoCaptureFinalB` for both results — not
+yet attempted). All four files rebuild clean; `NEval_left_confluence`/`NEval_left_self_confluence`
+re-verified zero-axiom.
