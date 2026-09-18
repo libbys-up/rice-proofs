@@ -1990,7 +1990,7 @@ Definition ClosedHeap (G : NHeap) : Prop :=
    achieved location zt) or a single alias hop (VChase_Hop), whose own
    target is Gam-defined by VarChase's own next constructor, no matter how
    deep the chase continues from there. *)
-Lemma VarChase_first_step :
+Lemma VarChase_first_step_con :
   forall Gam p c args, VarChase Gam p (BExpr (ECon c args)) ->
   Gam p = Some (BExpr (ECon c args)) \/ (exists y, Gam p = Some (BExpr (EVar y)) /\ Gam y <> None).
 Proof.
@@ -2026,7 +2026,7 @@ Proof.
     + destruct Hw.
     + apply Hlookup. exact (Hgc p0 (GFwd y0) Hgp0 w Hw).
     + apply Hlookup. exact (Hgc z0 (GExpr (ECon c0 args0)) Hgz0 w Hw).
-  - destruct (VarChase_first_step Gam p c args Hvc) as [Heq | [y [Heq Hgamy]]].
+  - destruct (VarChase_first_step_con Gam p c args Hvc) as [Heq | [y [Heq Hgamy]]].
     + rewrite Hpb in Heq. injection Heq as Heq. subst b. simpl in Hw.
       apply Hlookup. exact (Hgc zt (GExpr (ECon c args)) Hgzt w Hw).
     + rewrite Hpb in Heq. injection Heq as Heq. subst b. simpl in Hw.
@@ -6376,3 +6376,1469 @@ Qed.
    than the live one above. See THEOREM2_PROCESS_NOTES.md Sec.40-42 for
    the full writeup. *)
 
+
+(* GEval's own analogue of NEval_left_domain_mono: the graph only ever
+   grows (hupd/hupd_list add fresh keys or rewrite an existing one to a new
+   value, never remove one), needed below so GraphClosed_preserved's own
+   G_CaseFun case can transport a free-variable-defined fact from G0
+   through Hrec1 to G1. *)
+Lemma GEval_domain_mono :
+  forall P G e G' v, GEval P G e G' v -> forall w, G w <> None -> G' w <> None.
+Proof.
+  intros P G e G' v H.
+  induction H as
+    [ G0
+    | G0
+    | G0 c0 args0
+    | G0 x0 y0
+    | G0 x0
+    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH
+    | G0 x0 brs0 Hgx0
+    | G0 x0 y0 brs0 G1 v1 Hgx0 Hrec IH
+    | G0 x0 f0 args0 brs0 G1 vx G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
+    | G0 x0 y0 z0 brs0 G1 v1 Hgx0 Hrec IH
+    | G0 x0 c zs brs0 ys body G1 v1 Hgx0 HIn Hlen Hrec IH
+    | G0 x0 c1 ys1 body1 brs0 G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
+    ]; intros w Hw.
+  - exact Hw.
+  - exact Hw.
+  - exact Hw.
+  - exact Hw.
+  - exact Hw.
+  - exact (IH w Hw).
+  - exact (IH w (hupd_preserves_some_gen G0 x0 (GExpr e0) w Hw)).
+  - exact Hw.
+  - exact (IH w Hw).
+  - exact (IH2 w (hupd_preserves_some_gen G1 x0 vx w (IH1 w Hw))).
+  - exact (IH w (hupd_preserves_some_gen G0 x0 (GFwd y0) w Hw)).
+  - exact (IH w Hw).
+  - apply IH. destruct (in_dec Nat.eq_dec w ws) as [Hin | Hnin].
+    + rewrite (hupd_list_map_const_self ws (GExpr EFree) (hupd G0 x0 (GExpr (ECon c1 ws))) w Hin).
+      discriminate.
+    + rewrite (curry.hupd_list_notin ws (map (fun _ => GExpr EFree) ws) (hupd G0 x0 (GExpr (ECon c1 ws))) w Hnin).
+      exact (hupd_preserves_some_gen G0 x0 (GExpr (ECon c1 ws)) w Hw).
+Qed.
+
+(* GEval's own analogue of NEval_left_closed_preserved (curry_test_leftmost.v),
+   built standalone (rather than folding GraphClosed into theorem2_restated's
+   own conclusion) so theorem2_restated's own G_CaseFun case can invoke it
+   directly on Hrec1 to get GraphClosed G1 -- mirrors that theorem case for
+   case, adapted for GEval's 12-way induction instead of NEval_left's 11-way
+   one. G_Fun/G_Let are essentially identical to their NL_Fun/NL_Let
+   counterparts (same FunBodyWellScoped/vars_of_e0 argument); G_CaseFwd/
+   G_CaseChoice have no NEval_left analogue (GEval, unlike NEval_left, keeps
+   a live BCase around after resolving one hop) but need only a short
+   "same graph, or a same-or-fewer-edges rewrite" argument; G_CaseCon/
+   G_CaseConFree mirror NL_Select/NL_Guess; G_CaseFun needs GEval_domain_mono
+   to carry the free-variable-defined fact for e = BCase x0 brs0 across
+   Hrec1 before Hrec2 can use it (a completely different, and much easier,
+   need than the acyclicity gap NEval_left_let_chain_to_value's own G_CaseFun
+   case ran into -- GraphClosed only cares that the NEW value's own
+   references are defined, never what the OLD value at that slot was, so no
+   "does x0 survive Hrec1" fact is needed here at all). *)
+Theorem GEval_closed_preserved :
+  forall P, FunBodyWellScoped P ->
+  forall G e G' v, GEval P G e G' v ->
+  GraphClosed G -> (forall w, In w (free_vars_b e) -> G w <> None) ->
+  GraphClosed G' /\ (forall w, In w (vars_of_gnode v) -> G' w <> None).
+Proof.
+  intros P HScoped G e G' v H.
+  induction H as
+    [ G0
+    | G0
+    | G0 c0 args0
+    | G0 x0 y0
+    | G0 x0
+    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH
+    | G0 x0 brs0 Hgx0
+    | G0 x0 y0 brs0 G1 v1 Hgx0 Hrec IH
+    | G0 x0 f0 args0 brs0 G1 vx G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2
+    | G0 x0 y0 z0 brs0 G1 v1 Hgx0 Hrec IH
+    | G0 x0 c zs brs0 ys body G1 v1 Hgx0 HIn Hlen Hrec IH
+    | G0 x0 c1 ys1 body1 brs0 G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
+    ]; intros Hclosed Heclosed.
+  - (* G_Bot *) split; [exact Hclosed | intros w Hw; simpl in Hw; destruct Hw].
+  - (* G_Free *) split; [exact Hclosed | intros w Hw; simpl in Hw; destruct Hw].
+  - (* G_Con *) split; [exact Hclosed | intros w Hw; apply Heclosed; simpl in Hw |- *; exact Hw].
+  - (* G_Choice *) split; [exact Hclosed | intros w Hw; apply Heclosed; simpl in Hw |- *; exact Hw].
+  - (* G_Var *)
+    split; [exact Hclosed | ].
+    intros w Hw. simpl in Hw. destruct Hw as [Hw | []]. subst w.
+    apply Heclosed. simpl. left. reflexivity.
+  - (* G_Fun *)
+    assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b s body)) -> G0 w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset s body w Hw) as [y [Hy Hsy]].
+      assert (Hyps : In y ps) by (exact (HScoped f ps body HPf y Hy)).
+      destruct (In_nth_error ps y Hyps) as [i Hi].
+      assert (Hips : i < length ps) by (apply nth_error_Some; rewrite Hi; discriminate).
+      assert (Hiargs : i < length args) by (rewrite <- Hlen; exact Hips).
+      destruct (nth_error args i) as [a | ] eqn:Ha.
+      - assert (Hsya : s y = a) by (exact (Hmatch i y a Hi Ha)).
+        apply Heclosed. rewrite <- Hsy, Hsya. eapply nth_error_In. exact Ha.
+      - exfalso. assert (Ha' : nth_error args i <> None) by (apply nth_error_Some; exact Hiargs).
+        apply Ha'. exact Ha. }
+    exact (IH Hclosed Hbodyclosed).
+  - (* G_Let *)
+    assert (He0closed : forall w, In w (vars_of_e0 e0) -> G0 w <> None).
+    { intros w Hw. apply Heclosed. simpl. apply in_or_app. left. exact Hw. }
+    assert (Hkclosed : forall w, In w (free_vars_b k) -> hupd G0 x0 (GExpr e0) w <> None).
+    { intros w Hw. destruct (Nat.eq_dec w x0) as [Heq | Hneq].
+      - subst w. unfold hupd. rewrite Nat.eqb_refl. discriminate.
+      - apply hupd_preserves_some_gen. apply Heclosed. simpl. apply in_or_app. right.
+        apply in_in_remove; [exact Hneq | exact Hw]. }
+    assert (HnewGraphClosed : GraphClosed (hupd G0 x0 (GExpr e0))).
+    { intros w g Hwg y Hy. unfold hupd in Hwg.
+      destruct (Nat.eqb w x0) eqn:Heqw.
+      - apply Nat.eqb_eq in Heqw; subst w. injection Hwg as Hwg; subst g.
+        apply hupd_preserves_some_gen. apply He0closed. exact Hy.
+      - apply hupd_preserves_some_gen. apply (Hclosed w g Hwg y Hy). }
+    exact (IH HnewGraphClosed Hkclosed).
+  - (* G_CaseBot *) split; [exact Hclosed | intros w Hw; simpl in Hw; destruct Hw].
+  - (* G_CaseFwd *)
+    assert (Heclosedy0 : forall w, In w (free_vars_b (BCase y0 brs0)) -> G0 w <> None).
+    { intros w Hw. simpl in Hw. destruct Hw as [Hw | Hw].
+      - subst w. exact (Hclosed x0 (GFwd y0) Hgx0 y0 (or_introl eq_refl)).
+      - apply Heclosed. simpl. right. exact Hw. }
+    exact (IH Hclosed Heclosedy0).
+  - (* G_CaseFun *)
+    assert (Hargsclosed : forall w, In w args0 -> G0 w <> None)
+      by exact (Hclosed x0 (GExpr (EFun f0 args0)) Hgx0).
+    destruct (IH1 Hclosed Hargsclosed) as [HGraphClosedG1 Hvxclosed].
+    assert (HnewGraphClosed : GraphClosed (hupd G1 x0 vx)).
+    { intros z g Hzg w Hw. destruct (Nat.eq_dec z x0) as [Heq | Hneq].
+      - subst z. unfold hupd in Hzg. rewrite Nat.eqb_refl in Hzg. injection Hzg as Hzg; subst g.
+        apply hupd_preserves_some_gen. exact (Hvxclosed w Hw).
+      - rewrite (hupd_neq G1 x0 vx z Hneq) in Hzg.
+        apply hupd_preserves_some_gen. exact (HGraphClosedG1 z g Hzg w Hw). }
+    assert (Heclosed2 : forall w, In w (free_vars_b (BCase x0 brs0)) -> (hupd G1 x0 vx) w <> None).
+    { intros w Hw. destruct (Nat.eq_dec w x0) as [Heq | Hneq].
+      - subst w. unfold hupd; rewrite Nat.eqb_refl; discriminate.
+      - apply hupd_preserves_some_gen.
+        exact (GEval_domain_mono P G0 (BExpr (EFun f0 args0)) G1 vx Hrec1 w (Heclosed w Hw)). }
+    exact (IH2 HnewGraphClosed Heclosed2).
+  - (* G_CaseChoice *)
+    assert (HnewGraphClosed : GraphClosed (hupd G0 x0 (GFwd y0))).
+    { intros z g Hzg w Hw. destruct (Nat.eq_dec z x0) as [Heq | Hneq].
+      - subst z. unfold hupd in Hzg. rewrite Nat.eqb_refl in Hzg. injection Hzg as Hzg; subst g.
+        simpl in Hw. destruct Hw as [Hw | []]. subst w.
+        apply hupd_preserves_some_gen. exact (Hclosed x0 (GExpr (EChoice y0 z0)) Hgx0 y0 (or_introl eq_refl)).
+      - rewrite (hupd_neq G0 x0 (GFwd y0) z Hneq) in Hzg.
+        apply hupd_preserves_some_gen. exact (Hclosed z g Hzg w Hw). }
+    assert (Heclosed2 : forall w, In w (free_vars_b (BCase y0 brs0)) -> (hupd G0 x0 (GFwd y0)) w <> None).
+    { intros w Hw. destruct (Nat.eq_dec w x0) as [Heq | Hneq].
+      - subst w. unfold hupd; rewrite Nat.eqb_refl; discriminate.
+      - apply hupd_preserves_some_gen. simpl in Hw. destruct Hw as [Hw | Hw].
+        + subst w. exact (Hclosed x0 (GExpr (EChoice y0 z0)) Hgx0 y0 (or_introl eq_refl)).
+        + apply Heclosed. simpl. right. exact Hw. }
+    exact (IH HnewGraphClosed Heclosed2).
+  - (* G_CaseCon *)
+    assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b (zipsubst ys zs) body)) -> G0 w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset (zipsubst ys zs) body w Hw) as [y [Hy Hsy]].
+      destruct (in_dec Nat.eq_dec y ys) as [Hyin | Hynin].
+      - assert (Hwzs : In w zs) by (rewrite <- Hsy; apply (zipsubst_in ys zs Hlen y Hyin)).
+        exact (Hclosed x0 (GExpr (ECon c zs)) Hgx0 w Hwzs).
+      - assert (Hzid : zipsubst ys zs y = y) by (apply zipsubst_notin; exact Hynin).
+        assert (HinBCase : In y (free_vars_b (BCase x0 brs0))).
+        { apply (free_vars_b_bcase_branch x0 brs0 c ys body HIn).
+          apply remove_all_in_intro; [exact Hy | exact Hynin]. }
+        rewrite <- Hsy, Hzid. exact (Heclosed y HinBCase). }
+    exact (IH Hclosed Hbodyclosed).
+  - (* G_CaseConFree *)
+    assert (Hbr1In : In (c1, ys1, body1) brs0) by (apply (hd_error_in brs0 (c1, ys1, body1) Hhd)).
+    assert (HnewGraphClosed : GraphClosed
+              (hupd_list (hupd G0 x0 (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws))).
+    { intros z g Hzg w Hw. destruct (in_dec Nat.eq_dec z ws) as [Hzws | Hzws].
+      - rewrite (hupd_list_map_const_self ws (GExpr EFree) (hupd G0 x0 (GExpr (ECon c1 ws))) z Hzws) in Hzg.
+        injection Hzg as Hzg; subst g. simpl in Hw. destruct Hw.
+      - rewrite (curry.hupd_list_notin ws (map (fun _ => GExpr EFree) ws) (hupd G0 x0 (GExpr (ECon c1 ws))) z Hzws)
+          in Hzg.
+        destruct (Nat.eq_dec z x0) as [Heqz | Hneqz].
+        + subst z. unfold hupd in Hzg. rewrite Nat.eqb_refl in Hzg. injection Hzg as Hzg; subst g.
+          destruct (in_dec Nat.eq_dec w ws) as [Hwws | Hwnws].
+          * rewrite (hupd_list_map_const_self ws (GExpr EFree) (hupd G0 x0 (GExpr (ECon c1 ws))) w Hwws).
+            discriminate.
+          * exfalso. specialize (Hfresh w). simpl in Hw.
+            (* Hw : In w ws (vars_of_gnode (GExpr (ECon c1 ws)) = ws), contradicts Hwnws *)
+            exact (Hwnws Hw).
+        + rewrite (hupd_neq G0 x0 (GExpr (ECon c1 ws)) z Hneqz) in Hzg.
+          destruct (in_dec Nat.eq_dec w ws) as [Hwws | Hwnws].
+          * rewrite (hupd_list_map_const_self ws (GExpr EFree) (hupd G0 x0 (GExpr (ECon c1 ws))) w Hwws).
+            discriminate.
+          * rewrite (curry.hupd_list_notin ws (map (fun _ => GExpr EFree) ws) (hupd G0 x0 (GExpr (ECon c1 ws))) w Hwnws).
+            destruct (Nat.eq_dec w x0) as [Heqw | Hneqw].
+            -- subst w. unfold hupd; rewrite Nat.eqb_refl; discriminate.
+            -- rewrite (hupd_neq G0 x0 (GExpr (ECon c1 ws)) w Hneqw). exact (Hclosed z g Hzg w Hw). }
+    assert (Hbodyclosed :
+      forall w, In w (free_vars_b (rename_b (zipsubst ys1 ws) body1)) ->
+      hupd_list (hupd G0 x0 (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws) w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset (zipsubst ys1 ws) body1 w Hw) as [y [Hy Hsy]].
+      destruct (in_dec Nat.eq_dec y ys1) as [Hyin | Hynin].
+      - assert (Hwws : In w ws) by (rewrite <- Hsy; apply (zipsubst_in ys1 ws (eq_sym Hlen) y Hyin)).
+        rewrite (hupd_list_map_const_self ws (GExpr EFree) (hupd G0 x0 (GExpr (ECon c1 ws))) w Hwws). discriminate.
+      - assert (Hzid : zipsubst ys1 ws y = y) by (apply zipsubst_notin; exact Hynin).
+        assert (HinBCase : In y (free_vars_b (BCase x0 brs0))).
+        { apply (free_vars_b_bcase_branch x0 brs0 c1 ys1 body1 Hbr1In).
+          apply remove_all_in_intro; [exact Hy | exact Hynin]. }
+        assert (HG0y : G0 y <> None) by exact (Heclosed y HinBCase).
+        destruct (in_dec Nat.eq_dec y ws) as [Hyws | Hynws].
+        + exfalso. apply HG0y. exact (Hfresh y Hyws).
+        + rewrite <- Hsy, Hzid.
+          rewrite (curry.hupd_list_notin ws (map (fun _ => GExpr EFree) ws) (hupd G0 x0 (GExpr (ECon c1 ws))) y Hynws).
+          exact (hupd_preserves_some_gen G0 x0 (GExpr (ECon c1 ws)) y HG0y). }
+    exact (IH HnewGraphClosed Hbodyclosed).
+Qed.
+
+(* ==================================================================== *)
+(* Task #3 (THEOREM2_PROCESS_NOTES.md Sec.74): theorem2, restated here      *)
+(* (not in curry_test_leftmost.v, which can't see ClosedHeap/BrsUniqHeap/    *)
+(* NoShadowHeap/NoCaptureHeap/GlobalFreshHeap/NoCaptureProgHeap/HeapBExpr/    *)
+(* NEval_left_self_confluence -- all defined here, AFTER it) to additionally  *)
+(* carry GraphClosed G plus every hypothesis NEval_left_self_confluence needs, *)
+(* so that hypothesis set is available wherever G_CaseFun's own second          *)
+(* conjunct eventually needs to invoke it (Task #6).  Copied verbatim from       *)
+(* curry_test_leftmost.v's own theorem2 as a starting point, then threaded        *)
+(* incrementally case by case -- see the case-by-case comments below for what     *)
+(* changed at each one.  Retains theorem2's own two pre-existing admits           *)
+(* (NL_Fun's Gam1(s y)=None gap, Sec.66; G_CaseFun's ContractLoc-matching          *)
+(* conjunct, the actual gap-2 target) until Task #4-6 close the second one.        *)
+(* ==================================================================== *)
+
+Theorem theorem2_restated :
+  forall P, NoAliasLetProgWF P -> NoBareFreeOrChoiceProgWF P -> FunBodyWellScoped P ->
+  forall G e G' v, GEval P G e G' v ->
+  forall Gam, HeapCorr G Gam -> NoVarThunk G -> NoAliasLetB e ->
+    WellFoundedFwd G -> ChainConsistent G Gam -> AliasConsistent G Gam ->
+  GraphClosed G -> (forall w, In w (free_vars_b e) -> G w <> None) ->
+  (forall c args, CorrV G' v (BExpr (ECon c args)) ->
+     exists Gam', NEval_left P nil Gam e Gam' (BExpr (ECon c args)) /\ HeapCorr G' Gam')
+  /\
+  (forall x brs, e = BCase x brs ->
+     forall F Gmid x', NEval_left P F Gam (BExpr (EVar x)) Gmid (BExpr (EVar x')) ->
+     ContractLoc G' x x').
+Proof.
+  intros P HPWF HNBFC HScoped G e G' v H.
+  induction H as
+    [ G0                                                                (* G_Bot *)
+    | G0                                                                (* G_Free *)
+    | G0 c0 args0                                                       (* G_Con *)
+    | G0 x0 y0                                                          (* G_Choice *)
+    | G0 x0                                                             (* G_Var *)
+    | G0 G1 f args ps body v1 s HPf Hlen Hinj Hmatch Hfresh HnbFun Hrec IH     (* G_Fun *)
+    | G0 G1 x0 e0 k v1 HxFresh HnbLet Hrec IH                                  (* G_Let *)
+    | G0 x0 brs0 Hgx0                                                   (* G_CaseBot *)
+    | G0 x0 y0 brs0 G1 v1 Hgx0 Hrec IH                                  (* G_CaseFwd *)
+    | G0 x0 f0 args0 brs0 G1 vx G2 v1 Hgx0 Hrec1 IH1 Hrec2 IH2          (* G_CaseFun *)
+    | G0 x0 y0 z0 brs0 G1 v1 Hgx0 Hrec IH                               (* G_CaseChoice *)
+    | G0 x0 c zs brs0 ys body G1 v1 Hgx0 HIn Hlen Hrec IH               (* G_CaseCon *)
+    | G0 x0 c1 ys1 body1 brs0 G1 v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH (* G_CaseConFree *)
+    ]; intros Gam HGam HNVT HNAL HWF HCC HAC HGraphClosed Heclosed.
+  - (* G_Bot *)
+    split.
+    + intros c args Hcorr. exfalso. inversion Hcorr.
+    + intros x brs Hcontra. discriminate Hcontra.
+  - (* G_Free *)
+    split.
+    + intros c args Hcorr. exfalso. inversion Hcorr.
+    + intros x brs Hcontra. discriminate Hcontra.
+  - (* G_Con *)
+    split.
+    + intros c args Hcorr.
+      assert (Heq := CorrV_direct_eq G0 (ECon c0 args0) (ECon c args) Hcorr).
+      injection Heq as Heqc Heqargs. subst c args.
+      exists Gam. split; [apply NL_ValCon | exact HGam].
+    + intros x brs Hcontra. discriminate Hcontra.
+  - (* G_Choice *)
+    split.
+    + intros c args Hcorr. exfalso. inversion Hcorr.
+    + intros x brs Hcontra. discriminate Hcontra.
+  - (* G_Var *)
+    split.
+    + intros c args Hcorr.
+      destruct (CorrVTerm_inv G0 x0 (BExpr (ECon c args)) (CorrV_fwd_inv G0 x0 (BExpr (ECon c args)) Hcorr))
+        as [y [yc [Hcl [Hgy Hlc]]]].
+      destruct yc as [z | | | y1 y2 | f0 args0 | c0 args0]; simpl in Hlc; try discriminate Hlc.
+      injection Hlc as Hlc1 Hlc2. subst c0 args0.
+      exact (force_var P G0 x0 y Hcl c args Hgy Gam HGam HNVT).
+    + intros x brs Hcontra. discriminate Hcontra.
+  - (* G_Fun *)
+    split.
+    + intros c args' Hcorr.
+      assert (HNALbody : NoAliasLetB (rename_b s body))
+        by (apply NoAliasLetB_rename; exact (HPWF f ps body HPf)).
+      assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b s body)) -> G0 w <> None).
+      { intros w Hw. destruct (free_vars_b_rename_subset s body w Hw) as [y [Hy Hsy]].
+        assert (Hyps : In y ps) by (exact (HScoped f ps body HPf y Hy)).
+        destruct (In_nth_error ps y Hyps) as [i Hi].
+        assert (Hips : i < length ps) by (apply nth_error_Some; rewrite Hi; discriminate).
+        assert (Hiargs : i < length args) by (rewrite <- Hlen; exact Hips).
+        destruct (nth_error args i) as [a | ] eqn:Ha.
+        - assert (Hsya : s y = a) by (exact (Hmatch i y a Hi Ha)).
+          apply Heclosed. rewrite <- Hsy, Hsya. eapply nth_error_In. exact Ha.
+        - exfalso. assert (Ha' : nth_error args i <> None) by (apply nth_error_Some; exact Hiargs).
+          apply Ha'. exact Ha. }
+      destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC HGraphClosed Hbodyclosed) as [IH1 _].
+      destruct (IH1 c args' Hcorr) as [Gam1 [HNE HHC1]].
+      assert (HfreshGam : forall y0, ~ In y0 ps -> Gam (s y0) = None).
+      { intros y0 Hin. specialize (Hfresh y0 Hin).
+        specialize (HGam (s y0)) as HGamsy0. rewrite Hfresh in HGamsy0. exact HGamsy0. }
+      exists Gam1. split.
+      * (* Sec.66: GEval's own G_Fun now carries the matching ~ProgBoundName
+           fact directly (HnbFun) -- that closes NL_Fun's 6th premise for
+           free. Its 5th premise (Gam1(s y)=None, not just Gam(s y)=None)
+           remains open: a genuinely deeper gap, not a plumbing one -- see
+           THEOREM2_PROCESS_NOTES.md Sec.66. *)
+        eapply NL_Fun; [exact HPf | exact Hlen | exact Hinj | exact Hmatch | admit | exact HnbFun | exact HNE].
+      * exact HHC1.
+    + intros x brs Hcontra. discriminate Hcontra.
+  - (* G_Let *)
+    destruct HNAL as [Hne0 HNALk].
+    split.
+    + intros c args Hcorr.
+      assert (HGamx0 : Gam x0 = None)
+        by (specialize (HGam x0); rewrite HxFresh in HGam; exact HGam).
+      assert (HHCext : HeapCorr (hupd G0 x0 (GExpr e0)) (hupd Gam x0 (let_content x0 e0)))
+        by exact (HeapCorr_extend G0 Gam x0 e0 HGam HxFresh).
+      assert (HNVText : NoVarThunk (hupd G0 x0 (GExpr e0)))
+        by exact (NoVarThunk_extend G0 x0 e0 HNVT HxFresh Hne0).
+      assert (HWText : WellFoundedFwd (hupd G0 x0 (GExpr e0)))
+        by exact (WellFoundedFwd_extend G0 x0 e0 HWF HxFresh).
+      assert (HCCext : ChainConsistent (hupd G0 x0 (GExpr e0)) (hupd Gam x0 (let_content x0 e0)))
+        by exact (ChainConsistent_extend G0 Gam x0 e0 HCC HWF HxFresh).
+      assert (HACext : AliasConsistent (hupd G0 x0 (GExpr e0)) (hupd Gam x0 (let_content x0 e0)))
+        by exact (AliasConsistent_extend G0 Gam x0 e0 HAC HWF HxFresh).
+      assert (He0closed : forall w, In w (vars_of_e0 e0) -> G0 w <> None).
+      { intros w Hw. apply Heclosed. simpl. apply in_or_app. left. exact Hw. }
+      assert (Hkclosed : forall w, In w (free_vars_b k) -> hupd G0 x0 (GExpr e0) w <> None).
+      { intros w Hw. destruct (Nat.eq_dec w x0) as [Heq | Hneq].
+        - subst w. unfold hupd. rewrite Nat.eqb_refl. discriminate.
+        - apply hupd_preserves_some_gen. apply Heclosed. simpl. apply in_or_app. right.
+          apply in_in_remove; [exact Hneq | exact Hw]. }
+      assert (HnewGraphClosed : GraphClosed (hupd G0 x0 (GExpr e0))).
+      { intros w g Hwg y Hy. unfold hupd in Hwg.
+        destruct (Nat.eqb w x0) eqn:Heqw.
+        - apply Nat.eqb_eq in Heqw; subst w. injection Hwg as Hwg; subst g.
+          apply hupd_preserves_some_gen. apply He0closed. exact Hy.
+        - apply hupd_preserves_some_gen. apply (HGraphClosed w g Hwg y Hy). }
+      destruct (IH (hupd Gam x0 (let_content x0 e0)) HHCext HNVText HNALk HWText HCCext HACext
+                  HnewGraphClosed Hkclosed) as [IH1 _].
+      destruct (IH1 c args Hcorr) as [Gam' [HNE HHC]].
+      exists Gam'. split.
+      * (* Sec.66: GEval's own G_Let now carries ~ProgBoundName directly (HnbLet). *)
+        eapply NL_Let; [exact HGamx0 | exact HnbLet | exact HNE].
+      * exact HHC.
+    + intros x brs Hcontra. discriminate Hcontra.
+  - (* G_CaseBot *)
+    split.
+    + intros c args Hcorr. exfalso.
+      assert (Heq := CorrV_direct_eq G0 EBot (ECon c args) Hcorr). discriminate Heq.
+    + intros x brs Heqxbrs. injection Heqxbrs as Heqx Heqbrs. subst x brs.
+      intros F Gmid x' Hforce. exfalso.
+      assert (Hsome : G0 x0 <> None) by (rewrite Hgx0; discriminate).
+      assert (Hnofwd : forall y0, G0 x0 <> Some (GFwd y0))
+        by (intros y0 Heq; rewrite Hgx0 in Heq; discriminate Heq).
+      destruct (HeapCorr_witness_nonfwd G0 Gam x0 HGam Hsome Hnofwd) as [b [Hb HCE]].
+      destruct (CorrE_forced_shape G0 x0 b HCE) as
+        [ [c0 [args0 [Hgx0' Hbeq]]]
+        | [ [Hgx0' Hbeq]
+          | [ [f0 [args0 [Hgx0' Hbeq]]]
+            | [ [ya [yb [Hgx0' Hbeq]]]
+              | [ [z0 [Hgx0' Hbeq]]
+                | [ [Hgx0' Hbeq]
+                  | [ [y2 [Hgx0' Hbeq]]
+                    | [y2 [z0 [c0 [args0 [Hgx0' [Hcl0 [Hz0 Hbeq]]]]]]] ] ] ] ] ] ] ];
+        rewrite Hgx0 in Hgx0'; try discriminate Hgx0'.
+      subst b.
+      destruct (NEval_left_evar_shape P F Gam x0 Gmid (BExpr (EVar x')) Hforce) as
+        [ [Hgamx0 _] | [ [Hgamx0 _] | [ [Hgamx0 _] | [_ [e0 [G1 [Hgamx0 [_ [Hne2 [_ [Hrec _]]]]]]]]]]];
+        rewrite Hb in Hgamx0; try discriminate Hgamx0.
+      injection Hgamx0 as Hgamx0. subst e0.
+      inversion Hrec.
+  - (* G_CaseFwd *)
+    assert (Hx0y0 : x0 <> y0).
+    { intro Heqxy; subst y0.
+      destruct (GEval_case_gives_ContractLoc P G0 x0 brs0 G1 v1
+                  (G_CaseFwd P G0 x0 x0 brs0 G1 v1 Hgx0 Hrec)) as [w Hcl].
+      exact (ContractLoc_no_selfFwd G0 x0 w Hcl Hgx0). }
+    assert (Heclosedy0 : forall w, In w (free_vars_b (BCase y0 brs0)) -> G0 w <> None).
+    { intros w Hw. simpl in Hw. destruct Hw as [Hw | Hw].
+      - subst w. exact (HGraphClosed x0 (GFwd y0) Hgx0 y0 (or_introl eq_refl)).
+      - apply Heclosed. simpl. right. exact Hw. }
+    split.
+    + intros c args Hcorr.
+      destruct (IH Gam HGam HNVT HNAL HWF HCC HAC HGraphClosed Heclosedy0) as [IH1 _].
+      destruct (IH1 c args Hcorr) as [Gamy0 [HNEy HHCy0]].
+      destruct (NEval_left_bcase_shape P nil Gam y0 brs0 Gamy0 (BExpr (ECon c args)) HNEy) as
+        [ [c' [zs [ys [body [Gmid [Hforcey0 [HIn [Hlen Hbody]]]]]]]]
+        | [x' [Gmid [c1' [ys1 [body1 [ws [Hforcey0 [Hhd [Hlenws [HNDws [Hfrws [Hnbws Hbodyguess]]]]]]]]]]]] ].
+      * (* NL_Select shape: y0's own scrutinee-forcing reaches an achieved constructor directly *)
+        assert (HGamx0 := HGam x0). rewrite Hgx0 in HGamx0.
+        destruct HGamx0 as [b [Hb HCE3]].
+        destruct HCE3 as [HCE | [yd [zd [cd [argsd [Hgxfwd [Hcld [Hzd HVCd]]]]]]]].
+        -- destruct (CorrE_forced_shape G0 x0 b HCE) as
+             [ [c0 [args0 [Hg1 Hb1]]]
+             | [ [Hg1 Hb1]
+               | [ [f1 [args1 [Hg1 Hb1]]]
+                 | [ [y1 [y2 [Hg1 Hb1]]]
+                   | [ [z1 [Hg1 Hb1]]
+                     | [ [Hg1 Hb1]
+                       | [ [y1 [Hg1 Hb1]]
+                         | [y1 [z1 [c0 [args0 [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ];
+             rewrite Hgx0 in Hg1; try discriminate Hg1.
+           ++ (* CorrE_FwdHere: Gam x0 = EVar y0 exactly ("clean" alias case) --
+                 HeapCorr_fwd_transfer_fwdhere_con does the whole construction. *)
+              injection Hg1 as Hg1. subst y1. subst b.
+              destruct (HeapCorr_fwd_transfer_fwdhere_con P G0 Gam HGam x0 y0 Hx0y0 Hgx0 Hb
+                          brs0 c' zs ys body Gmid Gamy0 (BExpr (ECon c args))
+                          Hforcey0 HIn Hlen Hbody) as [Gam'' [HNEfinal HHCtransfer]].
+              exists Gam''. split.
+              { exact HNEfinal. }
+              { exact (HHCtransfer G1 (GEval_fwd_permanent P G0 (BCase y0 brs0) G1 v1 Hrec x0 y0 Hgx0) HHCy0). }
+           ++ (* CorrE_FwdAchievedCon: Gam x0 already achieved directly, to
+                 c0/args0 -- ChainConsistent forces Gam y0 to the SAME
+                 value, so y0's own forcing (Hforcey0) must be the trivial
+                 NL_VarCons case, and x0's own case-body IS Hbody verbatim
+                 (Gmid = Gam, no transport needed at all). *)
+              injection Hg1 as Hg1. subst y1. subst b.
+              assert (Hgamy0 : Gam y0 = Some (BExpr (ECon c0 args0)))
+                by exact (HCC x0 y0 Hgx0 c0 args0 Hb).
+              destruct (NEval_left_evar_shape P nil Gam y0 Gmid (BExpr (ECon c' zs)) Hforcey0) as
+                [ [Hcase1 [HeqGmid _]]
+                | [ [Hcase2 _] | [ [Hcase3 _] | [_ [e1 [G1' [Hz [Hne1 [_ [_ [_ HeqGmid]]]]]]]]] ] ].
+              ** rewrite Hgamy0 in Hcase1. injection Hcase1 as Hcase1a Hcase1b.
+                 assert (Hb' : Gam x0 = Some (BExpr (ECon c' zs))) by (rewrite <- Hcase1a, <- Hcase1b; exact Hb).
+                 subst Gmid.
+                 exists Gamy0. split.
+                 { eapply NL_Select.
+                   - apply NL_VarCons. exact Hb'.
+                   - exact HIn.
+                   - exact Hlen.
+                   - exact Hbody. }
+                 { exact HHCy0. }
+              ** rewrite Hgamy0 in Hcase2. discriminate Hcase2.
+              ** rewrite Hgamy0 in Hcase3. discriminate Hcase3.
+              ** rewrite Hgamy0 in Hz. injection Hz as Hz. exfalso. exact (Hne1 c0 args0 (eq_sym Hz)).
+        -- (* CorrE3 disjunct 2: Gam x0's witness is a VarChase-based
+              skip-ahead certificate, not necessarily matching y0 directly.
+              Use VarChase_first_step (an isolated, self-contained lemma)
+              to extract b's own shape and how the chase used it, WITHOUT
+              destructuring HVCd directly in this large context (fragile --
+              see DEAD_ENDS.md). *)
+           destruct (VarChase_first_step Gam x0 (BExpr (ECon cd argsd)) HVCd) as
+             [b1 [Hb1 [Heqb1 | [w' [Heqb1 [Hnew'x0 Hrecw0]]]]]];
+           rewrite Hb in Hb1; injection Hb1 as Hb1; subst b1; rewrite Heqb1 in Hb.
+           ++ (* b = target directly: already achieved -- same construction
+                 as the CorrE_FwdAchievedCon branch above, via ChainConsistent. *)
+              assert (Hgamy0 : Gam y0 = Some (BExpr (ECon cd argsd)))
+                by exact (HCC x0 y0 Hgx0 cd argsd Hb).
+              destruct (NEval_left_evar_shape P nil Gam y0 Gmid (BExpr (ECon c' zs)) Hforcey0) as
+                [ [Hcase1 [HeqGmid _]]
+                | [ [Hcase2 _] | [ [Hcase3 _] | [_ [e2 [G1' [Hz [Hne1 [_ [_ [_ HeqGmid]]]]]]]]] ] ].
+              ** rewrite Hgamy0 in Hcase1. injection Hcase1 as Hcase1a Hcase1b.
+                 assert (Hb' : Gam x0 = Some (BExpr (ECon c' zs))) by (rewrite <- Hcase1a, <- Hcase1b; exact Hb).
+                 subst Gmid.
+                 exists Gamy0. split.
+                 { eapply NL_Select; [apply NL_VarCons; exact Hb' | exact HIn | exact Hlen | exact Hbody]. }
+                 { exact HHCy0. }
+              ** rewrite Hgamy0 in Hcase2. discriminate Hcase2.
+              ** rewrite Hgamy0 in Hcase3. discriminate Hcase3.
+              ** rewrite Hgamy0 in Hz. injection Hz as Hz. exfalso. exact (Hne1 cd argsd (eq_sym Hz)).
+           ++ (* b = EVar w', w' <> x0: skip-ahead scenario. *)
+              destruct (Nat.eq_dec w' y0) as [Heqwy0 | Hnewy0].
+              ** (* w' = y0: b is EXACTLY EVar y0 -- same clean construction
+                    as the CorrE_FwdHere branch above. *)
+                 subst w'.
+                 destruct (HeapCorr_fwd_transfer_fwdhere_con P G0 Gam HGam x0 y0 Hx0y0 Hgx0 Hb
+                             brs0 c' zs ys body Gmid Gamy0 (BExpr (ECon c args))
+                             Hforcey0 HIn Hlen Hbody) as [Gam'' [HNEfinal HHCtransfer]].
+                 exists Gam''. split.
+                 { exact HNEfinal. }
+                 { exact (HHCtransfer G1 (GEval_fwd_permanent P G0 (BCase y0 brs0) G1 v1 Hrec x0 y0 Hgx0) HHCy0). }
+              ** assert (Hgamy0w' : Gam y0 = Some (BExpr (EVar w')))
+                   by exact (HAC x0 y0 Hgx0 w' Hb Hnewy0).
+                 (* Hcase2/Hcase3 are discharged via their OWN "v = EVar y0"
+                    component (structurally impossible against our fixed,
+                    Con-shaped target), NOT via Gam y0 -- since Hgamy0w' is
+                    itself EVar-shaped, rewriting it into Hcase2's "Gam y0 =
+                    EVar y0" component would NOT be discriminable (same
+                    constructors, just w' vs y0). *)
+                 destruct (NEval_left_evar_shape P nil Gam y0 Gmid (BExpr (ECon c' zs)) Hforcey0) as
+                   [ [Hcase1 _]
+                   | [ [_ [_ Heqv2]]
+                     | [ [_ [_ Heqv3]]
+                       | [_ [e2 [Gmid_inner [Hz [Hne1 [Hne2 [Hne3 [Hrecw HeqGmid]]]]]]]]] ] ];
+                   try discriminate Heqv2; try discriminate Heqv3;
+                   try (rewrite Hgamy0w' in Hcase1; discriminate Hcase1).
+                 rewrite Hgamy0w' in Hz. injection Hz as Hz. subst e2.
+                 subst Gmid.
+                 assert (Hgmidy0 : hupd Gmid_inner y0 (BExpr (ECon c' zs)) y0 = Some (BExpr (ECon c' zs)))
+                   by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+                 assert (Hgamy0y0 : Gamy0 y0 = Some (BExpr (ECon c' zs)))
+                   by exact (NEval_left_con_persists P nil (hupd Gmid_inner y0 (BExpr (ECon c' zs)))
+                               (rename_b (zipsubst ys zs) body) Gamy0 (BExpr (ECon c args)) Hbody y0 c' zs Hgmidy0).
+                 destruct (skip_ahead_reconcile_test P x0 y0 w' c' zs Gam Gmid_inner
+                             (BExpr (ECon c args)) Hx0y0 Hnewy0 Hnew'x0
+                             Hb Hgamy0w' Hrecw (rename_b (zipsubst ys zs) body) Gamy0 Hbody)
+                   as [Gam' [Hforcex0 [Gamx0 [Hbodyx0 [HeqGamx0 [Hgamx0x0 Hgamx0y0]]]]]].
+                 exists Gamx0. split.
+                 { eapply NL_Select; [exact Hforcex0 | exact HIn | exact Hlen | exact Hbodyx0]. }
+                 { assert (Hgx0fwd_G1 : G1 x0 = Some (GFwd y0))
+                     by exact (GEval_fwd_permanent P G0 (BCase y0 brs0) G1 v1 Hrec x0 y0 Hgx0).
+                   destruct (HeapCorr_con_to_contractloc G1 Gamy0 y0 c' zs HHCy0 Hgamy0y0) as [ytgt [Hcl Hz]].
+                   assert (Hginw' : Gmid_inner w' = Some (BExpr (ECon c' zs)))
+                     by exact (NEval_left_own_slot P (y0::nil) Gam w' Gmid_inner (BExpr (ECon c' zs)) Hrecw).
+                   assert (Hrecw_nil' : NEval_left P nil Gam (BExpr (EVar w')) Gmid_inner (BExpr (ECon c' zs))).
+                   { apply (NEval_left_guard_shrink P (y0::nil) nil (fun w0 H => False_ind _ H) Gam
+                              (BExpr (EVar w')) Gmid_inner (BExpr (ECon c' zs)) Hrecw). }
+                   assert (Hginx0' : Gmid_inner x0 = Some (BExpr (EVar w')))
+                     by exact (NEval_left_alias_persists_through_force P x0 w' (not_eq_sym Hnew'x0)
+                                 Gam Gmid_inner (BExpr (ECon c' zs)) Hrecw_nil' Hb).
+                   assert (Hgmidx0 : hupd Gmid_inner y0 (BExpr (ECon c' zs)) x0 = Some (BExpr (EVar w')))
+                     by (rewrite (hupd_neq Gmid_inner y0 (BExpr (ECon c' zs)) x0 Hx0y0); exact Hginx0').
+                   assert (Hgmidw' : hupd Gmid_inner y0 (BExpr (ECon c' zs)) w' = Some (BExpr (ECon c' zs)))
+                     by (rewrite (hupd_neq Gmid_inner y0 (BExpr (ECon c' zs)) w' Hnewy0); exact Hginw').
+                   destruct (NEval_left_alias_or_con_persists P x0 w' c' zs (not_eq_sym Hnew'x0) nil
+                               (hupd Gmid_inner y0 (BExpr (ECon c' zs))) (rename_b (zipsubst ys zs) body) Gamy0
+                               (BExpr (ECon c args)) Hbody (or_introl Hgmidx0) Hgmidw')
+                     as [Hgamy0x0_or Hgamy0w'con].
+                   assert (Hchase_x0_y0 : VarChase Gamy0 x0 (BExpr (ECon c' zs))).
+                   { destruct Hgamy0x0_or as [Heq1 | Heq1].
+                     - eapply VChase_Hop; [exact Heq1 | exact Hnew'x0 | ].
+                       apply VChase_Here; [exact Hgamy0w'con | intros ww Hcontra; discriminate Hcontra].
+                     - apply VChase_Here; [exact Heq1 | intros ww Hcontra; discriminate Hcontra]. }
+                   assert (HHCupdated : HeapCorr G1 (hupd Gamy0 x0 (BExpr (ECon c' zs))))
+                     by exact (HeapCorr_update_achieved G1 Gamy0 x0 y0 ytgt c' zs HHCy0 Hgx0fwd_G1 Hcl Hz Hchase_x0_y0).
+                   destruct Hgamx0y0 as [Hy0evar | Hy0con].
+                   - (* y0's own slot ends up back at EVar w' (its ORIGINAL, pre-forcing
+                        value) -- downgrade y0 within the x0-updated heap too, then match
+                        Gamx0 pointwise EVERYWHERE against the doubly-updated heap. *)
+                     assert (Hgamx0w' : Gamx0 w' = Some (BExpr (ECon c' zs)))
+                       by (rewrite (HeqGamx0 w' Hnew'x0 Hnewy0); exact Hgamy0w'con).
+                     assert (Hupdy0con : hupd Gamy0 x0 (BExpr (ECon c' zs)) y0 = Some (BExpr (ECon c' zs)))
+                       by (rewrite (hupd_neq Gamy0 x0 (BExpr (ECon c' zs)) y0 (not_eq_sym Hx0y0)); exact Hgamy0y0).
+                     assert (Hupdw'con : hupd Gamy0 x0 (BExpr (ECon c' zs)) w' = Some (BExpr (ECon c' zs)))
+                       by (rewrite (hupd_neq Gamy0 x0 (BExpr (ECon c' zs)) w' Hnew'x0); exact Hgamy0w'con).
+                     assert (Hdowny0 : (hupd (hupd Gamy0 x0 (BExpr (ECon c' zs))) y0 (BExpr (EVar w'))) y0
+                                       = Some (BExpr (EVar w')))
+                       by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+                     assert (Hdownw' : (hupd (hupd Gamy0 x0 (BExpr (ECon c' zs))) y0 (BExpr (EVar w'))) w'
+                                       = Some (BExpr (ECon c' zs))).
+                     { rewrite (hupd_neq (hupd Gamy0 x0 (BExpr (ECon c' zs))) y0 (BExpr (EVar w')) w' Hnewy0).
+                       exact Hupdw'con. }
+                     assert (HCEy0_v2 : CorrE3 G1 (hupd (hupd Gamy0 x0 (BExpr (ECon c' zs))) y0 (BExpr (EVar w')))
+                                          y0 (BExpr (EVar w')))
+                       by exact (HeapCorr_evar_witness_graph_persists G0 Gam HGam HNVT y0 w' (not_eq_sym Hnewy0) Hgamy0w'
+                                   P (y0::nil) Gmid_inner c' zs Hrecw
+                                   (BCase y0 brs0) G1 v1 Hrec
+                                   (hupd (hupd Gamy0 x0 (BExpr (ECon c' zs))) y0 (BExpr (EVar w')))
+                                   Hdowny0 Hdownw').
+                     assert (HHCdown : HeapCorr G1 (hupd (hupd Gamy0 x0 (BExpr (ECon c' zs))) y0 (BExpr (EVar w'))))
+                       by exact (HeapCorr_downgrade_evar G1 (hupd Gamy0 x0 (BExpr (ECon c' zs))) y0 w' c' zs
+                                   HHCupdated Hupdy0con Hupdw'con Hnewy0 HCEy0_v2).
+                     eapply HeapCorr_pointwise; [exact HHCdown | ].
+                     intro q.
+                     destruct (Nat.eq_dec q y0) as [Heqqy0 | Hneqqy0].
+                     + subst q. rewrite Hy0evar. unfold hupd; rewrite Nat.eqb_refl; reflexivity.
+                     + destruct (Nat.eq_dec q x0) as [Heqqx0 | Hneqqx0].
+                       * subst q. rewrite Hgamx0x0.
+                         rewrite (hupd_neq (hupd Gamy0 x0 (BExpr (ECon c' zs))) y0 (BExpr (EVar w')) x0
+                                    Hx0y0).
+                         unfold hupd; rewrite Nat.eqb_refl; reflexivity.
+                       * rewrite (HeqGamx0 q Hneqqx0 Hneqqy0).
+                         rewrite (hupd_neq (hupd Gamy0 x0 (BExpr (ECon c' zs))) y0 (BExpr (EVar w')) q Hneqqy0).
+                         rewrite (hupd_neq Gamy0 x0 (BExpr (ECon c' zs)) q Hneqqx0). reflexivity.
+                   - (* y0's own slot ends up promoted to Con c' zs too -- Gamx0 matches
+                        the single x0-update EVERYWHERE, including at y0 (same value). *)
+                     eapply HeapCorr_pointwise; [exact HHCupdated | ].
+                     intro q.
+                     destruct (Nat.eq_dec q x0) as [Heqqx0 | Hneqqx0].
+                     + subst q. rewrite Hgamx0x0. unfold hupd; rewrite Nat.eqb_refl; reflexivity.
+                     + destruct (Nat.eq_dec q y0) as [Heqqy0 | Hneqqy0].
+                       * subst q. rewrite Hy0con.
+                         rewrite (hupd_neq Gamy0 x0 (BExpr (ECon c' zs)) y0 (not_eq_sym Hx0y0)). exact (eq_sym Hgamy0y0).
+                       * rewrite (HeqGamx0 q Hneqqx0 Hneqqy0).
+                         rewrite (hupd_neq Gamy0 x0 (BExpr (ECon c' zs)) q Hneqqx0). reflexivity. }
+      * (* NL_Guess shape: y0's own scrutinee-forcing reaches a free variable x',
+           narrowed by Guess. Since forcing y0 lands on a FREE variable (not an
+           achieved constructor), x0's own Nat-heap witness CANNOT be the
+           VarChase-skip-ahead disjunct (that disjunct's own graph-level
+           achieved chain would force Hforcey0 to land on that SAME achieved
+           constructor via NEval_left_force_reaches_achieved -- contradiction);
+           nor can it be any CorrE case other than FwdHere (all others need a
+           non-GFwd graph shape at x0, contradicting Hgx0). So Gam x0 = EVar y0
+           EXACTLY is the ONLY possibility here -- no case split needed at all. *)
+        assert (HGamx0 := HGam x0). rewrite Hgx0 in HGamx0.
+        destruct HGamx0 as [b [Hb HCE3]].
+        destruct HCE3 as [HCE | [yd [zd [cd [argsd [Hgxfwd [Hcld [Hzd HVCd]]]]]]]].
+        -- destruct (CorrE_forced_shape G0 x0 b HCE) as
+             [ [c0 [args0 [Hg1 Hb1]]]
+             | [ [Hg1 Hb1]
+               | [ [f1 [args1 [Hg1 Hb1]]]
+                 | [ [y1 [y2 [Hg1 Hb1]]]
+                   | [ [z1 [Hg1 Hb1]]
+                     | [ [Hg1 Hb1]
+                       | [ [y1 [Hg1 Hb1]]
+                         | [y1 [z1 [c0 [args0 [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ];
+             rewrite Hgx0 in Hg1; try discriminate Hg1.
+           ++ (* FwdHere: Gam x0 = EVar y0 exactly. *)
+              injection Hg1 as Hg1. subst y1. subst b.
+              assert (IH2 := proj2 (IH Gam HGam HNVT HNAL HWF HCC HAC HGraphClosed Heclosedy0)).
+              assert (Hclx' : ContractLoc G1 y0 x') by exact (IH2 y0 brs0 eq_refl nil Gmid x' Hforcey0).
+              destruct (HeapCorr_fwd_transfer_fwdhere_free P G0 Gam HGam x0 y0 Hgx0 Hx0y0 Hb
+                          brs0 x' c1' ys1 body1 ws Gmid Gamy0 (BExpr (ECon c args))
+                          Hforcey0 Hhd Hlenws HNDws Hfrws Hnbws Hbodyguess) as [Gam'' [HNEfinal HHCtransfer]].
+              exists Gam''. split.
+              { exact HNEfinal. }
+              { exact (HHCtransfer G1 (GEval_fwd_permanent P G0 (BCase y0 brs0) G1 v1 Hrec x0 y0 Hgx0)
+                         (fun _ => Hclx') HHCy0). }
+           ++ (* FwdAchievedCon: IMPOSSIBLE -- Gam x0 already achieved directly
+                 would force Hforcey0 (via ChainConsistent, matching y0's own
+                 witness) to land on that SAME achieved value, contradicting
+                 Hforcey0's own free-variable target. *)
+              injection Hg1 as Hg1. subst y1. subst b.
+              assert (Hgamy0 : Gam y0 = Some (BExpr (ECon c0 args0)))
+                by exact (HCC x0 y0 Hgx0 c0 args0 Hb).
+              destruct (NEval_left_evar_shape P nil Gam y0 Gmid (BExpr (EVar x')) Hforcey0) as
+                [ [Hcase1 _] | [ [Hcase2 _] | [ [Hcase3 _] | [_ [e1 [G1' [Hz [Hne1 _]]]]]]]].
+              ** rewrite Hgamy0 in Hcase1. discriminate Hcase1.
+              ** rewrite Hgamy0 in Hcase2. discriminate Hcase2.
+              ** rewrite Hgamy0 in Hcase3. discriminate Hcase3.
+              ** rewrite Hgamy0 in Hz. injection Hz as Hz. exfalso. exact (Hne1 c0 args0 (eq_sym Hz)).
+        -- (* CorrE3 disjunct 2: IMPOSSIBLE -- x0's own skip-ahead witness
+              forwards (via G0, functionally) to the SAME y0 as Hgx0, so its
+              achieved chain is REALLY an achieved chain for y0 itself; combined
+              with HeapCorr_achieved_to_VarChase (graph-achieved implies a
+              STATIC VarChase) and NEval_left_force_matches_VarChase (a STATIC
+              VarChase forces ANY dynamic forcing to compute that SAME value),
+              this contradicts Hforcey0's own free-variable target directly --
+              no need for a HeapCorr-based NEval_left_force_reaches_achieved
+              port at all. *)
+           exfalso.
+           assert (Hydeq : yd = y0) by (rewrite Hgx0 in Hgxfwd; injection Hgxfwd as Hgxfwd; exact (eq_sym Hgxfwd)).
+           subst yd.
+           destruct (ContractLoc_to_N G0 y0 zd Hcld) as [n Hcln].
+           assert (Hvcy0 : VarChase Gam y0 (BExpr (ECon cd argsd)))
+             by exact (HeapCorr_achieved_to_VarChase G0 Gam HGam n y0 zd cd argsd Hcln Hzd).
+           assert (Heqv := NEval_left_force_matches_VarChase Gam y0 (BExpr (ECon cd argsd)) Hvcy0 cd argsd eq_refl
+                              P nil Gmid (BExpr (EVar x')) Hforcey0).
+           discriminate Heqv.
+    + intros x brs Heqxbrs. injection Heqxbrs as Heqx Heqbrs. subst x brs.
+      intros F Gmid1 x' Hforce.
+      destruct (NEval_left_evar_shape P F Gam x0 Gmid1 (BExpr (EVar x')) Hforce) as
+        [ [Hcase1 [_ [c0 [args0 Heqv1]]]]
+        | [ [Hcase2 _]
+          | [ [Hcase3 _]
+            | [HnInF [e0 [G1' [Hz [Hne1 [Hne2 [Hne3 [Hrec1 HeqGmid1]]]]]]]]] ] ].
+      * (* Hcase1: already achieved directly -- contradicts v = EVar x'. *)
+        discriminate Heqv1.
+      * (* Hcase2: Gam x0 = EVar x0 (self-loop) -- IMPOSSIBLE given G0 x0 = GFwd y0,
+           since CorrE3's disjunct 2 can NEVER validate a self-loop witness
+           (VarChase from a self-loop can use neither VChase_Here, which would
+           need the self-loop's OWN content to already be Con-shaped, nor
+           VChase_Hop, whose w' <> w precondition a self-loop directly
+           violates) -- and disjunct 1's only self-loop-producing case,
+           CorrE_Free, needs G0 x0 = EFree, contradicting Hgx0 directly. *)
+        exfalso.
+        assert (HGamx0 := HGam x0). rewrite Hgx0 in HGamx0.
+        destruct HGamx0 as [b [Hb HCE3]]. rewrite Hcase2 in Hb. injection Hb as Hb. subst b.
+        destruct HCE3 as [HCE | [yd [zd [cd [argsd [Hgxfwd [Hcld [Hzd HVCd]]]]]]]].
+        -- destruct (CorrE_forced_shape G0 x0 (BExpr (EVar x0)) HCE) as
+             [ [c1 [args1 [Hg1 Hb1]]]
+             | [ [Hg1 Hb1]
+               | [ [f1 [args1 [Hg1 Hb1]]]
+                 | [ [y1 [y2 [Hg1 Hb1]]]
+                   | [ [z1 [Hg1 Hb1]]
+                     | [ [Hg1 Hb1]
+                       | [ [y1 [Hg1 Hb1]]
+                         | [y1 [z1 [c1 [args1 [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ]; try discriminate Hb1.
+           ++ (* Free: Hb1 : EVar x0 = EVar x0 (trivially true, b was ALREADY fixed
+                 to EVar x0) -- the real contradiction is Hg1 vs Hgx0 (EFree vs GFwd). *)
+              congruence.
+           ++ (* VarThunk: Hg1 : G0 x0 = GExpr(EVar z1), vs Hgx0 : G0 x0 = GFwd y0. *)
+              congruence.
+           ++ (* FwdHere: Hb1 : EVar x0 = EVar y1, Hg1 : G0 x0 = GFwd y1, vs Hgx0 : G0 x0 = GFwd y0. *)
+              exact (Hx0y0 (ltac:(congruence))).
+        -- destruct (VarChase_first_step Gam x0 (BExpr (ECon cd argsd)) HVCd) as
+             [b1 [Hb1 [Heqb1 | [w' [Heqb1 [Hnew'x0 _]]]]]].
+           ++ exfalso. congruence.
+           ++ exact (Hnew'x0 (ltac:(congruence))).
+      * (* Hcase3: Gam x0 = EFree -- IMPOSSIBLE, same pattern: disjunct 1's
+           CorrE_Free needs G0 x0 = EFree (contradicts Hgx0), and disjunct 2's
+           VarChase can use neither VChase_Here (EFree isn't Con-shaped) nor
+           VChase_Hop (EFree isn't EVar-shaped). *)
+        exfalso.
+        assert (HGamx0 := HGam x0). rewrite Hgx0 in HGamx0.
+        destruct HGamx0 as [b [Hb HCE3]]. rewrite Hcase3 in Hb. injection Hb as Hb. subst b.
+        destruct HCE3 as [HCE | [yd [zd [cd [argsd [Hgxfwd [Hcld [Hzd HVCd]]]]]]]].
+        -- destruct (CorrE_forced_shape G0 x0 (BExpr EFree) HCE) as
+             [ [c1 [args1 [Hg1 Hb1]]]
+             | [ [Hg1 Hb1]
+               | [ [f1 [args1 [Hg1 Hb1]]]
+                 | [ [y1 [y2 [Hg1 Hb1]]]
+                   | [ [z1 [Hg1 Hb1]]
+                     | [ [Hg1 Hb1]
+                       | [ [y1 [Hg1 Hb1]]
+                         | [y1 [z1 [c1 [args1 [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ]; discriminate Hb1.
+        -- destruct (VarChase_first_step Gam x0 (BExpr (ECon cd argsd)) HVCd) as
+             [b1 [Hb1 [Heqb1 | [w' [Heqb1 [Hnew'x0 _]]]]]]; congruence.
+      * (* Hcase4: genuine recursion -- x0's own CorrE3 witness is either the
+           "clean" FwdHere alias EVar y0 (use IH's own second conjunct,
+           recursively, on y0's forcing) or a skip-ahead alias EVar w'
+           (w' <> x0) whose OWN further chase is ALREADY known (via
+           HeapCorr_achieved_to_VarChase, from the underlying achieved graph
+           fact) to reach an achieved constructor -- contradicting Hrec1's
+           own free-variable result via NEval_left_force_matches_VarChase, so
+           this sub-case never actually happens. *)
+        assert (HGamx0 := HGam x0). rewrite Hgx0 in HGamx0.
+        destruct HGamx0 as [b [Hb HCE3]]. rewrite Hz in Hb. injection Hb as Hb. subst b.
+        destruct HCE3 as [HCE | [yd [zd [cd [argsd [Hgxfwd [Hcld [Hzd HVCd]]]]]]]].
+        -- destruct (CorrE_forced_shape G0 x0 e0 HCE) as
+             [ [c1 [args1 [Hg1 Hb1]]]
+             | [ [Hg1 Hb1]
+               | [ [f1 [args1 [Hg1 Hb1]]]
+                 | [ [y1 [y2 [Hg1 Hb1]]]
+                   | [ [z1 [Hg1 Hb1]]
+                     | [ [Hg1 Hb1]
+                       | [ [y1 [Hg1 Hb1]]
+                         | [y1 [z1 [c1 [args1 [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ].
+           ++ exfalso. exact (Hne1 c1 args1 Hb1).
+           ++ exfalso. exact (Hne2 Hb1).
+           ++ (* EFun: e0 = EFun f1 args1 -- Hg1 : G0 x0 = GExpr(EFun..), contradicts Hgx0 *)
+              exfalso. congruence.
+           ++ (* EChoice: contradicts Hgx0 *)
+              exfalso. congruence.
+           ++ (* VarThunk: contradicts Hgx0 *)
+              exfalso. congruence.
+           ++ (* Bot: contradicts Hgx0 *)
+              exfalso. congruence.
+           ++ (* FwdHere: e0 = EVar y1, and Hg1: G0 x0 = GFwd y1, combined w/ Hgx0: y1 = y0 *)
+              assert (Heqy1 : y1 = y0) by congruence.
+              subst y1.
+              assert (IH2 := proj2 (IH Gam HGam HNVT HNAL HWF HCC HAC HGraphClosed Heclosedy0)).
+              assert (Hrec1' : NEval_left P (x0 :: F) Gam (BExpr (EVar y0)) G1' (BExpr (EVar x')))
+                by (rewrite <- Hb1; exact Hrec1).
+              assert (Hclx' : ContractLoc G1 y0 x') by exact (IH2 y0 brs0 eq_refl (x0::F) G1' x' Hrec1').
+              eapply CL_Fwd; [exact (GEval_fwd_permanent P G0 (BCase y0 brs0) G1 v1 Hrec x0 y0 Hgx0) | exact Hclx'].
+           ++ (* FwdAchievedCon: e0 = Con c1 args1 -- contradicts Hne1 *)
+              exfalso. exact (Hne1 c1 args1 Hb1).
+        -- exfalso.
+           destruct (VarChase_first_step Gam x0 (BExpr (ECon cd argsd)) HVCd) as
+             [b1 [Hb1 [Heqb1 | [w' [Heqb1 [Hnew'x0 Hrecw0]]]]]].
+           ++ exfalso. exact (Hne1 cd argsd (ltac:(congruence))).
+           ++ assert (Heqe0w' : e0 = BExpr (EVar w')) by congruence.
+              assert (Hrecw' : NEval_left P (x0 :: F) Gam (BExpr (EVar w')) G1' (BExpr (EVar x')))
+                by (rewrite <- Heqe0w'; exact Hrec1).
+              assert (Heqv := NEval_left_force_matches_VarChase Gam w' (BExpr (ECon cd argsd)) Hrecw0
+                                 cd argsd eq_refl P (x0::F) G1' (BExpr (EVar x')) Hrecw').
+              discriminate Heqv.
+  - (* G_CaseFun *)
+    split.
+    + intros c args Hcorr.
+      assert (Hgamx0 : Gam x0 = Some (BExpr (EFun f0 args0))).
+      { assert (HGamx0 := HGam x0). rewrite Hgx0 in HGamx0.
+        destruct HGamx0 as [b [Hb HCE3]].
+        destruct HCE3 as [HCE | [y1 [z1 [c1 [args1 [Hgxfwd _]]]]]].
+        - destruct (CorrE_forced_shape G0 x0 b HCE) as
+            [ [c0 [args0' [Hg1 Hb1]]]
+            | [ [Hg1 Hb1]
+              | [ [f1 [args1 [Hg1 Hb1]]]
+                | [ [y1 [y2 [Hg1 Hb1]]]
+                  | [ [z1 [Hg1 Hb1]]
+                    | [ [Hg1 Hb1]
+                      | [ [y1 [Hg1 Hb1]]
+                        | [y1 [z1 [c0 [args0' [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ];
+            rewrite Hgx0 in Hg1; try discriminate Hg1.
+          injection Hg1 as Hg1a Hg1b. subst f1 args1. rewrite Hb1 in Hb. exact Hb.
+        - rewrite Hgx0 in Hgxfwd. discriminate Hgxfwd. }
+      assert (Hxdom : G0 x0 <> None) by congruence.
+      assert (Hxshape0 : forall b0, G0 x0 = Some b0 ->
+                b0 <> GExpr EFree /\ (forall y z, b0 <> GExpr (EChoice y z))).
+      { intros b0 Hb0. rewrite Hgx0 in Hb0. injection Hb0 as Hb0. subst b0.
+        split; [discriminate | intros y z Hcontra; discriminate Hcontra]. }
+      (* Sec.74/Task #3: GraphClosed G0 is now an ambient hypothesis
+         (threaded through theorem2_restated's own induction), so this half
+         of what Sec.69 originally needed is free. x0 being unreachable
+         from its own arguments (the OTHER half, an acyclicity fact) is
+         still a genuine gap -- theorem2_restated carries GraphClosed, not
+         AcyclicGraph, and building the latter into a real invariant is
+         still Task #3's own remaining scope beyond this restatement. *)
+      assert (HGraphClosed0 : GraphClosed G0) by exact HGraphClosed.
+      assert (Hxreach0 : forall w, In w (vars_of_b (BExpr (EFun f0 args0))) -> w <> x0 /\ ~ GraphReaches G0 w x0).
+      { assert (HAcyclicX0 : ~ GraphReaches G0 x0 x0) by admit.
+        intros w Hw. simpl in Hw. split.
+        - intro Heq; subst w. apply HAcyclicX0. exact (GraphReaches_step G0 x0 x0 (GExpr (EFun f0 args0)) Hgx0 Hw).
+        - intro Hr. apply HAcyclicX0.
+          exact (GraphReaches_trans G0 x0 w x0 (GraphReaches_step G0 x0 w (GExpr (EFun f0 args0)) Hgx0 Hw) Hr). }
+      destruct (NEval_left_let_chain_to_value P HPWF HNBFC G0 (BExpr (EFun f0 args0)) G1 vx Hrec1
+                  Gam HGam HNVT I HWF HCC HAC x0 Hxdom HGraphClosed0 Hxshape0 Hxreach0)
+        as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 Hplug]]]]]]]].
+      assert (Hg1x0 : G1 x0 = Some (GExpr (EFun f0 args0))) by (rewrite Hxeq; exact Hgx0).
+      (* Task #3/Sec.74: GraphClosed G1, and vx's own referenced vars being
+         G1-defined, both come for free from GEval_closed_preserved applied
+         to Hrec1 -- needed below so each vx-shape branch can supply IH2 its
+         own GraphClosed(hupd G1 x0 vx) and free_vars_b(BCase x0 brs0)
+         premises. *)
+      assert (Hargsclosed0 : forall w, In w args0 -> G0 w <> None)
+        by exact (HGraphClosed x0 (GExpr (EFun f0 args0)) Hgx0).
+      destruct (GEval_closed_preserved P HScoped G0 (BExpr (EFun f0 args0)) G1 vx Hrec1
+                  HGraphClosed Hargsclosed0) as [HGraphClosedG1 Hvxclosed].
+      destruct vx as [e0 | y0'].
+      * (* vx = GExpr e0 *)
+        destruct e0 as [ w | | | y1 z1 | f1 args1 | c1 args1 ].
+        -- (* EVar: impossible, no GEval rule ever concludes GExpr(EVar _) *)
+           exfalso. destruct (GEval_never_var_or_fun P G0 (BExpr (EFun f0 args0)) G1 (GExpr (EVar w)) Hrec1) as [Hnv _].
+           exact (Hnv w eq_refl).
+        -- (* EBot: Hrec2's own scrutinee is EBot, forcing v1 = EBot, contradicting Con *)
+           exfalso.
+           assert (Hxb : (hupd G1 x0 (GExpr EBot)) x0 = Some (GExpr EBot))
+             by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+           assert (Hvb : v1 = GExpr EBot) by (eapply GEval_casebot_forces_bot; [exact Hrec2 | exact Hxb]).
+           subst v1. inversion Hcorr.
+        -- (* EFree: impossible for a program satisfying NoBareFreeOrChoiceProgWF --
+              a bare, un-let-bound `free` can never be a function body's own tail. *)
+           exfalso.
+           destruct (GEval_result_not_free_or_choice P HNBFC G0 (BExpr (EFun f0 args0)) G1
+                       (GExpr EFree) Hrec1 I) as [Hne _].
+           exact (Hne eq_refl).
+        -- (* EChoice: ditto -- a bare, un-cased choice can never be a function
+              body's own tail either. *)
+           exfalso.
+           destruct (GEval_result_not_free_or_choice P HNBFC G0 (BExpr (EFun f0 args0)) G1
+                       (GExpr (EChoice y1 z1)) Hrec1 I) as [_ Hne].
+           exact (Hne y1 z1 eq_refl).
+        -- (* EFun: impossible, G_Fun always further evaluates its own body *)
+           exfalso. destruct (GEval_never_var_or_fun P G0 (BExpr (EFun f0 args0)) G1 (GExpr (EFun f1 args1)) Hrec1) as [_ Hnf].
+           exact (Hnf f1 args1 eq_refl).
+        -- (* ECon c1 args1: direct, via HeapCorr_update_from_fun + IH2 *)
+           assert (Hgam1x0 : Gam1 x0 = Some (BExpr (EFun f0 args0))) by (rewrite Hgx1; exact Hgamx0).
+           assert (HHCd : HeapCorr (hupd G1 x0 (GExpr (ECon c1 args1))) (hupd Gam1 x0 (BExpr (ECon c1 args1))))
+             by exact (HeapCorr_update_from_fun G1 Gam1 x0 f0 args0 (GExpr (ECon c1 args1)) HHC1 Hg1x0).
+           assert (HNVTd : NoVarThunk (hupd G1 x0 (GExpr (ECon c1 args1)))).
+           { intros w z Heq. destruct (Nat.eq_dec w x0) as [Heqwx0 | Hnewx0].
+             - subst w. unfold hupd in Heq; rewrite Nat.eqb_refl in Heq. discriminate Heq.
+             - rewrite (hupd_neq G1 x0 (GExpr (ECon c1 args1)) w Hnewx0) in Heq. exact (HNVT1 w z Heq). }
+           assert (HWFd : WellFoundedFwd (hupd G1 x0 (GExpr (ECon c1 args1)))).
+           { eapply WellFoundedFwd_update_from_fun; [exact HWF1 | exact Hg1x0 | ].
+             intros y Hcontra; discriminate Hcontra. }
+           assert (HCCd : ChainConsistent (hupd G1 x0 (GExpr (ECon c1 args1))) (hupd Gam1 x0 (BExpr (ECon c1 args1))))
+             by exact (ChainConsistent_update_from_fun G1 Gam1 x0 f0 args0 (GExpr (ECon c1 args1)) HCC1 Hgam1x0).
+           assert (HACd : AliasConsistent (hupd G1 x0 (GExpr (ECon c1 args1))) (hupd Gam1 x0 (BExpr (ECon c1 args1))))
+             by exact (AliasConsistent_update_from_fun G1 Gam1 x0 f0 args0 (GExpr (ECon c1 args1)) HAC1 Hgam1x0).
+           assert (HGraphClosedd : GraphClosed (hupd G1 x0 (GExpr (ECon c1 args1)))).
+           { intros z g Hzg w Hw. destruct (Nat.eq_dec z x0) as [Heqz | Hneqz].
+             - subst z. unfold hupd in Hzg. rewrite Nat.eqb_refl in Hzg. injection Hzg as Hzg; subst g.
+               apply hupd_preserves_some_gen. exact (Hvxclosed w Hw).
+             - rewrite (hupd_neq G1 x0 (GExpr (ECon c1 args1)) z Hneqz) in Hzg.
+               apply hupd_preserves_some_gen. exact (HGraphClosedG1 z g Hzg w Hw). }
+           assert (Heclosedd : forall w, In w (free_vars_b (BCase x0 brs0)) -> (hupd G1 x0 (GExpr (ECon c1 args1))) w <> None).
+           { intros w Hw. destruct (Nat.eq_dec w x0) as [Heqw | Hneqw].
+             - subst w. unfold hupd; rewrite Nat.eqb_refl; discriminate.
+             - apply hupd_preserves_some_gen.
+               exact (GEval_domain_mono P G0 (BExpr (EFun f0 args0)) G1 (GExpr (ECon c1 args1)) Hrec1 w (Heclosed w Hw)). }
+           destruct (IH2 (hupd Gam1 x0 (BExpr (ECon c1 args1))) HHCd HNVTd HNAL HWFd HCCd HACd
+                       HGraphClosedd Heclosedd) as [IH2a _].
+           destruct (IH2a c args Hcorr) as [Gam2 [HNE2 HHC2]].
+           assert (HforceX0 : NEval_left P nil Gam (BExpr (EVar x0)) (hupd Gam1 x0 (BExpr (ECon c1 args1))) (BExpr (ECon c1 args1))).
+           { eapply NL_VarExp.
+             - intro Hin; destruct Hin.
+             - exact Hgamx0.
+             - intros cc argscc Hcontra; discriminate Hcontra.
+             - intro Hcontra; discriminate Hcontra.
+             - intro Hcontra; discriminate Hcontra.
+             - (* TEMPORARY (Sec.70 in-progress): Hplug's own weakening (Sec.69/70)
+                  means this no longer hands back Gam1 literally -- needs the same
+                  heap-transport argument the GFwd y0' branch below already builds.
+                  Isolated here, admitted, while NEval_left_let_chain_to_value's own
+                  remaining cases are finished first; not yet revisited. *)
+               admit. }
+           assert (Hxeqc1 : (hupd Gam1 x0 (BExpr (ECon c1 args1))) x0 = Some (BExpr (ECon c1 args1)))
+             by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+           destruct (NEval_left_bcase_shape P nil (hupd Gam1 x0 (BExpr (ECon c1 args1))) x0 brs0 Gam2
+                       (BExpr (ECon c args)) HNE2) as
+             [ [c' [zs [ys [body [Gmid [Hforce0 [HIn [Hlen Hbody0]]]]]]]]
+             | [x' [Gmid [c1' [ys1 [body1 [ws [Hforce0 [Hhd [Hlenws [HNDws [Hfrws [Hnbws Hbodyguess]]]]]]]]]]]] ].
+           ++ destruct (NEval_left_evar_shape P nil (hupd Gam1 x0 (BExpr (ECon c1 args1))) x0 Gmid
+                          (BExpr (ECon c' zs)) Hforce0) as
+                [ [Hcase1 [HeqGmid _]]
+                | [ [Hcase2 [_ Heqv]]
+                  | [ [Hcase3 [_ Heqv]]
+                    | [_ [e1 [G1x [Hz1 [Hne1 [_ [_ [_ HeqGmid]]]]]]]] ] ] ]; try discriminate Heqv.
+              ** rewrite Hxeqc1 in Hcase1. injection Hcase1 as Heqc' Heqzs. subst c' zs Gmid.
+                 exists Gam2. split; [ | exact HHC2].
+                 eapply NL_Select; [exact HforceX0 | exact HIn | exact Hlen | exact Hbody0].
+              ** exfalso. rewrite Hxeqc1 in Hz1. injection Hz1 as Hz1. exact (Hne1 c1 args1 (eq_sym Hz1)).
+           ++ exfalso.
+              destruct (NEval_left_evar_shape P nil (hupd Gam1 x0 (BExpr (ECon c1 args1))) x0 Gmid
+                          (BExpr (EVar x')) Hforce0) as
+                [ [Hcase1 _] | [ [Hcase2 _] | [ [Hcase3 _] | [_ [e1 [G1x [Hz1 [Hne1 _]]]]]]]].
+              ** rewrite Hxeqc1 in Hcase1; discriminate Hcase1.
+              ** rewrite Hxeqc1 in Hcase2; discriminate Hcase2.
+              ** rewrite Hxeqc1 in Hcase3; discriminate Hcase3.
+              ** rewrite Hxeqc1 in Hz1. injection Hz1 as Hz1. exact (Hne1 c1 args1 (eq_sym Hz1)).
+      * (* vx = GFwd y0' : mirrors theorem2's own G_CaseChoice/NL_Select pattern,
+           with Hplug's "replay from Gam1" standing in for NL_Or's own bias *)
+        assert (Hx0y0' : x0 <> y0').
+        { intro Heqxy; subst y0'.
+          destruct (GEval_case_gives_ContractLoc P (hupd G1 x0 (GFwd x0)) x0 brs0 G2 v1 Hrec2) as [w Hcl].
+          assert (Hself : (hupd G1 x0 (GFwd x0)) x0 = Some (GFwd x0))
+            by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+          exact (ContractLoc_no_selfFwd (hupd G1 x0 (GFwd x0)) x0 w Hcl Hself). }
+        assert (Hgam1x0 : Gam1 x0 = Some (BExpr (EFun f0 args0))) by (rewrite Hgx1; exact Hgamx0).
+        assert (HHCd : HeapCorr (hupd G1 x0 (GFwd y0')) (hupd Gam1 x0 (BExpr (EVar y0'))))
+          by exact (HeapCorr_update_from_fun G1 Gam1 x0 f0 args0 (GFwd y0') HHC1 Hg1x0).
+        assert (HNVTd : NoVarThunk (hupd G1 x0 (GFwd y0'))).
+        { intros w z Heq. destruct (Nat.eq_dec w x0) as [Heqwx0 | Hnewx0].
+          - subst w. unfold hupd in Heq; rewrite Nat.eqb_refl in Heq. discriminate Heq.
+          - rewrite (hupd_neq G1 x0 (GFwd y0') w Hnewx0) in Heq. exact (HNVT1 w z Heq). }
+        assert (HWFd : WellFoundedFwd (hupd G1 x0 (GFwd y0'))).
+        { eapply WellFoundedFwd_update_from_fun; [exact HWF1 | exact Hg1x0 | ].
+          intros y Heqy; injection Heqy as Heqy; subst y.
+          assert (Hgfwd : (hupd G1 x0 (GFwd y0')) x0 = Some (GFwd y0'))
+            by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+          inversion Hrec2; subst;
+            try (match goal with
+                 | Hx : hupd G1 x0 (GFwd y0') x0 = Some (GExpr _) |- _ =>
+                     rewrite Hgfwd in Hx; discriminate Hx
+                 end).
+          rewrite Hgfwd in H2. injection H2 as H2. subst y.
+          destruct (GEval_case_gives_ContractLoc P (hupd G1 x0 (GFwd y0')) y0' brs0 G2 v1 H5) as [ytgt Hclyt].
+          exists ytgt. exact Hclyt. }
+        assert (HCCd : ChainConsistent (hupd G1 x0 (GFwd y0')) (hupd Gam1 x0 (BExpr (EVar y0'))))
+          by exact (ChainConsistent_update_from_fun G1 Gam1 x0 f0 args0 (GFwd y0') HCC1 Hgam1x0).
+        assert (HACd : AliasConsistent (hupd G1 x0 (GFwd y0')) (hupd Gam1 x0 (BExpr (EVar y0'))))
+          by exact (AliasConsistent_update_from_fun G1 Gam1 x0 f0 args0 (GFwd y0') HAC1 Hgam1x0).
+        assert (HGraphClosedd : GraphClosed (hupd G1 x0 (GFwd y0'))).
+        { intros z g Hzg w Hw. destruct (Nat.eq_dec z x0) as [Heqz | Hneqz].
+          - subst z. unfold hupd in Hzg. rewrite Nat.eqb_refl in Hzg. injection Hzg as Hzg; subst g.
+            apply hupd_preserves_some_gen. exact (Hvxclosed w Hw).
+          - rewrite (hupd_neq G1 x0 (GFwd y0') z Hneqz) in Hzg.
+            apply hupd_preserves_some_gen. exact (HGraphClosedG1 z g Hzg w Hw). }
+        assert (Heclosedd : forall w, In w (free_vars_b (BCase x0 brs0)) -> (hupd G1 x0 (GFwd y0')) w <> None).
+        { intros w Hw. destruct (Nat.eq_dec w x0) as [Heqw | Hneqw].
+          - subst w. unfold hupd; rewrite Nat.eqb_refl; discriminate.
+          - apply hupd_preserves_some_gen.
+            exact (GEval_domain_mono P G0 (BExpr (EFun f0 args0)) G1 (GFwd y0') Hrec1 w (Heclosed w Hw)). }
+        destruct (IH2 (hupd Gam1 x0 (BExpr (EVar y0'))) HHCd HNVTd HNAL HWFd HCCd HACd
+                    HGraphClosedd Heclosedd) as [IH2a _].
+        destruct (IH2a c args Hcorr) as [Gam2 [HNE2 HHC2]].
+        assert (Hgamx0eq : hupd Gam1 x0 (BExpr (EVar y0')) x0 = Some (BExpr (EVar y0')))
+          by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+        destruct (NEval_left_bcase_shape P nil (hupd Gam1 x0 (BExpr (EVar y0'))) x0 brs0 Gam2
+                    (BExpr (ECon c args)) HNE2) as
+          [ [c' [zs [ys [body [Gmid [Hforce0 [HIn [Hlen Hbody0]]]]]]]]
+          | [x' [Gmid [c1' [ys1 [body1 [ws [Hforce0 [Hhd [Hlenws [HNDws [Hfrws [Hnbws Hbodyguess]]]]]]]]]]]] ].
+        -- (* NL_Select shape: x0's OWN scrutinee-forcing (Hforce0) is NOT yet
+              guarded, but x0's slot is EVar y0' (non-terminal), so it must be
+              NL_VarExp -- inverting it directly hands back the guarded
+              (x0::nil) recursive premise, which frame_guarded can use as-is
+              (no separate widening step needed, unlike G_CaseChoice's own
+              NL_Select branch, where the analogous fact came pre-guarded at
+              nil and had to be widened instead of extracted). *)
+           destruct (NEval_left_evar_shape P nil (hupd Gam1 x0 (BExpr (EVar y0'))) x0 Gmid
+                       (BExpr (ECon c' zs)) Hforce0) as
+             [ [Hcase1 _] | [ [Hcase2 _] | [ [Hcase3 _] | [_ [e1 [G1x [Hz1 [Hne1 [Hne2 [Hne3 [Hrec2inner HeqGmid]]]]]]]]]]].
+           ++ rewrite Hgamx0eq in Hcase1; discriminate Hcase1.
+           ++ exfalso. rewrite Hgamx0eq in Hcase2. injection Hcase2 as Hcase2. exact (Hx0y0' (eq_sym Hcase2)).
+           ++ rewrite Hgamx0eq in Hcase3; discriminate Hcase3.
+           ++ rewrite Hgamx0eq in Hz1. injection Hz1 as Hz1. subst e1.
+              assert (Hex1 : forall cc argscc, BExpr (EVar y0') <> BExpr (ECon cc argscc))
+                by (intros cc argscc Hcontra; discriminate Hcontra).
+              assert (Hex2 : BExpr (EVar y0') <> BExpr (EVar x0))
+                by (intro Hcontra; injection Hcontra as Hcontra; exact (Hx0y0' (eq_sym Hcontra))).
+              assert (Hex3 : BExpr (EVar y0') <> BExpr EFree) by (intro Hcontra; discriminate Hcontra).
+              assert (Hey1 : forall cc argscc, BExpr (EFun f0 args0) <> BExpr (ECon cc argscc))
+                by (intros cc argscc Hcontra; discriminate Hcontra).
+              assert (Hey2 : BExpr (EFun f0 args0) <> BExpr (EVar x0)) by (intro Hcontra; discriminate Hcontra).
+              assert (Hey3 : BExpr (EFun f0 args0) <> BExpr EFree) by (intro Hcontra; discriminate Hcontra).
+              assert (HxF0 : In x0 (x0 :: nil)) by (left; reflexivity).
+              destruct (NEval_left_frame_guarded x0 (BExpr (EVar y0')) Hex1 Hex2 Hex3
+                          (BExpr (EFun f0 args0)) Hey1 Hey2 Hey3
+                          P (x0 :: nil) (hupd Gam1 x0 (BExpr (EVar y0'))) (BExpr (EVar y0')) G1x
+                          (BExpr (ECon c' zs)) Hrec2inner
+                          HxF0 Hgamx0eq
+                          Gam1 (fun w Hw => eq_sym (hupd_neq Gam1 x0 (BExpr (EVar y0')) w Hw)) Hgam1x0)
+                as [Gam2' [Hforce0' Heqptw]].
+              assert (HforceX0 : NEval_left P nil Gam (BExpr (EVar x0)) (hupd Gam2' x0 (BExpr (ECon c' zs)))
+                                    (BExpr (ECon c' zs))).
+              { eapply NL_VarExp.
+                - intro Hin; destruct Hin.
+                - exact Hgamx0.
+                - intros cc argscc Hcontra; discriminate Hcontra.
+                - intro Hcontra; discriminate Hcontra.
+                - intro Hcontra; discriminate Hcontra.
+                - (* TEMPORARY (Sec.70 in-progress): see the isolated admit at the
+                     vx=ECon branch above -- same reason, deferred the same way. *)
+                  admit. }
+              (* Gmid ALREADY has x0 memoized to Con c' zs directly (Hforce0's own
+                 scrutinee WAS x0 itself, unlike G_CaseChoice's analogous branch,
+                 where the scrutinee was y0 and x0 remained a lazy alias needing a
+                 separate shortcut_alias promotion) -- so no alias reconciliation
+                 is needed at all here, just a plain pointwise-heap replay. *)
+              assert (Heqheap : forall w, hupd Gam2' x0 (BExpr (ECon c' zs)) w = Gmid w).
+              { intro w. destruct (Nat.eq_dec w x0) as [Heqwx0 | Hnewx0].
+                - subst w. unfold hupd; rewrite Nat.eqb_refl.
+                  rewrite HeqGmid. unfold hupd; rewrite Nat.eqb_refl. reflexivity.
+                - rewrite (hupd_neq Gam2' x0 (BExpr (ECon c' zs)) w Hnewx0).
+                  rewrite HeqGmid. rewrite (hupd_neq G1x x0 (BExpr (ECon c' zs)) w Hnewx0).
+                  exact (Heqptw w Hnewx0). }
+           destruct (NEval_left_pointwise_heap P nil Gmid
+                       (rename_b (zipsubst ys zs) body) Gam2 (BExpr (ECon c args)) Hbody0
+                       (hupd Gam2' x0 (BExpr (ECon c' zs))) Heqheap)
+             as [Gam2''' [Hbodyfinal Heqfinal2]].
+              exists Gam2'''. split.
+              +++ eapply NL_Select; [exact HforceX0 | exact HIn | exact Hlen | exact Hbodyfinal].
+              +++ eapply HeapCorr_pointwise; [exact HHC2 | exact Heqfinal2].
+        -- (* NL_Guess shape: mirrors the NL_Select branch above EXACTLY (same
+              inversion, same frame_guarded call, same Hplug bridge), just
+              targeting a self-loop EVar x' instead of Con c' zs -- the full
+              STEP1-4/two-location-VarChase machinery from
+              HeapCorr_fwd_transfer_fwdhere_free's own x' <> y case is NOT
+              needed here: that case had to reconcile TWO INDEPENDENTLY-
+              chosen fresh guesses (one from forcing x directly, one from
+              forcing y and continuing separately); here there is only ONE
+              guess in play (Hbodyguess itself, already shared between the
+              x0-scrutinee derivation and what Hplug needs), so a plain
+              pointwise-heap replay suffices, same as the NL_Select branch. *)
+           destruct (NEval_left_evar_shape P nil (hupd Gam1 x0 (BExpr (EVar y0'))) x0 Gmid
+                       (BExpr (EVar x')) Hforce0) as
+             [ [Hcase1 [_ [c'' [args'' Heqv]]]]
+             | [ [Hcase2 _] | [ [Hcase3 _] | [_ [e1 [G1x [Hz1 [Hne1 [Hne2 [Hne3 [Hrec2inner HeqGmid]]]]]]]]]]].
+           ++ discriminate Heqv.
+           ++ exfalso. rewrite Hgamx0eq in Hcase2. injection Hcase2 as Hcase2. exact (Hx0y0' (eq_sym Hcase2)).
+           ++ rewrite Hgamx0eq in Hcase3; discriminate Hcase3.
+           ++ rewrite Hgamx0eq in Hz1. injection Hz1 as Hz1. subst e1.
+              assert (Hex1 : forall cc argscc, BExpr (EVar y0') <> BExpr (ECon cc argscc))
+                by (intros cc argscc Hcontra; discriminate Hcontra).
+              assert (Hex2 : BExpr (EVar y0') <> BExpr (EVar x0))
+                by (intro Hcontra; injection Hcontra as Hcontra; exact (Hx0y0' (eq_sym Hcontra))).
+              assert (Hex3 : BExpr (EVar y0') <> BExpr EFree) by (intro Hcontra; discriminate Hcontra).
+              assert (Hey1 : forall cc argscc, BExpr (EFun f0 args0) <> BExpr (ECon cc argscc))
+                by (intros cc argscc Hcontra; discriminate Hcontra).
+              assert (Hey2 : BExpr (EFun f0 args0) <> BExpr (EVar x0)) by (intro Hcontra; discriminate Hcontra).
+              assert (Hey3 : BExpr (EFun f0 args0) <> BExpr EFree) by (intro Hcontra; discriminate Hcontra).
+              assert (HxF0 : In x0 (x0 :: nil)) by (left; reflexivity).
+              destruct (NEval_left_frame_guarded x0 (BExpr (EVar y0')) Hex1 Hex2 Hex3
+                          (BExpr (EFun f0 args0)) Hey1 Hey2 Hey3
+                          P (x0 :: nil) (hupd Gam1 x0 (BExpr (EVar y0'))) (BExpr (EVar y0')) G1x
+                          (BExpr (EVar x')) Hrec2inner
+                          HxF0 Hgamx0eq
+                          Gam1 (fun w Hw => eq_sym (hupd_neq Gam1 x0 (BExpr (EVar y0')) w Hw)) Hgam1x0)
+                as [Gam2' [Hforce0' Heqptw]].
+              assert (HforceX0 : NEval_left P nil Gam (BExpr (EVar x0)) (hupd Gam2' x0 (BExpr (EVar x')))
+                                    (BExpr (EVar x'))).
+              { eapply NL_VarExp.
+                - intro Hin; destruct Hin.
+                - exact Hgamx0.
+                - intros cc argscc Hcontra; discriminate Hcontra.
+                - intro Hcontra; discriminate Hcontra.
+                - intro Hcontra; discriminate Hcontra.
+                - (* TEMPORARY (Sec.70 in-progress): see the isolated admit at the
+                     vx=ECon branch above -- same reason, deferred the same way. *)
+                  admit. }
+              assert (Heqheap : forall w, hupd Gam2' x0 (BExpr (EVar x')) w = Gmid w).
+              { intro w. destruct (Nat.eq_dec w x0) as [Heqwx0 | Hnewx0].
+                - subst w. unfold hupd; rewrite Nat.eqb_refl.
+                  rewrite HeqGmid. unfold hupd; rewrite Nat.eqb_refl. reflexivity.
+                - rewrite (hupd_neq Gam2' x0 (BExpr (EVar x')) w Hnewx0).
+                  rewrite HeqGmid. rewrite (hupd_neq G1x x0 (BExpr (EVar x')) w Hnewx0).
+                  exact (Heqptw w Hnewx0). }
+              assert (Heqheap2 : forall w,
+                  hupd_list (hupd (hupd Gam2' x0 (BExpr (EVar x'))) x' (BExpr (ECon c1' ws))) ws
+                    (map (fun w0 => BExpr (EVar w0)) ws) w
+                = hupd_list (hupd Gmid x' (BExpr (ECon c1' ws))) ws (map (fun w0 => BExpr (EVar w0)) ws) w).
+              { apply hupd_list_pointwise. intro w. unfold hupd.
+                destruct (Nat.eqb w x') eqn:E; [reflexivity | apply Heqheap]. }
+              destruct (NEval_left_pointwise_heap P nil
+                          (hupd_list (hupd Gmid x' (BExpr (ECon c1' ws))) ws (map (fun w0 => BExpr (EVar w0)) ws))
+                          (rename_b (zipsubst ys1 ws) body1) Gam2 (BExpr (ECon c args)) Hbodyguess
+                          (hupd_list (hupd (hupd Gam2' x0 (BExpr (EVar x'))) x' (BExpr (ECon c1' ws))) ws
+                             (map (fun w0 => BExpr (EVar w0)) ws))
+                          Heqheap2)
+                as [Gam2''' [Hbodyfinal Heqfinal2]].
+              exists Gam2'''. split.
+              +++ eapply NL_Guess; [exact HforceX0 | exact Hhd | exact Hlenws | exact HNDws | | exact Hnbws | exact Hbodyfinal].
+                  intros w Hw. rewrite (Heqheap w). exact (Hfrws w Hw).
+              +++ eapply HeapCorr_pointwise; [exact HHC2 | exact Heqfinal2].
+    + (* Second conjunct (ContractLoc-matching): e IS BCase x0 brs0 here (theorem2's
+         own "e" for the WHOLE G_CaseFun rule, not Hrec1's inner EFun), so this is
+         NOT vacuous -- would need the analogous "force x0 reaches x0'" ->
+         "ContractLoc G2 x0 x0'" argument G_CaseChoice's own second conjunct
+         builds, threaded through the same Con/Fwd split as the first conjunct
+         above; not yet attempted. *)
+      admit.
+  - (* G_CaseChoice *)
+    assert (Hx0y0 : x0 <> y0).
+    { intro Heqxy; subst y0.
+      destruct (GEval_case_gives_ContractLoc P (hupd G0 x0 (GFwd x0)) x0 brs0 G1 v1 Hrec) as [w Hcl].
+      assert (Hself : (hupd G0 x0 (GFwd x0)) x0 = Some (GFwd x0))
+        by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+      exact (ContractLoc_no_selfFwd (hupd G0 x0 (GFwd x0)) x0 w Hcl Hself). }
+    assert (Hgamx0 : Gam x0 = Some (BExpr (EChoice y0 z0))).
+    { assert (HGamx0 := HGam x0). rewrite Hgx0 in HGamx0.
+      destruct HGamx0 as [b [Hb HCE3]].
+      destruct HCE3 as [HCE | [y1 [z1 [c1 [args1 [Hgxfwd _]]]]]].
+      - destruct (CorrE_forced_shape G0 x0 b HCE) as
+          [ [c0 [args0 [Hg1 Hb1]]]
+          | [ [Hg1 Hb1]
+            | [ [f1 [args1 [Hg1 Hb1]]]
+              | [ [y1' [y2' [Hg1 Hb1]]]
+                | [ [z1' [Hg1 Hb1]]
+                  | [ [Hg1 Hb1]
+                    | [ [y1 [Hg1 Hb1]]
+                      | [y1 [z1 [c0 [args0 [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ];
+          rewrite Hgx0 in Hg1; try discriminate Hg1.
+        injection Hg1 as Hg1a Hg1b. subst y1' y2'. rewrite Hb1 in Hb. exact Hb.
+      - rewrite Hgx0 in Hgxfwd. discriminate Hgxfwd. }
+    destruct (GEval_case_gives_ContractLoc P (hupd G0 x0 (GFwd y0)) y0 brs0 G1 v1 Hrec) as [ytgt Hclyt].
+    assert (HWF' : WellFoundedFwd (hupd G0 x0 (GFwd y0)))
+      by exact (WellFoundedFwd_update_choice_to_fwd G0 x0 y0 z0 HWF Hgx0 (ex_intro _ ytgt Hclyt)).
+    assert (HGam' : HeapCorr (hupd G0 x0 (GFwd y0)) (hupd Gam x0 (BExpr (EVar y0))))
+      by exact (HeapCorr_update_choice_to_fwd G0 Gam x0 y0 z0 HGam Hgx0).
+    assert (HNVT' : NoVarThunk (hupd G0 x0 (GFwd y0))).
+    { intros w z Heq. destruct (Nat.eq_dec w x0) as [Heqwx0 | Hnewx0].
+      - subst w. unfold hupd in Heq; rewrite Nat.eqb_refl in Heq. discriminate Heq.
+      - rewrite (hupd_neq G0 x0 (GFwd y0) w Hnewx0) in Heq. exact (HNVT w z Heq). }
+    assert (HCC' : ChainConsistent (hupd G0 x0 (GFwd y0)) (hupd Gam x0 (BExpr (EVar y0))))
+      by exact (ChainConsistent_update_to_fwd_lazy G0 Gam x0 y0 (BExpr (EChoice y0 z0)) HCC Hgamx0
+                  (ltac:(intros cc argscc Heq; discriminate Heq))).
+    assert (HAC' : AliasConsistent (hupd G0 x0 (GFwd y0)) (hupd Gam x0 (BExpr (EVar y0))))
+      by exact (AliasConsistent_update_to_fwd_lazy G0 Gam x0 y0 (BExpr (EChoice y0 z0)) HAC Hgamx0
+                  (ltac:(intros ww Heq; discriminate Heq))).
+    assert (HGraphClosed' : GraphClosed (hupd G0 x0 (GFwd y0))).
+    { intros z g Hzg w Hw. destruct (Nat.eq_dec z x0) as [Heqz | Hneqz].
+      - subst z. unfold hupd in Hzg. rewrite Nat.eqb_refl in Hzg. injection Hzg as Hzg; subst g.
+        simpl in Hw. destruct Hw as [Hw | []]. subst w.
+        apply hupd_preserves_some_gen. exact (HGraphClosed x0 (GExpr (EChoice y0 z0)) Hgx0 y0 (or_introl eq_refl)).
+      - rewrite (hupd_neq G0 x0 (GFwd y0) z Hneqz) in Hzg.
+        apply hupd_preserves_some_gen. exact (HGraphClosed z g Hzg w Hw). }
+    assert (Heclosed' : forall w, In w (free_vars_b (BCase y0 brs0)) -> (hupd G0 x0 (GFwd y0)) w <> None).
+    { intros w Hw. destruct (Nat.eq_dec w x0) as [Heqw | Hneqw].
+      - subst w. unfold hupd; rewrite Nat.eqb_refl; discriminate.
+      - apply hupd_preserves_some_gen. simpl in Hw. destruct Hw as [Hw | Hw].
+        + subst w. exact (HGraphClosed x0 (GExpr (EChoice y0 z0)) Hgx0 y0 (or_introl eq_refl)).
+        + apply Heclosed. simpl. right. exact Hw. }
+    destruct (IH (hupd Gam x0 (BExpr (EVar y0))) HGam' HNVT' HNAL HWF' HCC' HAC'
+                HGraphClosed' Heclosed') as [IH1 IH2].
+    split.
+    + intros c args Hcorr.
+      destruct (IH1 c args Hcorr) as [Gam1 [HNE HHC]].
+      destruct (NEval_left_bcase_shape P nil (hupd Gam x0 (BExpr (EVar y0))) y0 brs0 Gam1 (BExpr (ECon c args)) HNE) as
+        [ [c' [zs [ys [body [Gmid [Hforcey0 [HIn [Hlen Hbody]]]]]]]]
+        | [x' [Gmid [c1' [ys1 [body1 [ws [Hforcey0 [Hhd [Hlenws [HNDws [Hfrws [Hnbws Hbodyguess]]]]]]]]]]]] ].
+      * (* NL_Select shape *)
+        assert (Hex1 : forall cc argscc, BExpr (EVar y0) <> BExpr (ECon cc argscc))
+          by (intros cc argscc Hcontra; discriminate Hcontra).
+        assert (Hex2 : BExpr (EVar y0) <> BExpr (EVar x0))
+          by (intro Hcontra; injection Hcontra as Hcontra; exact (Hx0y0 (eq_sym Hcontra))).
+        assert (Hex3 : BExpr (EVar y0) <> BExpr EFree) by (intro Hcontra; discriminate Hcontra).
+        assert (Hey1 : forall cc argscc, BExpr (EChoice y0 z0) <> BExpr (ECon cc argscc))
+          by (intros cc argscc Hcontra; discriminate Hcontra).
+        assert (Hey2 : BExpr (EChoice y0 z0) <> BExpr (EVar x0)) by (intro Hcontra; discriminate Hcontra).
+        assert (Hey3 : BExpr (EChoice y0 z0) <> BExpr EFree) by (intro Hcontra; discriminate Hcontra).
+        assert (HxF0 : In x0 (x0::nil)) by (left; reflexivity).
+        assert (Hgamx0eq : hupd Gam x0 (BExpr (EVar y0)) x0 = Some (BExpr (EVar y0)))
+          by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+        assert (Hforcey0_x0 : NEval_left P (x0::nil) (hupd Gam x0 (BExpr (EVar y0)))
+                                 (BExpr (EVar y0)) Gmid (BExpr (ECon c' zs)))
+          by exact (NEval_left_alias_weaken_force_y P x0 y0 Hx0y0 (hupd Gam x0 (BExpr (EVar y0)))
+                      Gmid (BExpr (ECon c' zs)) Hforcey0 Hgamx0eq).
+        destruct (NEval_left_frame_guarded x0 (BExpr (EVar y0)) Hex1 Hex2 Hex3
+                    (BExpr (EChoice y0 z0)) Hey1 Hey2 Hey3
+                    P (x0::nil) (hupd Gam x0 (BExpr (EVar y0))) (BExpr (EVar y0)) Gmid (BExpr (ECon c' zs)) Hforcey0_x0
+                    HxF0 Hgamx0eq
+                    Gam (fun w Hw => eq_sym (hupd_neq Gam x0 (BExpr (EVar y0)) w Hw)) Hgamx0)
+          as [Gam2' [Hforcey0' Heqptw]].
+        assert (HforceX0 : NEval_left P nil Gam (BExpr (EVar x0)) (hupd Gam2' x0 (BExpr (ECon c' zs))) (BExpr (ECon c' zs))).
+        { eapply NL_VarExp.
+          - intro Hin; destruct Hin.
+          - exact Hgamx0.
+          - intros cc argscc Hcontra; discriminate Hcontra.
+          - intro Hcontra; discriminate Hcontra.
+          - intro Hcontra; discriminate Hcontra.
+          - apply NL_Or. exact Hforcey0'. }
+        assert (Hgmidx0 : Gmid x0 = Some (BExpr (EVar y0)))
+          by exact (NEval_left_alias_persists_through_force P x0 y0 Hx0y0
+                      (hupd Gam x0 (BExpr (EVar y0))) Gmid (BExpr (ECon c' zs)) Hforcey0 Hgamx0eq).
+        assert (Hgmidy0 : Gmid y0 = Some (BExpr (ECon c' zs)))
+          by exact (NEval_left_own_slot P nil (hupd Gam x0 (BExpr (EVar y0))) y0 Gmid (BExpr (ECon c' zs)) Hforcey0).
+        destruct (NEval_left_shortcut_alias P x0 y0 c' zs Hx0y0 nil Gmid
+                    (rename_b (zipsubst ys zs) body) Gam1 (BExpr (ECon c args)) Hbody
+                    (or_introl Hgmidx0) Hgmidy0)
+          as [Gam1' [Hbody' Heqfinal]].
+        assert (Heqheap : forall w, hupd Gam2' x0 (BExpr (ECon c' zs)) w = hupd Gmid x0 (BExpr (ECon c' zs)) w).
+        { intro w. destruct (Nat.eq_dec w x0) as [Heqwx0 | Hnewx0].
+          - subst w. unfold hupd; rewrite Nat.eqb_refl; reflexivity.
+          - rewrite (hupd_neq Gam2' x0 (BExpr (ECon c' zs)) w Hnewx0).
+            rewrite (hupd_neq Gmid x0 (BExpr (ECon c' zs)) w Hnewx0).
+            exact (Heqptw w Hnewx0). }
+        destruct (NEval_left_pointwise_heap P nil (hupd Gmid x0 (BExpr (ECon c' zs)))
+                    (rename_b (zipsubst ys zs) body) Gam1' (BExpr (ECon c args)) Hbody'
+                    (hupd Gam2' x0 (BExpr (ECon c' zs))) Heqheap)
+          as [Gam1'' [Hbodyfinal Heqfinal2]].
+        exists Gam1''. split.
+        -- eapply NL_Select; [exact HforceX0 | exact HIn | exact Hlen | exact Hbodyfinal].
+        -- assert (Hgam1_persist := NEval_left_alias_or_con_persists P x0 y0 c' zs Hx0y0 nil Gmid
+                                       (rename_b (zipsubst ys zs) body) Gam1 (BExpr (ECon c args)) Hbody
+                                       (or_introl Hgmidx0) Hgmidy0).
+           destruct Hgam1_persist as [Hgam1x0_disj Hgam1y0].
+           assert (Hchase_x0 : VarChase Gam1 x0 (BExpr (ECon c' zs))).
+           { destruct Hgam1x0_disj as [Heq1 | Heq1].
+             - eapply VChase_Hop; [exact Heq1 | exact (not_eq_sym Hx0y0) | ].
+               apply VChase_Here; [exact Hgam1y0 | intros ww Hcontra; discriminate Hcontra].
+             - apply VChase_Here; [exact Heq1 | intros ww Hcontra; discriminate Hcontra]. }
+           assert (Hg1x0fwd : G1 x0 = Some (GFwd y0)).
+           { eapply GEval_fwd_permanent; [exact Hrec | ].
+             unfold hupd; rewrite Nat.eqb_refl; reflexivity. }
+           destruct (HeapCorr_con_to_contractloc G1 Gam1 y0 c' zs HHC Hgam1y0) as [ytgt' [Hcl' Hz']].
+           assert (HHCupdated : HeapCorr G1 (hupd Gam1 x0 (BExpr (ECon c' zs))))
+             by exact (HeapCorr_update_achieved G1 Gam1 x0 y0 ytgt' c' zs HHC Hg1x0fwd Hcl' Hz' Hchase_x0).
+           eapply HeapCorr_pointwise; [exact HHCupdated | ].
+           intro w. rewrite (Heqfinal2 w). exact (Heqfinal w).
+      * (* NL_Guess shape: closed via NEval_left_choice_as_alias_bcase, since
+           x0's OWN Nat-heap slot is EChoice y0 z0, not a literal alias -- call
+           HeapCorr_fwd_transfer_fwdhere_free (unmodified) against the
+           ALIAS-shaped heap the IH already hands us (hupd Gam x0 (EVar y0)),
+           then transport its result back across the EChoice/EVar swap at x0. *)
+        assert (Hg0x0fwd : (hupd G0 x0 (GFwd y0)) x0 = Some (GFwd y0))
+          by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+        assert (Hgamx0eq : hupd Gam x0 (BExpr (EVar y0)) x0 = Some (BExpr (EVar y0)))
+          by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+        destruct (HeapCorr_fwd_transfer_fwdhere_free P (hupd G0 x0 (GFwd y0)) (hupd Gam x0 (BExpr (EVar y0)))
+                    HGam' x0 y0 Hg0x0fwd Hx0y0 Hgamx0eq
+                    brs0 x' c1' ys1 body1 ws Gmid Gam1 (BExpr (ECon c args))
+                    Hforcey0 Hhd Hlenws HNDws Hfrws Hnbws Hbodyguess)
+          as [Gam'' [HNE'' HTransfer]].
+        destruct (NEval_left_choice_as_alias_bcase P x0 y0 z0 Hx0y0 brs0
+                    (hupd Gam x0 (BExpr (EVar y0))) Gam'' (BExpr (ECon c args)) HNE'' Hgamx0eq
+                    Gam (fun w Hw => eq_sym (hupd_neq Gam x0 (BExpr (EVar y0)) w Hw)) Hgamx0)
+          as [Gam''' [HNE''' Heqfull]].
+        exists Gam'''. split.
+        -- exact HNE'''.
+        -- assert (Hg1x0fwd : G1 x0 = Some (GFwd y0)).
+           { eapply GEval_fwd_permanent; [exact Hrec | ].
+             unfold hupd; rewrite Nat.eqb_refl; reflexivity. }
+           assert (Hclx' : x' <> y0 -> ContractLoc G1 y0 x')
+             by (intros _; exact (IH2 y0 brs0 eq_refl nil Gmid x' Hforcey0)).
+           eapply HeapCorr_pointwise.
+           ++ exact (HTransfer G1 Hg1x0fwd Hclx' HHC).
+           ++ exact Heqfull.
+    + intros x brs Heqxbrs. injection Heqxbrs as Heqx Heqbrs. subst x brs.
+      intros F Gmid x' Hforce.
+      destruct (NEval_left_evar_shape P F Gam x0 Gmid (BExpr (EVar x')) Hforce) as
+        [ [Hcase1 _] | [ [Hcase2 _] | [ [Hcase3 _] | [_ [e1 [G1' [Hz [Hne1 [Hne2 [Hne3 [Hrec2 _]]]]]]]]]]].
+      * rewrite Hgamx0 in Hcase1; discriminate Hcase1.
+      * rewrite Hgamx0 in Hcase2; discriminate Hcase2.
+      * rewrite Hgamx0 in Hcase3; discriminate Hcase3.
+      * rewrite Hgamx0 in Hz. injection Hz as Hz. subst e1.
+        assert (Hrec3 := NEval_left_echoice_shape P (x0::F) Gam y0 z0 G1' (BExpr (EVar x')) Hrec2).
+        assert (Hex1 : forall cc argscc, BExpr (EChoice y0 z0) <> BExpr (ECon cc argscc))
+          by (intros cc argscc Hcontra; discriminate Hcontra).
+        assert (Hex2 : BExpr (EChoice y0 z0) <> BExpr (EVar x0)) by (intro Hcontra; discriminate Hcontra).
+        assert (Hex3 : BExpr (EChoice y0 z0) <> BExpr EFree) by (intro Hcontra; discriminate Hcontra).
+        assert (Hex2_1 : forall cc argscc, BExpr (EVar y0) <> BExpr (ECon cc argscc))
+          by (intros cc argscc Hcontra; discriminate Hcontra).
+        assert (Hex2_2 : BExpr (EVar y0) <> BExpr (EVar x0))
+          by (intro Hcontra; injection Hcontra as Hcontra; exact (Hx0y0 (eq_sym Hcontra))).
+        assert (Hex2_3 : BExpr (EVar y0) <> BExpr EFree) by (intro Hcontra; discriminate Hcontra).
+        assert (HxF : In x0 (x0::F)) by (left; reflexivity).
+        assert (Hgamx0eq : hupd Gam x0 (BExpr (EVar y0)) x0 = Some (BExpr (EVar y0)))
+          by (unfold hupd; rewrite Nat.eqb_refl; reflexivity).
+        destruct (NEval_left_frame_guarded x0 (BExpr (EChoice y0 z0)) Hex1 Hex2 Hex3
+                    (BExpr (EVar y0)) Hex2_1 Hex2_2 Hex2_3
+                    P (x0::F) Gam (BExpr (EVar y0)) G1' (BExpr (EVar x')) Hrec3 HxF Hgamx0
+                    (hupd Gam x0 (BExpr (EVar y0)))
+                    (fun w Hw => hupd_neq Gam x0 (BExpr (EVar y0)) w Hw) Hgamx0eq)
+          as [Gam2' [Hrec3' _]].
+        assert (Hcl : ContractLoc G1 y0 x')
+          by exact (IH2 y0 brs0 eq_refl (x0::F) Gam2' x' Hrec3').
+        assert (Hxfwd : G1 x0 = Some (GFwd y0)).
+        { eapply GEval_fwd_permanent; [exact Hrec | ].
+          unfold hupd; rewrite Nat.eqb_refl; reflexivity. }
+        eapply CL_Fwd; [exact Hxfwd | exact Hcl].
+  - (* G_CaseCon *)
+    split.
+    + intros c' args' Hcorr.
+      assert (HGamx0 := HGam x0). rewrite Hgx0 in HGamx0.
+      destruct HGamx0 as [b [Hb HCE3]].
+      destruct HCE3 as [HCE | [yd [zd [cd [argsd [Hgxfwd [Hcld [Hzd HVCd]]]]]]]].
+      * destruct (CorrE_forced_shape G0 x0 b HCE) as
+          [ [c0 [args0 [Hg1 Hb1]]]
+          | [ [Hg1 Hb1]
+            | [ [f1 [args1 [Hg1 Hb1]]]
+              | [ [y1 [y2 [Hg1 Hb1]]]
+                | [ [z1 [Hg1 Hb1]]
+                  | [ [Hg1 Hb1]
+                    | [ [y1 [Hg1 Hb1]]
+                      | [y1 [z1 [c0 [args0 [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ];
+          rewrite Hgx0 in Hg1; try discriminate Hg1.
+        injection Hg1 as Hg1a Hg1b. subst c0 args0. rewrite Hb1 in Hb.
+        assert (HNALbody : NoAliasLetB (rename_b (zipsubst ys zs) body))
+          by exact (NoAliasLetB_rename (zipsubst ys zs) body (NoAliasLetB_in brs0 c ys body HIn HNAL)).
+        assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b (zipsubst ys zs) body)) -> G0 w <> None).
+        { intros w Hw. destruct (free_vars_b_rename_subset (zipsubst ys zs) body w Hw) as [y [Hy Hsy]].
+          destruct (in_dec Nat.eq_dec y ys) as [Hyin | Hynin].
+          - assert (Hwzs : In w zs) by (rewrite <- Hsy; apply (zipsubst_in ys zs Hlen y Hyin)).
+            exact (HGraphClosed x0 (GExpr (ECon c zs)) Hgx0 w Hwzs).
+          - assert (Hzid : zipsubst ys zs y = y) by (apply zipsubst_notin; exact Hynin).
+            assert (HinBCase : In y (free_vars_b (BCase x0 brs0))).
+            { apply (free_vars_b_bcase_branch x0 brs0 c ys body HIn).
+              apply remove_all_in_intro; [exact Hy | exact Hynin]. }
+            rewrite <- Hsy, Hzid. exact (Heclosed y HinBCase). }
+        destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC HGraphClosed Hbodyclosed) as [IH1 _].
+        destruct (IH1 c' args' Hcorr) as [Gam' [HNE HHC]].
+        exists Gam'. split.
+        -- eapply NL_Select; [apply NL_VarCons; exact Hb | exact HIn | exact Hlen | exact HNE].
+        -- exact HHC.
+      * exfalso. rewrite Hgx0 in Hgxfwd. discriminate Hgxfwd.
+    + intros x brs Heqxbrs. injection Heqxbrs as Heqx Heqbrs. subst x brs.
+      intros F Gmid x' Hforce.
+      exfalso.
+      assert (HGamx0 := HGam x0). rewrite Hgx0 in HGamx0.
+      destruct HGamx0 as [b [Hb HCE3]].
+      destruct HCE3 as [HCE | [yd [zd [cd [argsd [Hgxfwd [Hcld [Hzd HVCd]]]]]]]].
+      * destruct (CorrE_forced_shape G0 x0 b HCE) as
+          [ [c0 [args0 [Hg1 Hb1]]]
+          | [ [Hg1 Hb1]
+            | [ [f1 [args1 [Hg1 Hb1]]]
+              | [ [y1 [y2 [Hg1 Hb1]]]
+                | [ [z1 [Hg1 Hb1]]
+                  | [ [Hg1 Hb1]
+                    | [ [y1 [Hg1 Hb1]]
+                      | [y1 [z1 [c0 [args0 [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ];
+          rewrite Hgx0 in Hg1; try discriminate Hg1.
+        injection Hg1 as Hg1a Hg1b. subst c0 args0. rewrite Hb1 in Hb.
+        exact (NEval_left_evar_not_con P F Gam x0 Gmid x' Hforce c zs Hb).
+      * exfalso. rewrite Hgx0 in Hgxfwd. discriminate Hgxfwd.
+  - (* G_CaseConFree *)
+    assert (Hbx : Gam x0 = Some (BExpr (EVar x0))).
+    { assert (HGamx0 := HGam x0). rewrite Hgx0 in HGamx0.
+      destruct HGamx0 as [b [Hb HCE3]].
+      destruct HCE3 as [HCE | [y1 [z1 [c1' [args1 [Hgxfwd _]]]]]].
+      - destruct (CorrE_forced_shape G0 x0 b HCE) as
+          [ [c0 [args0 [Hg1 Hb1]]]
+          | [ [Hg1 Hb1]
+            | [ [f1 [args1 [Hg1 Hb1]]]
+              | [ [y1 [y2 [Hg1 Hb1]]]
+                | [ [z1 [Hg1 Hb1]]
+                  | [ [Hg1 Hb1]
+                    | [ [y1 [Hg1 Hb1]]
+                      | [y1 [z1 [c0 [args0 [Hg1 [Hcl1 [Hz1 Hb1]]]]]]] ] ] ] ] ] ] ];
+          rewrite Hgx0 in Hg1; try discriminate Hg1.
+        subst b. exact Hb.
+      - rewrite Hgx0 in Hgxfwd. discriminate Hgxfwd. }
+    assert (Hxnotinws : ~ In x0 ws).
+    { intro Hin. specialize (Hfresh x0 Hin). rewrite Hgx0 in Hfresh. discriminate Hfresh. }
+    assert (HGam1 : HeapCorr (hupd G0 x0 (GExpr (ECon c1 ws))) (hupd Gam x0 (BExpr (ECon c1 ws))))
+      by exact (HeapCorr_update_free G0 Gam x0 c1 ws HGam Hgx0).
+    assert (HNVT1 : NoVarThunk (hupd G0 x0 (GExpr (ECon c1 ws))))
+      by exact (NoVarThunk_update_free G0 x0 c1 ws HNVT Hgx0).
+    assert (HWF1 : WellFoundedFwd (hupd G0 x0 (GExpr (ECon c1 ws))))
+      by exact (WellFoundedFwd_update_free G0 x0 c1 ws HWF Hgx0).
+    assert (HCC1 : ChainConsistent (hupd G0 x0 (GExpr (ECon c1 ws))) (hupd Gam x0 (BExpr (ECon c1 ws))))
+      by exact (ChainConsistent_update_free G0 Gam x0 c1 ws HCC Hgx0 Hbx).
+    assert (HAC1 : AliasConsistent (hupd G0 x0 (GExpr (ECon c1 ws))) (hupd Gam x0 (BExpr (ECon c1 ws))))
+      by exact (AliasConsistent_update_free G0 Gam x0 c1 ws HAC Hgx0 Hbx).
+    assert (Hfresh' : forall w, In w ws -> (hupd G0 x0 (GExpr (ECon c1 ws))) w = None).
+    { intros w Hin. rewrite (hupd_neq G0 x0 (GExpr (ECon c1 ws)) w).
+      - exact (Hfresh w Hin).
+      - intro Heq; subst w; exact (Hxnotinws Hin). }
+    assert (HfreshGam : forall w, In w ws -> Gam w = None).
+    { intros w Hin. assert (HGamw := HGam w). rewrite (Hfresh w Hin) in HGamw. exact HGamw. }
+    assert (HGam2 : HeapCorr (hupd_list (hupd G0 x0 (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws))
+                              (hupd_list (hupd Gam x0 (BExpr (ECon c1 ws))) ws (map (fun w => BExpr (EVar w)) ws)))
+      by exact (HeapCorr_extend_free_list ws (hupd G0 x0 (GExpr (ECon c1 ws))) (hupd Gam x0 (BExpr (ECon c1 ws)))
+                  HGam1 HND Hfresh').
+    assert (HNVT2 : NoVarThunk (hupd_list (hupd G0 x0 (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws)))
+      by exact (NoVarThunk_extend_free_list ws (hupd G0 x0 (GExpr (ECon c1 ws))) HNVT1 HND Hfresh').
+    assert (HWF2 : WellFoundedFwd (hupd_list (hupd G0 x0 (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws)))
+      by exact (WellFoundedFwd_extend_free_list ws (hupd G0 x0 (GExpr (ECon c1 ws))) HWF1 HND Hfresh').
+    assert (HCC2 : ChainConsistent (hupd_list (hupd G0 x0 (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws))
+                                    (hupd_list (hupd Gam x0 (BExpr (ECon c1 ws))) ws (map (fun w => BExpr (EVar w)) ws)))
+      by exact (ChainConsistent_extend_free_list ws (hupd G0 x0 (GExpr (ECon c1 ws))) (hupd Gam x0 (BExpr (ECon c1 ws)))
+                  HCC1 HWF1 HND Hfresh').
+    assert (HAC2 : AliasConsistent (hupd_list (hupd G0 x0 (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws))
+                                    (hupd_list (hupd Gam x0 (BExpr (ECon c1 ws))) ws (map (fun w => BExpr (EVar w)) ws)))
+      by exact (AliasConsistent_extend_free_list ws (hupd G0 x0 (GExpr (ECon c1 ws))) (hupd Gam x0 (BExpr (ECon c1 ws)))
+                  HAC1 HWF1 HND Hfresh').
+    assert (HInhd : In (c1, ys1, body1) brs0).
+    { destruct brs0 as [| hd tl]; simpl in Hhd; [discriminate Hhd | ].
+      injection Hhd as Hhd. subst hd. left. reflexivity. }
+    assert (HNALbody : NoAliasLetB (rename_b (zipsubst ys1 ws) body1))
+      by exact (NoAliasLetB_rename (zipsubst ys1 ws) body1 (NoAliasLetB_in brs0 c1 ys1 body1 HInhd HNAL)).
+    assert (HnewGraphClosed : GraphClosed
+              (hupd_list (hupd G0 x0 (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws))).
+    { intros z g Hzg w Hw. destruct (in_dec Nat.eq_dec z ws) as [Hzws | Hzws].
+      - rewrite (hupd_list_map_const_self ws (GExpr EFree) (hupd G0 x0 (GExpr (ECon c1 ws))) z Hzws) in Hzg.
+        injection Hzg as Hzg; subst g. simpl in Hw. destruct Hw.
+      - rewrite (curry.hupd_list_notin ws (map (fun _ => GExpr EFree) ws) (hupd G0 x0 (GExpr (ECon c1 ws))) z Hzws)
+          in Hzg.
+        destruct (Nat.eq_dec z x0) as [Heqz | Hneqz].
+        + subst z. unfold hupd in Hzg. rewrite Nat.eqb_refl in Hzg. injection Hzg as Hzg; subst g.
+          destruct (in_dec Nat.eq_dec w ws) as [Hwws | Hwnws].
+          * rewrite (hupd_list_map_const_self ws (GExpr EFree) (hupd G0 x0 (GExpr (ECon c1 ws))) w Hwws).
+            discriminate.
+          * exfalso. simpl in Hw. exact (Hwnws Hw).
+        + rewrite (hupd_neq G0 x0 (GExpr (ECon c1 ws)) z Hneqz) in Hzg.
+          destruct (in_dec Nat.eq_dec w ws) as [Hwws | Hwnws].
+          * rewrite (hupd_list_map_const_self ws (GExpr EFree) (hupd G0 x0 (GExpr (ECon c1 ws))) w Hwws).
+            discriminate.
+          * rewrite (curry.hupd_list_notin ws (map (fun _ => GExpr EFree) ws) (hupd G0 x0 (GExpr (ECon c1 ws))) w Hwnws).
+            destruct (Nat.eq_dec w x0) as [Heqw | Hneqw].
+            -- subst w. unfold hupd; rewrite Nat.eqb_refl; discriminate.
+            -- rewrite (hupd_neq G0 x0 (GExpr (ECon c1 ws)) w Hneqw). exact (HGraphClosed z g Hzg w Hw). }
+    assert (Hbodyclosed :
+      forall w, In w (free_vars_b (rename_b (zipsubst ys1 ws) body1)) ->
+      hupd_list (hupd G0 x0 (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws) w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset (zipsubst ys1 ws) body1 w Hw) as [y [Hy Hsy]].
+      destruct (in_dec Nat.eq_dec y ys1) as [Hyin | Hynin].
+      - assert (Hwws : In w ws) by (rewrite <- Hsy; apply (zipsubst_in ys1 ws (eq_sym Hlen) y Hyin)).
+        rewrite (hupd_list_map_const_self ws (GExpr EFree) (hupd G0 x0 (GExpr (ECon c1 ws))) w Hwws). discriminate.
+      - assert (Hzid : zipsubst ys1 ws y = y) by (apply zipsubst_notin; exact Hynin).
+        assert (HinBCase : In y (free_vars_b (BCase x0 brs0))).
+        { apply (free_vars_b_bcase_branch x0 brs0 c1 ys1 body1 HInhd).
+          apply remove_all_in_intro; [exact Hy | exact Hynin]. }
+        assert (HG0y : G0 y <> None) by exact (Heclosed y HinBCase).
+        destruct (in_dec Nat.eq_dec y ws) as [Hyws | Hynws].
+        + exfalso. apply HG0y. exact (Hfresh y Hyws).
+        + rewrite <- Hsy, Hzid.
+          rewrite (curry.hupd_list_notin ws (map (fun _ => GExpr EFree) ws) (hupd G0 x0 (GExpr (ECon c1 ws))) y Hynws).
+          exact (hupd_preserves_some_gen G0 x0 (GExpr (ECon c1 ws)) y HG0y). }
+    split.
+    + intros c args Hcorr.
+      destruct (IH (hupd_list (hupd Gam x0 (BExpr (ECon c1 ws))) ws (map (fun w => BExpr (EVar w)) ws))
+                   HGam2 HNVT2 HNALbody HWF2 HCC2 HAC2 HnewGraphClosed Hbodyclosed) as [IH1 _].
+      destruct (IH1 c args Hcorr) as [Gam1 [HNE HHC]].
+      exists Gam1. split.
+      * (* Sec.66: GEval's own G_CaseConFree now carries ~ProgBoundName
+           directly (HnbGuess). *)
+        eapply NL_Guess.
+        -- apply NL_VarSelf. exact Hbx.
+        -- exact Hhd.
+        -- exact Hlen.
+        -- exact HND.
+        -- exact HfreshGam.
+        -- exact HnbGuess.
+        -- exact HNE.
+      * exact HHC.
+    + intros x brs Heqxbrs. injection Heqxbrs as Heqx Heqbrs. subst x brs.
+      intros F Gmid x' Hforce.
+      destruct (NEval_left_evar_shape P F Gam x0 Gmid (BExpr (EVar x')) Hforce) as
+        [ [Hcase1 [_ [c0 [args0 Heqv1]]]]
+        | [ [Hcase2 [_ Heqv2]]
+          | [ [Hcase3 [_ Heqv3]]
+            | [_ [e0 [G1' [Hz [Hne1 [Hne2 [Hne3 [Hrec1 HeqGmid]]]]]]]]] ] ].
+      * discriminate Heqv1.
+      * injection Heqv2 as Heqv2. subst x'.
+        assert (Hg1x0 : (hupd_list (hupd G0 x0 (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws)) x0
+                       = Some (GExpr (ECon c1 ws))).
+        { rewrite curry.hupd_list_notin; [ | exact Hxnotinws].
+          unfold hupd; rewrite Nat.eqb_refl; reflexivity. }
+        assert (HG1x0 : G1 x0 = Some (GExpr (ECon c1 ws)))
+          by exact (GEval_con_persists P
+                      (hupd_list (hupd G0 x0 (GExpr (ECon c1 ws))) ws (map (fun _ => GExpr EFree) ws))
+                      (rename_b (zipsubst ys1 ws) body1) G1 v1 Hrec x0 c1 ws Hg1x0).
+        eapply CL_Here. exact HG1x0.
+      * exfalso. rewrite Hbx in Hcase3. discriminate Hcase3.
+      * exfalso. rewrite Hbx in Hz. injection Hz as Hz. exact (Hne2 (eq_sym Hz)).
+Admitted.

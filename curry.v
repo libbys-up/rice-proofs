@@ -1208,6 +1208,15 @@ Proof.
   - reflexivity.
 Qed.
 
+(* Generic (any heap value type A), mirroring curry_test_leftmost.v's own
+   NHeap-specific hupd_preserves_some -- named distinctly to avoid any
+   ambiguity once both are in scope (e.g. theorem2's own restatement in
+   alpha_renaming_wip.v, which needs this at Graph = heap GNode). *)
+Lemma hupd_preserves_some_gen : forall {A} (h : heap A) x v w, h w <> None -> hupd h x v w <> None.
+Proof.
+  intros A h x v w Hw. unfold hupd. destruct (Nat.eqb w x) eqn:E; [discriminate | exact Hw].
+Qed.
+
 Lemma hupd_comm :
   forall {A} (h : heap A) a va b vb, a <> b ->
   forall w, hupd (hupd h a va) b vb w = hupd (hupd h b vb) a va w.
