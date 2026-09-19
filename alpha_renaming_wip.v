@@ -6678,11 +6678,11 @@ Qed.
 (* ==================================================================== *)
 
 Lemma NEval_left_let_chain_to_value_restated :
-  forall P, NoAliasLetProgWF P -> NoBareFreeOrChoiceProgWF P ->
+  forall P, NoAliasLetProgWF P -> NoBareFreeOrChoiceProgWF P -> FunBodyWellScoped P ->
   forall G e G1 vx, GEval P G e G1 vx ->
   forall Gam, HeapCorr G Gam -> NoVarThunk G -> NoAliasLetB e ->
     WellFoundedFwd G -> ChainConsistent G Gam -> AliasConsistent G Gam ->
-  forall x, G x <> None -> GraphClosed G ->
+  forall x, G x <> None -> GraphClosed G -> (forall w, In w (free_vars_b e) -> G w <> None) ->
   (forall b0, G x = Some b0 -> b0 <> GExpr EFree /\ (forall y z, b0 <> GExpr (EChoice y z))) ->
   (forall w, In w (vars_of_b e) -> w <> x /\ ~ GraphReaches G w x) ->
   NHeapTrivialWF Gam -> NHeapProgWF P Gam ->
@@ -6693,7 +6693,7 @@ Lemma NEval_left_let_chain_to_value_restated :
     forall Gamk vk, NEval_left P F0 Gam1 (GNode_mirror vx) Gamk vk -> HeapCorr G1 Gamk ->
       exists Gamk', NEval_left P F0 Gam e Gamk' vk /\ HeapCorr G1 Gamk'.
 Proof.
-  intros P HPWF HNBFC G e G1 vx H.
+  intros P HPWF HNBFC HScoped G e G1 vx H.
   induction H as
     [ G0
     | G0
@@ -6708,7 +6708,7 @@ Proof.
     | G0 xh yh zh brs G1' v1 Hgx0 Hrec IH
     | G0 xh c zs brs ys body G1' v1 Hgx0 HIn Hlen Hrec IH
     | G0 xh c1 ys1 body1 brs G1' v1 ws Hgx0 Hhd Hlen HND Hfresh HnbGuess Hrec IH
-    ]; intros Gam HGam HNVT HNAL HWF HCC HAC x Hxdom HGraphClosed Hxshape Hreach2 HNHTrivial HNHProg.
+    ]; intros Gam HGam HNVT HNAL HWF HCC HAC x Hxdom HGraphClosed Heclosed Hxshape Hreach2 HNHTrivial HNHProg.
   - (* G_Bot *)
     split; [reflexivity | split; [exact HNVT | split; [exact HWF |
       exists Gam; split; [exact HGam | split; [exact HCC | split; [exact HAC | split; [reflexivity |
@@ -6754,7 +6754,18 @@ Proof.
         rewrite <- Hsw. split.
         + intro Heq. rewrite Heq in HG0sw. exact (Hxdom HG0sw).
         + intro Hr. exact (GraphReaches_domain G0 (s w) x Hr HG0sw). }
-    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom HGraphClosed Hxshape Hreach2Body
+    assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b s body)) -> G0 w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset s body w Hw) as [y [Hy Hsy]].
+      assert (Hyps : In y ps) by (exact (HScoped f ps body HPf y Hy)).
+      destruct (In_nth_error ps y Hyps) as [i Hi].
+      assert (Hips : i < length ps) by (apply nth_error_Some; rewrite Hi; discriminate).
+      assert (Hiargs : i < length args) by (rewrite <- Hlen; exact Hips).
+      destruct (nth_error args i) as [a | ] eqn:Ha.
+      - assert (Hsya : s y = a) by (exact (Hmatch i y a Hi Ha)).
+        apply Heclosed. rewrite <- Hsy, Hsya. eapply nth_error_In. exact Ha.
+      - exfalso. assert (Ha' : nth_error args i <> None) by (apply nth_error_Some; exact Hiargs).
+        apply Ha'. exact Ha. }
+    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom HGraphClosed Hbodyclosed Hxshape Hreach2Body
                 HNHTrivial HNHProg)
       as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 [HNHTrivial1 [HNHProg1 Hplug]]]]]]]]]].
     split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
@@ -6789,27 +6800,46 @@ Proof.
     assert (Hxshape_ext : forall b0, hupd G0 xh (GExpr eh) x = Some b0 ->
               b0 <> GExpr EFree /\ (forall y z, b0 <> GExpr (EChoice y z))).
     { intros b0 Hb0. rewrite (hupd_neq G0 xh (GExpr eh) x Hxz) in Hb0. exact (Hxshape b0 Hb0). }
-    (* NEW GAP (Sec.69): GraphClosed's own preservation across this hupd
-       needs eh's own referenced vars to already be defined in G0 -- true
-       of any real `let x = e in k` (e's own free vars are already bound),
-       but GEval's bare G_Let premise doesn't require it (same situation
-       as the G_Let freshness gaps Sec.66 already fixed by strengthening
-       GEval itself -- not done here, to avoid a second curry.v-wide
-       arity sweep mid-investigation). Threading Hreach2 through this same
-       hupd hits the same gap (xh's own single outgoing edge, into eh's
-       fields, needs those fields already reach-protected) -- admitted as
-       one gap rather than two, since fixing GraphClosed's own gap first
-       would let this one go through the same way G_Fun's own case did. *)
-    assert (HGraphClosedExt : GraphClosed (hupd G0 xh (GExpr eh))) by admit.
-    assert (Hreach2K : forall w', In w' (vars_of_b k) -> w' <> x /\ ~ GraphReaches (hupd G0 xh (GExpr eh)) w' x)
-      by admit.
+    (* Sec.77: closed for real now that Heclosed (free_vars_b-based) is
+       threaded (mirroring GEval_closed_preserved's own G_Let case), using
+       the new GraphReaches_hupd_fresh_from/_avoids_undefined lemmas
+       (curry.v) for Hreach2K -- a fresh key's own first hop lands in eh's
+       own fields, which He0closed already makes G0-defined and Hreach2
+       already makes x-unreachable, so nothing routes back to x through xh
+       either. *)
+    assert (He0closed : forall w, In w (vars_of_e0 eh) -> G0 w <> None).
+    { intros w Hw. apply Heclosed. simpl. apply in_or_app. left. exact Hw. }
+    assert (HGraphClosedExt : GraphClosed (hupd G0 xh (GExpr eh))).
+    { intros w g Hwg y Hy. unfold hupd in Hwg.
+      destruct (Nat.eqb w xh) eqn:Heqw.
+      - apply Nat.eqb_eq in Heqw; subst w. injection Hwg as Hwg; subst g.
+        apply hupd_preserves_some_gen. apply He0closed. exact Hy.
+      - apply hupd_preserves_some_gen. apply (HGraphClosed w g Hwg y Hy). }
+    assert (Hxhnotin : ~ In xh (vars_of_gnode (GExpr eh))).
+    { simpl. intro Hin. assert (Hc : G0 xh <> None) by exact (He0closed xh Hin). exact (Hc HxFresh). }
+    assert (Hreach2K : forall w', In w' (vars_of_b k) -> w' <> x /\ ~ GraphReaches (hupd G0 xh (GExpr eh)) w' x).
+    { intros w' Hw'.
+      assert (Hw'mem : In w' (vars_of_b (BLet xh eh k))) by (simpl; right; apply in_or_app; right; exact Hw').
+      destruct (Hreach2 w' Hw'mem) as [Hw'x HnrW'].
+      split; [exact Hw'x | intro Hr].
+      destruct (GraphReaches_hupd_fresh_from G0 xh (GExpr eh) HxFresh HGraphClosed Hxhnotin w' x Hr)
+        as [[Heqw' [w0 [Hw0mem Hw0x]]] | [_ HG0]].
+      - assert (Hw0memB : In w0 (vars_of_b (BLet xh eh k))) by (simpl; right; apply in_or_app; left; exact Hw0mem).
+        destruct (Hreach2 w0 Hw0memB) as [Hw0nex HnrW0].
+        destruct Hw0x as [Heqw0x | HGw0]; [exact (Hw0nex Heqw0x) | exact (HnrW0 HGw0)].
+      - exact (HnrW' HG0). }
+    assert (Hkclosed : forall w, In w (free_vars_b k) -> hupd G0 xh (GExpr eh) w <> None).
+    { intros w Hw. destruct (Nat.eq_dec w xh) as [Heq | Hneq].
+      - subst w. unfold hupd. rewrite Nat.eqb_refl. discriminate.
+      - apply hupd_preserves_some_gen. apply Heclosed. simpl. apply in_or_app. right.
+        apply in_in_remove; [exact Hneq | exact Hw]. }
     destruct (let_content_is_bexpr xh eh) as [e1 He1].
     assert (HNHTrivial_ext : NHeapTrivialWF (hupd Gam xh (let_content xh eh))).
     { rewrite He1. exact (NHeapTrivialWF_hupd_bexpr Gam xh e1 HNHTrivial). }
     assert (HNHProg_ext : NHeapProgWF P (hupd Gam xh (let_content xh eh))).
     { rewrite He1. exact (NHeapProgWF_hupd_fresh P Gam xh e1 HNHProg HnbLet). }
     destruct (IH (hupd Gam xh (let_content xh eh)) HGam_ext HNVT_ext HNALk HWF_ext HCC_ext HAC_ext
-                 x Hxdom_ext HGraphClosedExt Hxshape_ext Hreach2K HNHTrivial_ext HNHProg_ext)
+                 x Hxdom_ext HGraphClosedExt Hkclosed Hxshape_ext Hreach2K HNHTrivial_ext HNHProg_ext)
       as [Hxeq' [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 [HNHTrivial1 [HNHProg1 Hplug]]]]]]]]]].
     assert (Hxeq : G1' x = G0 x).
     { rewrite Hxeq'. rewrite (hupd_neq G0 xh (GExpr eh) x Hxz). reflexivity. }
@@ -6855,7 +6885,11 @@ Proof.
     { intros w Hin. simpl in Hin. destruct Hin as [Heq | Hin].
       - subst w. split; [exact Hyhx | exact HnrYh].
       - apply Hreach2. simpl. right. exact Hin. }
-    destruct (IH Gam HGam HNVT HNAL HWF HCC HAC x Hxdom HGraphClosed Hxshape Hreach2yh
+    assert (Heclosedyh : forall w, In w (free_vars_b (BCase yh brs)) -> G0 w <> None).
+    { intros w Hw. simpl in Hw. destruct Hw as [Hw | Hw].
+      - subst w. exact (HGraphClosed xh (GFwd yh) Hgx0 yh (or_introl eq_refl)).
+      - apply Heclosed. simpl. right. exact Hw. }
+    destruct (IH Gam HGam HNVT HNAL HWF HCC HAC x Hxdom HGraphClosed Heclosedyh Hxshape Hreach2yh
                 HNHTrivial HNHProg)
       as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 [HNHTrivial1 [HNHProg1 Hplug]]]]]]]]]].
     split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
@@ -7070,6 +7104,12 @@ Proof.
         destruct (Nat.eq_dec w xh) as [Heqwx | Hnewx].
         + subst w. unfold hupd. rewrite Nat.eqb_refl. discriminate.
         + rewrite (hupd_neq G0 xh (GFwd yh) w Hnewx). exact (HGraphClosed z g Hzg w Hw). }
+    assert (Heclosedyh' : forall w, In w (free_vars_b (BCase yh brs)) -> hupd G0 xh (GFwd yh) w <> None).
+    { intros w Hw. destruct (Nat.eq_dec w xh) as [Heqw | Hneqw].
+      - subst w. unfold hupd; rewrite Nat.eqb_refl; discriminate.
+      - rewrite (hupd_neq G0 xh (GFwd yh) w Hneqw). simpl in Hw. destruct Hw as [Hw | Hw].
+        + subst w. exact (HGraphClosed xh (GExpr (EChoice yh zh)) Hgx0 yh (or_introl eq_refl)).
+        + apply Heclosed. simpl. right. exact Hw. }
     assert (Hxdom' : hupd G0 xh (GFwd yh) x <> None).
     { rewrite (hupd_neq G0 xh (GFwd yh) x (not_eq_sym Hxhx)). exact Hxdom. }
     assert (Hxshape' : forall b0, hupd G0 xh (GFwd yh) x = Some b0 ->
@@ -7099,7 +7139,7 @@ Proof.
     assert (HNHProgYh : NHeapProgWF P (hupd Gam xh (BExpr (EVar yh))))
       by exact (NHeapProgWF_hupd_fresh P Gam xh (EVar yh) HNHProg HnbXh).
     destruct (IH (hupd Gam xh (BExpr (EVar yh))) HGam' HNVT' HNAL HWF' HCC' HAC'
-                 x Hxdom' HGraphClosedYh Hxshape' Hreach2yh HNHTrivialYh HNHProgYh)
+                 x Hxdom' HGraphClosedYh Heclosedyh' Hxshape' Hreach2yh HNHTrivialYh HNHProgYh)
       as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 [HNHTrivial1 [HNHProg1 Hplug]]]]]]]]]].
     assert (HxeqOuter : G1' x = G0 x)
       by (rewrite Hxeq; exact (hupd_neq G0 xh (GFwd yh) x (not_eq_sym Hxhx))).
@@ -7234,7 +7274,17 @@ Proof.
       - assert (Hzid : zipsubst ys zs w = w) by exact (zipsubst_notin ys zs w Hwys).
         rewrite <- Hsw, Hzid.
         exact (Hreach2 w (vars_of_b_bcase_branch xh brs c ys body HIn w (or_intror Hw))). }
-    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom HGraphClosed Hxshape Hreach2Body
+    assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b (zipsubst ys zs) body)) -> G0 w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset (zipsubst ys zs) body w Hw) as [y [Hy Hsy]].
+      destruct (in_dec Nat.eq_dec y ys) as [Hyin | Hynin].
+      - assert (Hwzs : In w zs) by (rewrite <- Hsy; apply (zipsubst_in ys zs Hlen y Hyin)).
+        exact (HGraphClosed xh (GExpr (ECon c zs)) Hgx0 w Hwzs).
+      - assert (Hzid : zipsubst ys zs y = y) by (apply zipsubst_notin; exact Hynin).
+        assert (HinBCase : In y (free_vars_b (BCase xh brs))).
+        { apply (free_vars_b_bcase_branch xh brs c ys body HIn).
+          apply remove_all_in_intro; [exact Hy | exact Hynin]. }
+        rewrite <- Hsy, Hzid. exact (Heclosed y HinBCase). }
+    destruct (IH Gam HGam HNVT HNALbody HWF HCC HAC x Hxdom HGraphClosed Hbodyclosed Hxshape Hreach2Body
                 HNHTrivial HNHProg)
       as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 [HNHTrivial1 [HNHProg1 Hplug]]]]]]]]]].
     split; [exact Hxeq | split; [exact HNVT1 | split; [exact HWF1 | ]]].
@@ -7372,6 +7422,17 @@ Proof.
           * exact (Hxhx (eq_sym Heqxx)).
           * exact (HxNotInWs Hinxws).
           * exact (HnrW HG0). }
+    assert (Hbodyclosed : forall w, In w (free_vars_b (rename_b (zipsubst ys1 ws) body1)) -> G'' w <> None).
+    { intros w Hw. destruct (free_vars_b_rename_subset (zipsubst ys1 ws) body1 w Hw) as [y [Hy Hsy]].
+      destruct (in_dec Nat.eq_dec y ys1) as [Hyin | Hynin].
+      - assert (Hwws : In w ws) by (rewrite <- Hsy; apply (zipsubst_in ys1 ws (eq_sym Hlen) y Hyin)).
+        rewrite (Hgws'' w Hwws). discriminate.
+      - assert (Hzid : zipsubst ys1 ws y = y) by (apply zipsubst_notin; exact Hynin).
+        assert (HinBCase : In y (free_vars_b (BCase xh brs))).
+        { apply (free_vars_b_bcase_branch xh brs c1 ys1 body1 HInhd).
+          apply remove_all_in_intro; [exact Hy | exact Hynin]. }
+        assert (HG0y : G0 y <> None) by exact (Heclosed y HinBCase).
+        rewrite <- Hsy, Hzid. exact (Hpreserve y HG0y). }
     assert (HnbXh : ~ ProgBoundName P xh).
     { intro Hbound. destruct HNHProg as [HGF _].
       assert (HGamxhNone : Gam xh = None) by exact (HGF xh Hbound).
@@ -7388,7 +7449,7 @@ Proof.
       by exact (NHeapProgWF_hupd_list_fresh P (hupd Gam xh (BExpr (ECon c1 ws))) ws HNHProg1 HnbGuess).
     destruct (IH (hupd_list (hupd Gam xh (BExpr (ECon c1 ws))) ws (map (fun w => BExpr (EVar w)) ws))
                  HGam2 HNVT2 HNALbody HWF2 HCC2 HAC2
-                 x Hxdom' HGraphClosedExt Hxshape' Hreach2Body HNHTrivial2 HNHProg2)
+                 x Hxdom' HGraphClosedExt Hbodyclosed Hxshape' Hreach2Body HNHTrivial2 HNHProg2)
       as [Hxeq [HNVT1' [HWF1' [Gam1 [HHC1 [HCC1' [HAC1' [Hgx1 [HNHTrivial1' [HNHProg1' Hplug]]]]]]]]]].
     split; [exact (eq_trans Hxeq Hgxeq) | split; [exact HNVT1' | split; [exact HWF1' | ]]].
     exists Gam1.
@@ -7997,8 +8058,11 @@ Proof.
         - intro Heq; subst w. apply HAcyclicX0. exact (GraphReaches_step G0 x0 x0 (GExpr (EFun f0 args0)) Hgx0 Hw).
         - intro Hr. apply HAcyclicX0.
           exact (GraphReaches_trans G0 x0 w x0 (GraphReaches_step G0 x0 w (GExpr (EFun f0 args0)) Hgx0 Hw) Hr). }
-      destruct (NEval_left_let_chain_to_value_restated P HPWF HNBFC G0 (BExpr (EFun f0 args0)) G1 vx Hrec1
-                  Gam HGam HNVT I HWF HCC HAC x0 Hxdom HGraphClosed0 Hxshape0 Hxreach0 HNHTrivial HNHProg)
+      assert (Hargsclosed0' : forall w, In w args0 -> G0 w <> None)
+        by exact (HGraphClosed x0 (GExpr (EFun f0 args0)) Hgx0).
+      destruct (NEval_left_let_chain_to_value_restated P HPWF HNBFC HScoped G0 (BExpr (EFun f0 args0)) G1 vx Hrec1
+                  Gam HGam HNVT I HWF HCC HAC x0 Hxdom HGraphClosed0 Hargsclosed0' Hxshape0 Hxreach0
+                  HNHTrivial HNHProg)
         as [Hxeq [HNVT1 [HWF1 [Gam1 [HHC1 [HCC1 [HAC1 [Hgx1 [HNHTrivial1 [HNHProg1 Hplug]]]]]]]]]].
       assert (Hg1x0 : G1 x0 = Some (GExpr (EFun f0 args0))) by (rewrite Hxeq; exact Hgx0).
       (* Task #3/Sec.74: GraphClosed G1, and vx's own referenced vars being

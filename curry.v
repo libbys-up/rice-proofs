@@ -390,6 +390,57 @@ Proof.
     split; [exact Hr0z | exact (GraphReaches_trans G p0 q0 r0 HreachG_pq HreachG_qr)].
 Qed.
 
+(* GraphClosed's own contrapositive: an undefined location can never be
+   REACHED either (not just never a valid START, GraphReaches_domain's own
+   fact below) -- every existing value's own references are already-
+   defined, so nothing existing can ever point at z. *)
+Lemma GraphReaches_avoids_undefined :
+  forall G z, G z = None -> GraphClosed G -> forall p, ~ GraphReaches G p z.
+Proof.
+  intros G z Hz Hclosed p Hr. revert Hz.
+  induction Hr as [p0 q0 g Hp0 Hq0 | p0 q0 r0 Hpq IHpq Hqr IHqr]; intro Hz.
+  - assert (Hqz : G q0 <> None) by exact (Hclosed p0 g Hp0 q0 Hq0). exact (Hqz Hz).
+  - exact (IHqr Hz).
+Qed.
+
+(* GraphReaches_hupd_fresh_notin's own companion allowing p = z: a path
+   starting AT the freshly-written location must take its first hop into
+   v's own fields (whatever those are), then continue entirely within the
+   OLD graph (GraphReaches_avoids_undefined rules out ever routing back
+   through z itself, since z stays undefined in G). Needed to reason about
+   reachability FROM a fresh key's own new value, not just reachability
+   THROUGH it from elsewhere (which _notin already covers). *)
+Lemma GraphReaches_hupd_fresh_from :
+  forall G z v, G z = None -> GraphClosed G -> ~ In z (vars_of_gnode v) ->
+  forall p q, GraphReaches (hupd G z v) p q ->
+  (p = z /\ exists w, In w (vars_of_gnode v) /\ (w = q \/ GraphReaches G w q)) \/
+  (p <> z /\ GraphReaches G p q).
+Proof.
+  intros G z v Hz Hclosed Hself p q Hr.
+  remember (hupd G z v) as G' eqn:HG'.
+  induction Hr as [p0 q0 g Hp0 Hq0 | p0 q0 r0 Hpq IHpq Hqr IHqr].
+  - subst G'. unfold hupd in Hp0. destruct (Nat.eqb p0 z) eqn:Heq.
+    + apply Nat.eqb_eq in Heq; subst p0. left. split; [reflexivity | ].
+      injection Hp0 as Hp0; subst g.
+      exists q0. split; [exact Hq0 | left; reflexivity].
+    + apply Nat.eqb_neq in Heq. right. split; [exact Heq | ].
+      exact (GraphReaches_step G p0 q0 g Hp0 Hq0).
+  - destruct IHpq as [[Heqp0 [w0 [Hw0mem Hw0q0]]] | [Hnep0 HGpq]].
+    + subst p0. left. split; [reflexivity | ]. exists w0. split; [exact Hw0mem | ].
+      assert (Hw0z : w0 <> z) by (intro Heq; subst w0; exact (Hself Hw0mem)).
+      right. destruct IHqr as [[Heqq0 _] | [_ HGqr]].
+      * exfalso. subst q0. destruct Hw0q0 as [Heqw0 | HGw0].
+        -- exact (Hw0z Heqw0).
+        -- exact (GraphReaches_avoids_undefined G z Hz Hclosed w0 HGw0).
+      * destruct Hw0q0 as [Heqw0 | HGw0].
+        -- subst w0. exact HGqr.
+        -- exact (GraphReaches_trans G w0 q0 r0 HGw0 HGqr).
+    + right. split; [exact Hnep0 | ].
+      destruct IHqr as [[Heqq0 _] | [_ HGqr]].
+      * subst q0. exfalso. exact (GraphReaches_avoids_undefined G z Hz Hclosed p0 HGpq).
+      * exact (GraphReaches_trans G p0 q0 r0 HGpq HGqr).
+Qed.
+
 (* A location with no outgoing edge yet (G p = None) can't be the START of
    any GraphReaches hop -- used to rule out reaching anything AT ALL from
    a position that's fresh in the CURRENT graph. *)
