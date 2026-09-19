@@ -5610,3 +5610,35 @@ guard `F` (not just `F0 ⊆ {x0}`), under a soundness condition ruling out anyth
 re-entered by the call's own evaluation. No code changes this pass (investigation only); all four files
 still compile clean at the same commit as Sec.75, `NEval_left_confluence`/`self_confluence` still
 zero-axiom.
+
+## 77. Same session, continued: closed `NEval_left_let_chain_to_value_restated`'s own Sec.69 gap (a
+different, achievable win found while investigating Task #6's own guard-list obstacle)
+
+**While looking for leverage on Task #6's guard-list problem, noticed `NEval_left_let_chain_to_value_
+restated` was missing the same `free_vars_b`-based closedness hypothesis `theorem2_restated`/
+`GEval_closed_preserved` already carry** — its own `G_Let` case had admitted `HGraphClosedExt`/`Hreach2K`
+since Sec.69 for exactly this reason (a fresh `BLet`'s own RHS needs its free vars already graph-defined,
+which plain `GraphClosed` alone can't provide for a not-yet-stored expression). Added `FunBodyWellScoped P`
+and `(forall w, In w (free_vars_b e), G w <> None)` to this lemma's own signature and threaded both through
+all 13 cases, mirroring `GEval_closed_preserved`'s own case-by-case logic throughout (most cases: trivial
+pass-through or a direct mirror of that theorem's own G_Fun/G_CaseCon/G_CaseConFree cases).
+
+**`G_Let`'s own `Hreach2K` needed two new small, general lemmas in `curry.v`**, since `GraphReaches_hupd_
+fresh_notin` (built earlier this session) only covers a path whose *start* point is already known distinct
+from the fresh key — here the path can start AT the fresh key itself (`xh`), which that lemma doesn't cover:
+- `GraphReaches_avoids_undefined`: `GraphClosed`'s own contrapositive — an undefined location can never be
+  *reached* either (only ever a valid start's own concern before now), since every existing value's own
+  references are already-defined by `GraphClosed` itself.
+- `GraphReaches_hupd_fresh_from`: `GraphReaches_hupd_fresh_notin`'s own companion allowing the start point to
+  BE the fresh key — a path starting there must take its first hop into the newly-written value's own
+  fields, then stays entirely within the old graph from there (`GraphReaches_avoids_undefined` rules out
+  ever routing back through the fresh key itself, since it stays undefined in the old graph throughout).
+
+**Status:** `NEval_left_let_chain_to_value_restated` now has 4 admits (down from 6): `G_CaseFwd`'s Sec.70
+pair and `G_CaseChoice`'s Guess-shape gap (both unrelated, unchanged), and `G_CaseFun`'s single documented
+admit (also unchanged — this pass didn't touch it, and it still needs the deeper guard-list generalization
+Sec.76 identified). `theorem2_restated`'s own 5 admits are unchanged for the same reason. This closure is a
+genuine, self-contained win but doesn't move Task #6 forward directly — the guard-list obstacle (`Hplug`'s
+own `F0 ⊆ {x0}` restriction vs. `theorem2_restated`'s arbitrary `F`) remains exactly as characterized in
+Sec.76, still the real blocker for closing gap 2. All four files rebuild clean; `NEval_left_confluence`/
+`NEval_left_self_confluence` re-verified zero-axiom.
