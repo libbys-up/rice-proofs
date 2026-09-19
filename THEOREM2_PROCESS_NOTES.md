@@ -5561,3 +5561,52 @@ gap, `G_CaseFun`'s single documented admit), none newly introduced by this pass.
 `NoCaptureB e`/`NoCaptureProgB P e`/`NoCaptureFinalB` for both results) — the last piece before `self_
 confluence` can actually be invoked (Task #6). All four files rebuild clean; `NEval_left_confluence`/
 `NEval_left_self_confluence` re-verified zero-axiom.
+
+## 76. Same session, continued: the `e`-level hypotheses turn out unnecessary as a global invariant; found a
+genuine, deeper obstacle investigating Task #6 directly
+
+**The four `e`-level hypotheses (`BrsUniqB e`/`NoShadowB e`/`NoCaptureB e`/`NoCaptureProgB P e`) don't need
+threading through `theorem2_restated`'s own induction at all.** `self_confluence`, when it actually gets
+invoked (deep inside `G_CaseFun`'s second conjunct), compares two `NEval_left` derivations of `BExpr (EFun f0
+args0)` specifically — the bare, un-renamed call expression, not the renamed function body (each side's own
+`NL_Fun` step picks its own internal renaming independently, so the *comparison point* has to be the shared
+expression standing before either pick, not after). All four properties are unconditionally true at any bare
+`BExpr` (mirrors the same fact that made Task #2's Nat-heap extend lemmas trivial), so they can be discharged
+inline, locally, at the one point they're needed, via `BrsUniqB`/`NoShadowB`/`NoCaptureB`/
+`NoCaptureProgB_bexpr` — no global threading required. This means Task #3's own scope is effectively
+complete: `theorem2_restated` already carries everything `self_confluence` needs as ambient invariants
+(`GraphClosed` bridging to `ClosedHeap`, the two Nat-heap bundles, the four program-level hypotheses), and
+the `e`-level ones can be supplied on demand.
+
+**Went directly at Task #6 (closing `G_CaseFun`'s second-conjunct admit) to confirm this, and found genuinely
+useful pre-existing infrastructure**: `NEval_left_fun_shape` and its `GEval` twin `GEval_fun_shape` (both
+already `Qed`'d, mirroring `NEval_left_echoice_shape`'s own style) unwrap a force/eval of `BExpr (EFun f
+args)` directly into its own `ps`/`body`/`s` witness plus the recursive derivation on `rename_b s body` — no
+new lemma needed for that half.
+
+**Then hit a genuine, deeper obstacle mirroring `G_CaseChoice`'s own second-conjunct template didn't route
+around.** `G_CaseChoice`'s second conjunct never needs to widen a guard list: its own two compared
+derivations both live at whatever `F` the *caller* originally supplied (the outer `Hforce` and the
+recursively-obtained `Hrec3'`/`IH2`-invocation all share the same `x0 :: F`, since `IH2` — `theorem2_
+restated`'s own recursive hypothesis for `Hrec2` — is universally quantified over `F` already, as part of
+`theorem2_restated`'s own statement). `G_CaseFun`'s situation is different: the "canonical" derivation of the
+call it would need to compare against `Hrec2'` (from inverting the outer force) has to come from `Hplug1`
+(`NEval_left_let_chain_to_value_restated`'s own conclusion) — and `Hplug1`'s own `F0` is constrained to `F0
+⊆ {x0}` (`forall w, In w F0 -> w = x0`), matching every other real call site of it in this codebase, but
+*not* matching `G_CaseFun`'s own outer `F`, which is arbitrary (universally quantified in `theorem2_
+restated`'s own second conjunct, exactly as `G_CaseChoice`'s is). `NEval_left_self_confluence` itself
+requires the *same* `F` on both sides of the comparison, so this mismatch can't be papered over locally —
+`Hplug`'s own `F0 ⊆ {x0}` restriction would need generalizing to an arbitrary `F` (with whatever
+disjointness condition makes that sound — a guard list can only ever be widened when nothing already inside
+it could newly re-enter through the added names, the same soundness shape `NEval_left_alias_weaken_force_y_F`
+already handles for a narrower case), which is itself a nontrivial new lemma / restatement, not a
+mechanical threading step.
+
+**Status:** Task #3 is effectively complete (the `e`-level hypotheses don't need global threading, per
+above). Task #6 (and by extension Task #4/#5, whose exact shape now depends on how the guard-list
+generalization gets designed) remains open, with the obstacle now precisely characterized rather than
+vague: generalize `NEval_left_let_chain_to_value_restated`'s own `Hplug` conclusion to accept an arbitrary
+guard `F` (not just `F0 ⊆ {x0}`), under a soundness condition ruling out anything in `F` from being
+re-entered by the call's own evaluation. No code changes this pass (investigation only); all four files
+still compile clean at the same commit as Sec.75, `NEval_left_confluence`/`self_confluence` still
+zero-axiom.
